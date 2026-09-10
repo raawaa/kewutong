@@ -20,6 +20,14 @@ _Avoid_: 展开、生成
 Instance 的可选外键，指向被改期（或顺延）的原实例；用于追溯"为什么本周一例会在周三"。
 _Avoid_: 原任务、上一个实例
 
+**Holiday（节假日）**:
+由国务院公告定义的一段日期，期间不产生 Template 实例（若 `holiday_behavior=SKIP`）或顺延到下一个非节假日工作日（若 `SHIFT`）。以打包 JSON（`holidays/cn-<year>.json`）为权威；App 内"切换某一天为节假日"操作覆盖种子。
+_Avoid_: 假期、假日
+
+**Makeup Workday（调休工作日）**:
+原本是周末但被国务院调休安排转为工作日的一天；与 Holiday 同表打包但语义相反。物化层中若 Template 实例的 `scheduled_at` 落在调休工作日上，按普通工作日处理（不跳过、不顺延）。
+_Avoid_: 调班、补班
+
 **Holiday Behavior（节假日行为）**:
 Template 上的策略列，`SKIP`（默认；节假日不生成该实例）/ `SHIFT`（顺延到下一个非节假日工作日）。
 _Avoid_: 节假日策略、跳过模式
