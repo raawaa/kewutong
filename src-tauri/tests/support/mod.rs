@@ -17,6 +17,7 @@ pub fn mock_app(state: AppState) -> App<MockRuntime> {
 }
 
 /// 同 [`mock_app`]，另带一个可以走 IPC 的 webview。
+#[allow(dead_code)] // 仅 ping 之类的需要走 IPC 往返的测试用
 pub fn mock_app_with_webview(state: AppState) -> (App<MockRuntime>, WebviewWindow<MockRuntime>) {
     let app = mock_app(state);
     let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
@@ -26,6 +27,7 @@ pub fn mock_app_with_webview(state: AppState) -> (App<MockRuntime>, WebviewWindo
 }
 
 /// 拼一条前端会发出的 IPC 请求。
+#[allow(dead_code)] // 仅 ping 之类的需要走 IPC 往返的测试用
 pub fn invoke_request(cmd: &str, body: serde_json::Value) -> InvokeRequest {
     InvokeRequest {
         cmd: cmd.into(),

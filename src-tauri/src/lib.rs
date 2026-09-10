@@ -15,7 +15,21 @@ const DB_FILE_NAME: &str = "kewutong.db";
 
 /// 登记全部命令。正式入口与测试脚手架共用这一处，两边的命令清单不会漂移。
 pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder.invoke_handler(tauri::generate_handler![commands::diagnostics::ping])
+    builder.invoke_handler(tauri::generate_handler![
+        commands::diagnostics::ping,
+        // —— 人员管理（ticket #17）——
+        commands::personnel::list_sub_teams,
+        commands::personnel::create_sub_team,
+        commands::personnel::update_sub_team,
+        commands::personnel::delete_sub_team,
+        commands::personnel::reorder_sub_teams,
+        commands::personnel::list_people,
+        commands::personnel::create_person,
+        commands::personnel::update_person,
+        commands::personnel::deactivate_person,
+        commands::personnel::reactivate_person,
+        commands::personnel::delete_person,
+    ])
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

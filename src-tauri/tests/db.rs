@@ -3,19 +3,26 @@
 use kewutong_lib::db;
 use kewutong_lib::testing::{fresh_db, fresh_db_file};
 
+/// 当前已落盘的迁移数（`V001__initial.sql`——sub_team / person）。后续每加
+/// 一张 migration 都要把这里 +1,并在 issue 里说明；fixture 测试断言的应是
+/// "迁移能跑通且幂等",而不是固定数字。
+const EXPECTED_APPLIED_MIGRATIONS: i64 = 1;
+
 #[test]
-fn 空_migration_集也能干净建库() {
+fn migrations_能跑通且版本号可读() {
     let state = fresh_db();
     let conn = state.db().expect("应当拿得到连接");
 
-    // refinery 建好了自己的历史表，只是一条都没跑
     let applied: i64 = conn
         .query_row("SELECT count(*) FROM refinery_schema_history", [], |r| {
             r.get(0)
         })
         .expect("迁移历史表应当存在");
-    assert_eq!(applied, 0);
-    assert_eq!(db::schema_version(&conn).expect("应当能读版本"), None);
+    assert_eq!(applied, EXPECTED_APPLIED_MIGRATIONS);
+    assert_eq!(
+        db::schema_version(&conn).expect("应当能读版本"),
+        Some(EXPECTED_APPLIED_MIGRATIONS as u32),
+    );
 }
 
 #[test]
@@ -32,7 +39,7 @@ fn 重复跑迁移是幂等的() {
             r.get(0)
         })
         .expect("迁移历史表应当存在");
-    assert_eq!(applied, 0);
+    assert_eq!(applied, EXPECTED_APPLIED_MIGRATIONS);
 }
 
 #[test]
