@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<!--
+  一次性原型 —— 用完即弃。
+  Ticket: #13（Map #2 · 子票）。问题：普通 Task 的「创建 / 改状态 / 改期 / 详情 / 阻塞」五条交互路径。
+
+  在 prototype/recurring-flow 基础上加：今日视图（变体 C 时间列） + 三种编辑表面切换。
+  三个变体对应三种对「编辑表面放在哪儿」的根本回答：
+    A · Sheet-as-detail：点卡片 → 480px 右侧 sheet 打开，同时承担详情与编辑
+    B · Inline popover：点卡片 → 卡片旁浮一个紧凑弹层；状态徽章直接可点弹菜单
+    C · Modal-everywhere：点卡片 → 复用 #9 的新建主弹窗，但预填进编辑模式
+
+  切换：URL `?variant=A|B|C` + 底部悬浮条 / ←→ / 1·2·3 切。
+  假数据 + 内存状态。不接数据库，不持久化。schema 衔接见 ADR 0001。
+
+  决议后保留至 prototype/task-editing 分支供实现阶段参考；主分支不留变体代码。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>科务通 · 任务创建/编辑交互原型（#13）</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  /* ===== 设计 token（与 recurring-flow 一致）===== */
+  :root {
+    --bg:#fafafa; --card:#ffffff; --fg:#09090b; --muted:#f4f4f5; --muted-fg:#71717a;
+    --border:#e4e4e7; --primary:#18181b; --primary-fg:#fafafa;
+    --radius:8px; --shadow-sm:0 1px 2px 0 rgb(0 0 0 /.05);
+    --shadow-md:0 4px 6px -1px rgb(0 0 0 /.07), 0 2px 4px -2px rgb(0 0 0 /.05);
+    --shadow-lg:0 10px 15px -3px rgb(0 0 0 /.1), 0 4px 6px -4px rgb(0 0 0 /.1);
+
+    /* 6 状态色板（与 #4 决议一致） */
+    --st-open:#71717a;       /* zinc-500 */
+    --st-progress:#3b82f6;   /* blue-500 */
+    --st-blocked:#f97316;    /* orange-500 */
+    --st-waiting:#eab308;    /* yellow-500 */
+    --st-done:#22c55e;       /* green-500 */
+    --st-cancelled:#a1a1aa;  /* zinc-400 */
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 4px; }
+
+  .btn { font: inherit; font-size: 13px; font-weight: 500; padding: 7px 14px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; transition: all .12s; display: inline-flex; align-items: center; gap: 6px; }
+  .btn-primary { background: var(--primary); color: var(--primary-fg); }
+  .btn-primary:hover { background: #27272a; }
+  .btn-ghost { background: transparent; color: var(--fg); }
+  .btn-ghost:hover { background: var(--muted); }
+  .btn-outline { background: var(--card); border-color: var(--border); color: var(--fg); }
+  .btn-outline:hover { background: var(--muted); }
+  .input { font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--fg); width: 100%; }
+  .input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgb(24 24 27 /.08); }
+  .label { display: block; font-size: 12px; font-weight: 500; color: var(--muted-fg); margin-bottom: 4px; }
+  .kbd { font-size: 11px; color: var(--muted-fg); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 1px 5px; background: var(--muted); font-family: -apple-system, sans-serif; }
+
+  /* ===== 顶栏 ===== */
+  .sample-banner { background: #fefce8; border-bottom: 1px solid #fde68a; color: #854d0e; font-size: 12px; padding: 6px 20px; display: flex; align-items: center; gap: 8px; }
+  .appbar { height: 52px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; padding: 0 20px; background: var(--card); position: sticky; top: 0; z-index: 30; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+  .brand .logo { width: 24px; height: 24px; border-radius: 6px; background: var(--primary); color: var(--primary-fg); display: grid; place-items: center; font-size: 12px; }
+  .tabs { display: flex; gap: 2px; background: var(--muted); padding: 3px; border-radius: var(--radius); }
+  .tabs button { font: inherit; font-size: 13px; font-weight: 500; border: 0; background: transparent; color: var(--muted-fg); padding: 5px 14px; border-radius: 6px; cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--card); color: var(--fg); box-shadow: var(--shadow-sm); }
+  .appbar .spacer { flex: 1; }
+
+  /* ===== 今日视图（变体 C：4 时间列）===== */
+  .today-wrap { padding: 20px 24px; max-width: 1280px; margin: 0 auto; }
+  .today-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+  .today-head h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  .today-head .sub { color: var(--muted-fg); font-size: 12px; }
+  .today-head .counts { margin-left: auto; display: flex; gap: 8px; font-size: 12px; color: var(--muted-fg); }
+  .counts .pill { background: var(--card); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; display: flex; gap: 4px; align-items: center; }
+  .counts .pill strong { color: var(--fg); font-weight: 600; }
+
+  .time-cols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .time-col { background: transparent; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  .time-col-head { display: flex; align-items: baseline; gap: 8px; padding: 0 4px 4px; border-bottom: 1px solid var(--border); }
+  .time-col-head .name { font-size: 13px; font-weight: 600; }
+  .time-col-head .date { font-size: 11px; color: var(--muted-fg); }
+  .time-col-head .count { margin-left: auto; font-size: 11px; color: var(--muted-fg); background: var(--muted); border-radius: 999px; padding: 1px 7px; }
+
+  /* ===== 任务卡片 ===== */
+  .task-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; cursor: pointer; transition: all .12s; display: flex; flex-direction: column; gap: 6px;
+  }
+  .task-card:hover { border-color: #a1a1aa; box-shadow: var(--shadow-sm); }
+  .task-card.is-recurring::before { content: '↻ '; color: var(--st-progress); font-weight: 600; }
+  .task-card .title { font-size: 13px; line-height: 1.45; word-wrap: break-word; }
+  .task-card .meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--muted-fg); }
+  .task-card .meta .person { background: var(--muted); padding: 1px 6px; border-radius: 999px; }
+  .task-card .meta .project { background: #ede9fe; color: #5b21b6; padding: 1px 6px; border-radius: 999px; }
+  .task-card.is-blocked, .task-card.is-waiting { border-left: 3px solid var(--st-blocked); }
+  .task-card.is-waiting { border-left-color: var(--st-waiting); }
+  .task-card .blocked-note { font-size: 11px; color: #9a3412; background: #fff7ed; padding: 4px 6px; border-radius: 4px; }
+
+  /* 列尾 + 按钮 */
+  .col-add {
+    margin-top: 4px; padding: 8px; border: 1px dashed var(--border); border-radius: 8px;
+    background: transparent; color: var(--muted-fg); font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 4px; justify-content: center;
+  }
+  .col-add:hover { border-color: var(--primary); color: var(--fg); background: var(--card); }
+
+  /* ===== 状态徽章 ===== */
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 999px;
+    background: var(--muted); color: var(--fg); border: 0; cursor: pointer; user-select: none;
+  }
+  .status-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .status-badge[data-st="Open"]        { color: var(--st-open); }
+  .status-badge[data-st="In-progress"] { color: var(--st-progress); background: #eff6ff; }
+  .status-badge[data-st="Blocked"]     { color: var(--st-blocked); background: #fff7ed; }
+  .status-badge[data-st="Waiting-on"]  { color: var(--st-waiting); background: #fefce8; }
+  .status-badge[data-st="Done"]        { color: var(--st-done); background: #f0fdf4; }
+  .status-badge[data-st="Cancelled"]   { color: var(--st-cancelled); background: var(--muted); text-decoration: line-through; }
+
+  /* ===== 变体共用：状态菜单弹层 ===== */
+  .status-menu { position: absolute; background: var(--card); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-lg); z-index: 80; padding: 4px; min-width: 160px; }
+  .status-menu .item { padding: 6px 10px; font-size: 13px; cursor: pointer; border-radius: 4px; display: flex; align-items: center; gap: 8px; }
+  .status-menu .item:hover { background: var(--muted); }
+  .status-menu .item .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .status-menu .sep { height: 1px; background: var(--border); margin: 4px 0; }
+
+  /* ===== 变体 A：Sheet-as-detail ===== */
+  .sheet-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 /.3); z-index: 70; animation: fadeIn .12s; }
+  .sheet { position: fixed; top: 0; right: 0; bottom: 0; width: 480px; max-width: 90vw; background: var(--card); box-shadow: var(--shadow-lg); z-index: 71; display: flex; flex-direction: column; animation: slideInRight .18s; }
+  .sheet header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .sheet header h3 { font-size: 14px; font-weight: 600; margin: 0; }
+  .sheet header .crumb { font-size: 11px; color: var(--muted-fg); font-weight: 400; margin-top: 2px; }
+  .sheet .close-x { background: transparent; border: 0; color: var(--muted-fg); font-size: 20px; cursor: pointer; padding: 0; width: 28px; height: 28px; border-radius: 6px; }
+  .sheet .close-x:hover { background: var(--muted); }
+  .sheet .body { flex: 1; overflow-y: auto; padding: 16px 18px; }
+  .sheet .footer { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .sheet .footer .hint { font-size: 11px; color: var(--muted-fg); }
+
+  .field-block { margin-bottom: 14px; }
+  .field-block .label { font-size: 12px; color: var(--muted-fg); margin-bottom: 6px; }
+  .field-block .title-edit {
+    font-size: 16px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--card); min-height: 40px; line-height: 1.5; outline: none;
+  }
+  .field-block .title-edit:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgb(24 24 27 /.08); }
+  .field-block .title-edit .token-person { background: #dbeafe; color: #1e40af; border-radius: 4px; padding: 1px 4px; }
+  .field-block .title-edit .token-project { background: #ede9fe; color: #5b21b6; border-radius: 4px; padding: 1px 4px; }
+
+  .quick-chip { padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; background: var(--card); cursor: pointer; }
+  .quick-chip:hover { background: var(--muted); }
+  .quick-chip[data-checked="true"] { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+  .quick-chip-warn { color: #9a3412; border-color: #fed7aa; background: #fff7ed; }
+  .quick-chip-warn:hover { background: #ffedd5; }
+
+  .block-panel { padding: 12px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; margin-top: 10px; }
+  .block-panel[data-kind="waiting"] { background: #fefce8; border-color: #fde68a; }
+  .block-panel .row { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 8px; }
+  .block-panel .row strong { color: #9a3412; }
+  .block-panel[data-kind="waiting"] .row strong { color: #854d0e; }
+  .block-panel textarea { background: var(--card); }
+
+  .meta-grid { display: grid; grid-template-columns: 80px 1fr; gap: 8px 12px; font-size: 12px; align-items: center; }
+  .meta-grid dt { color: var(--muted-fg); }
+  .meta-grid dd { margin: 0; color: var(--fg); }
+
+  /* ===== 变体 B：Inline popover ===== */
+  .popover {
+    position: absolute; width: 320px; background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow-lg); z-index: 70; padding: 12px; display: flex; flex-direction: column; gap: 10px;
+    animation: popIn .12s;
+  }
+  .popover .pop-head { display: flex; align-items: center; gap: 8px; }
+  .popover .pop-head .title-mini { font-size: 12px; color: var(--muted-fg); margin-left: auto; }
+  .popover .pop-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .popover .pop-row .lbl { font-size: 11px; color: var(--muted-fg); width: 36px; }
+  .popover .resched-row { padding-top: 8px; border-top: 1px solid var(--border); }
+  .popover .resched-row .lbl { font-size: 11px; color: var(--muted-fg); margin-bottom: 6px; display: block; }
+  .popover .actions { display: flex; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+  .popover .actions .btn { flex: 1; justify-content: center; padding: 5px 8px; font-size: 12px; }
+
+  /* ===== 变体 C：Modal 编辑 ===== */
+  .dialog-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 /.4); z-index: 70; animation: fadeIn .12s; }
+  .dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 540px; max-height: calc(100vh - 80px); background: var(--card); border-radius: 12px; box-shadow: var(--shadow-lg); z-index: 71; display: flex; flex-direction: column; animation: slideUp .14s; }
+  .dialog header { padding: 14px 20px 10px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
+  .dialog header h2 { font-size: 15px; font-weight: 600; margin: 0; }
+  .dialog header .crumb { font-size: 11px; color: var(--muted-fg); font-weight: 400; }
+  .dialog .close-x { background: transparent; border: 0; color: var(--muted-fg); font-size: 20px; cursor: pointer; padding: 0; width: 28px; height: 28px; border-radius: 6px; }
+  .dialog .close-x:hover { background: var(--muted); }
+  .dialog .body { padding: 14px 20px; overflow-y: auto; }
+  .dialog .footer { padding: 10px 20px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 8px; background: var(--muted); border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; }
+  .dialog .footer .left-hint { font-size: 12px; color: var(--muted-fg); }
+  .dialog .footer .right { display: flex; gap: 8px; }
+
+  .field-row { display: grid; grid-template-columns: 70px 1fr; gap: 12px; align-items: center; margin-top: 14px; }
+  .field-row .label-cell { font-size: 12px; color: var(--muted-fg); }
+  .field-row .control { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+  /* ===== ⌘K 命令面板（仅展示入口） ===== */
+  .cmdk-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 /.4); z-index: 60; animation: fadeIn .12s; }
+  .cmdk { position: fixed; top: 20%; left: 50%; transform: translateX(-50%); width: 560px; background: var(--card); border-radius: 12px; box-shadow: var(--shadow-lg); z-index: 61; overflow: hidden; animation: slideUp .14s; }
+  .cmdk input { width: 100%; border: 0; border-bottom: 1px solid var(--border); padding: 14px 18px; font-size: 15px; outline: none; }
+  .cmdk .list { max-height: 320px; overflow-y: auto; padding: 6px; }
+  .cmdk .item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .cmdk .item:hover, .cmdk .item[data-active="true"] { background: var(--muted); }
+  .cmdk .item .icon { width: 24px; height: 24px; display: grid; place-items: center; background: var(--muted); border-radius: 6px; font-size: 13px; }
+  .cmdk .item .desc { color: var(--muted-fg); font-size: 12px; margin-left: auto; }
+  .cmdk .footer { padding: 8px 14px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted-fg); display: flex; gap: 12px; }
+
+  /* ===== Toast ===== */
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--primary); color: var(--primary-fg); padding: 10px 16px; border-radius: 8px; box-shadow: var(--shadow-lg); font-size: 13px; display: flex; align-items: center; gap: 12px; z-index: 90; animation: slideUp .18s; }
+  .toast .undo { color: #93c5fd; background: transparent; border: 0; cursor: pointer; font-size: 13px; font: inherit; }
+  .toast .undo:hover { text-decoration: underline; }
+
+  /* ===== 底部悬浮条（变体切换） ===== */
+  .switcher {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    background: var(--primary); color: var(--primary-fg); border-radius: 999px;
+    padding: 6px 8px; display: flex; align-items: center; gap: 6px; z-index: 100;
+    box-shadow: var(--shadow-lg); font-size: 12px;
+  }
+  .switcher button { background: transparent; border: 0; color: inherit; padding: 4px 10px; border-radius: 999px; cursor: pointer; font: inherit; opacity: .65; }
+  .switcher button[aria-current="true"] { background: var(--primary-fg); color: var(--primary); opacity: 1; font-weight: 600; }
+  .switcher .arrow { padding: 4px 8px; opacity: .7; font-size: 14px; }
+  .switcher .arrow:hover { opacity: 1; }
+  .switcher .meta { padding: 4px 10px; opacity: .8; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  [hidden] { display: none !important; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes slideUp { from { opacity: 0; transform: translate(-50%, -45%); } to { opacity: 1; transform: translate(-50%, -50%); } }
+  @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
+  @keyframes popIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+
+<!-- ===== 示例数据横幅 ===== -->
+<div class="sample-banner">
+  <span>⚠️</span>
+  <span><b>#13 原型</b>：在变体 C 时间列上叠加三种「编辑表面」变体 — A 侧抽屉详情 / B 卡片旁内联弹层 / C 弹窗。假数据；不持久化。</span>
+  <span style="flex:1"></span>
+  <span>按 <span class="kbd">←</span> <span class="kbd">→</span> 切变体 · <span class="kbd">⌘N</span> 新建 · <span class="kbd">⌘K</span> 面板</span>
+</div>
+
+<!-- ===== 顶栏 ===== -->
+<header class="appbar">
+  <div class="brand"><div class="logo">科</div><span>科务通</span></div>
+  <div class="tabs">
+    <button aria-selected="true">今日</button>
+    <button aria-selected="false">人员</button>
+    <button aria-selected="false">项目</button>
+  </div>
+  <div style="flex:1"></div>
+  <button class="btn btn-outline" onclick="openCmdK()" style="padding:5px 10px;font-size:12px;color:var(--muted-fg)">
+    🔍 <span style="margin:0 6px">搜索或新建…</span><span class="kbd">⌘K</span>
+  </button>
+  <button class="btn btn-primary" onclick="openCreate()">+ 新建任务</button>
+</header>
+
+<!-- ===== 今日视图（变体 C · 4 列）===== -->
+<main class="today-wrap">
+  <div class="today-head">
+    <h1>今日</h1>
+    <span class="sub" id="today-date">2026-09-10 · 周四</span>
+    <div class="counts">
+      <span class="pill">👥 在岗 <strong id="cnt-people">7</strong></span>
+      <span class="pill">▶ 进行中 <strong id="cnt-progress">3</strong></span>
+      <span class="pill">⛔ 阻塞 <strong id="cnt-blocked">2</strong></span>
+    </div>
+  </div>
+
+  <div class="time-cols">
+    <section class="time-col" data-col="overdue">
+      <div class="time-col-head">
+        <span class="name" style="color:#b91c1c">已逾期</span>
+        <span class="date">9月7日 ~ 9月9日</span>
+        <span class="count" id="count-overdue">0</span>
+      </div>
+      <div class="col-body" id="col-overdue"></div>
+      <button class="col-add" onclick="colAdd('overdue')">＋ 在此列新建</button>
+    </section>
+
+    <section class="time-col" data-col="today">
+      <div class="time-col-head">
+        <span class="name">今天</span>
+        <span class="date">9月10日 · 周四</span>
+        <span class="count" id="count-today">0</span>
+      </div>
+      <div class="col-body" id="col-today"></div>
+      <button class="col-add" onclick="colAdd('today')">＋ 在此列新建</button>
+    </section>
+
+    <section class="time-col" data-col="tomorrow">
+      <div class="time-col-head">
+        <span class="name">明天</span>
+        <span class="date">9月11日 · 周五</span>
+        <span class="count" id="count-tomorrow">0</span>
+      </div>
+      <div class="col-body" id="col-tomorrow"></div>
+      <button class="col-add" onclick="colAdd('tomorrow')">＋ 在此列新建</button>
+    </section>
+
+    <section class="time-col" data-col="week">
+      <div class="time-col-head">
+        <span class="name">本周剩余</span>
+        <span class="date">9月12日 ~ 9月13日</span>
+        <span class="count" id="count-week">0</span>
+      </div>
+      <div class="col-body" id="col-week"></div>
+      <button class="col-add" onclick="colAdd('week')">＋ 在此列新建</button>
+    </section>
+  </div>
+</main>
+
+<!-- ===== 变体 A：Sheet-as-detail（右侧抽屉，详情+编辑一体） ===== -->
+<div class="sheet-backdrop" id="sheet-backdrop" hidden onclick="closeSheetA()"></div>
+<aside class="sheet" id="sheet-A" hidden>
+  <header>
+    <div>
+      <h3 id="sheet-A-title">任务详情</h3>
+      <div class="crumb" id="sheet-A-crumb"></div>
+    </div>
+    <button class="close-x" onclick="closeSheetA()" aria-label="关闭">×</button>
+  </header>
+  <div class="body" id="sheet-A-body"></div>
+  <div class="footer">
+    <span class="hint">所有字段即时保存 · <span class="kbd">Esc</span> 关闭</span>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-ghost" onclick="closeSheetA()">关闭</button>
+      <button class="btn btn-primary" onclick="markDoneFromSheet()">标记完成</button>
+    </div>
+  </div>
+</aside>
+
+<!-- ===== 变体 B：Inline popover（动态挂到 body） ===== -->
+<div id="popover-B" class="popover" hidden></div>
+
+<!-- ===== 变体 C：Modal 编辑（复用 #9 主弹窗结构，预填） ===== -->
+<div class="dialog-backdrop" id="edit-backdrop" hidden onclick="closeEditC()"></div>
+<div class="dialog" id="edit-dialog" hidden>
+  <header>
+    <div>
+      <h2 id="edit-h2">编辑任务</h2>
+      <div class="crumb" id="edit-crumb"></div>
+    </div>
+    <button class="close-x" onclick="closeEditC()" aria-label="关闭">×</button>
+  </header>
+  <div class="body" id="edit-body"></div>
+  <div class="footer">
+    <span class="left-hint"><span class="kbd">Esc</span> 取消 · <span class="kbd">⌘↵</span> 保存</span>
+    <div class="right">
+      <button class="btn btn-ghost" onclick="closeEditC()">取消</button>
+      <button class="btn btn-primary" onclick="saveEditC()">保存修改</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 状态菜单（共用，A/B/C 都会触发） ===== -->
+<div id="status-menu" class="status-menu" hidden></div>
+
+<!-- ===== ⌘K 命令面板（仅新建入口示例） ===== -->
+<div class="cmdk-backdrop" id="cmdk-backdrop" hidden onclick="closeCmdK()"></div>
+<div class="cmdk" id="cmdk" hidden>
+  <input placeholder="搜索任务、人员、项目或输入命令…" id="cmdk-input">
+  <div class="list" id="cmdk-list">
+    <div class="item" data-active="true" onclick="closeCmdK();openCreate()">
+      <div class="icon">＋</div><span><strong>新建任务</strong></span><span class="desc">未指定标题</span>
+    </div>
+    <div class="item"><div class="icon">🔍</div><span>搜索任务标题…</span><span class="desc">FTS5 全文</span></div>
+    <div class="item"><div class="icon">📁</div><span>跳转到「Q4 业务汇报」</span><span class="desc">项目</span></div>
+  </div>
+  <div class="footer"><span><span class="kbd">↑</span><span class="kbd">↓</span> 选择</span><span><span class="kbd">Enter</span> 打开</span><span><span class="kbd">Esc</span> 关闭</span></div>
+</div>
+
+<!-- ===== Toast ===== -->
+<div class="toast" id="toast" hidden>
+  <span id="toast-msg">已保存</span>
+  <button class="undo" onclick="dismissToast()">撤销</button>
+</div>
+
+<!-- ===== 底部悬浮变体切换 ===== -->
+<div class="switcher">
+  <button class="arrow" onclick="cycleVariant(-1)" aria-label="上一变体">◀</button>
+  <button id="sw-A" onclick="setVariant('A')">A</button>
+  <button id="sw-B" onclick="setVariant('B')">B</button>
+  <button id="sw-C" onclick="setVariant('C')">C</button>
+  <span class="meta" id="sw-meta">Sheet-as-detail</span>
+  <button class="arrow" onclick="cycleVariant(1)" aria-label="下一变体">▶</button>
+</div>
+
+<script>
+/* =========================================================
+ * 假数据 + 状态模型
+ * schema 字段映射见 ADR 0001；recurring_instance 合入 task 表
+ * ========================================================= */
+
+const PEOPLE = [
+  { name: '张三', team: '业务一组' },
+  { name: '李四', team: '业务一组' },
+  { name: '王五', team: '业务二组' },
+  { name: '赵六', team: '业务二组' },
+  { name: '孙七', team: '行政' },
+  { name: '周八', team: '行政' },
+  { name: '钱九', team: '业务一组' },
+];
+const PROJECTS = [
+  { name: 'Q4 业务汇报', status: '进行中' },
+  { name: '年度合规审计', status: '进行中' },
+  { name: '客户回访', status: '进行中' },
+  { name: '新人 onboarding', status: '进行中' },
+];
+const STATUSES = ['Open', 'In-progress', 'Blocked', 'Waiting-on', 'Done', 'Cancelled'];
+const STATUS_LABEL = {
+  'Open': '待开始', 'In-progress': '进行中', 'Blocked': '已阻塞',
+  'Waiting-on': '等待中', 'Done': '已完成', 'Cancelled': '已取消',
+};
+
+const TODAY = new Date('2026-09-10');
+function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
+function fmt(d) { return d.toISOString().slice(0, 10); }
+
+// 字段注释对应 ADR 0001：
+//   due_at          → 一次性任务截止
+//   scheduled_at    → 周期实例计划时间
+//   blocked_reason  → 自由文本
+//   blocked_at      → 阻塞起始（独立于 updated_at，便于 #3 通知规则）
+//   waiting_on      → 等待的人员（nullable person_id）
+let TASKS = [
+  { id: 1, title: '与外委单位对接数据接口', status: 'Blocked',
+    person: '张三', project: 'Q4 业务汇报',
+    due_at: fmt(addDays(TODAY, -3)),
+    blocked_reason: '等外委单位盖章（已催 2 次）',
+    blocked_at: '2026-09-08 14:20',
+    recurring: false },
+
+  { id: 2, title: '提交第三季度总结初稿', status: 'Waiting-on',
+    person: '李四', project: 'Q4 业务汇报',
+    due_at: fmt(addDays(TODAY, -2)),
+    blocked_reason: '等分管领导批示',
+    blocked_at: '2026-09-09 09:15',
+    waiting_on: '王五',
+    recurring: false },
+
+  { id: 3, title: '合规审计自查清单', status: 'In-progress',
+    person: '王五', project: '年度合规审计',
+    due_at: fmt(addDays(TODAY, -1)),
+    recurring: false },
+
+  { id: 4, title: '回访华东区三家客户', status: 'Open',
+    person: '赵六', project: '客户回访',
+    due_at: fmt(TODAY),
+    recurring: false },
+
+  { id: 5, title: '新员工入职手续办理', status: 'In-progress',
+    person: '孙七', project: '新人 onboarding',
+    due_at: fmt(TODAY),
+    recurring: false },
+
+  { id: 6, title: '月度工作例会', status: 'Open',
+    person: null, project: null,
+    scheduled_at: fmt(TODAY) + ' 17:00',
+    recurring: true },
+
+  { id: 7, title: '起草本月业务通报', status: 'In-progress',
+    person: '钱九', project: 'Q4 业务汇报',
+    due_at: fmt(addDays(TODAY, 1)),
+    recurring: false },
+
+  { id: 8, title: 'Q4 业务汇报 PPT 初版', status: 'Open',
+    person: '张三', project: 'Q4 业务汇报',
+    due_at: fmt(addDays(TODAY, 1)),
+    recurring: false },
+
+  { id: 9, title: '客户回访周报整理', status: 'Done',
+    person: '赵六', project: '客户回访',
+    due_at: fmt(addDays(TODAY, 2)),
+    recurring: true },
+
+  { id: 10, title: '制度修订意见征集', status: 'Cancelled',
+    person: '李四', project: null,
+    due_at: fmt(addDays(TODAY, 2)),
+    recurring: false },
+];
+
+function getTask(id) { return TASKS.find(t => t.id === id); }
+
+/* =========================================================
+ * 工具
+ * ========================================================= */
+function $el(html) { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; }
+function escapeHTML(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* =========================================================
+ * 列归类（due_at / scheduled_at 与 TODAY 比较）
+ * ========================================================= */
+function columnOf(task) {
+  const d = task.due_at || task.scheduled_at;
+  if (!d) return 'week';
+  const date = new Date(d.slice(0, 10));
+  const today = new Date(fmt(TODAY));
+  if (date < today) return 'overdue';
+  if (fmt(date) === fmt(today)) return 'today';
+  if (fmt(date) === fmt(addDays(today, 1))) return 'tomorrow';
+  return 'week';
+}
+
+/* =========================================================
+ * 渲染今日视图（共享）
+ * ========================================================= */
+function renderToday() {
+  for (const col of ['overdue', 'today', 'tomorrow', 'week']) {
+    document.getElementById('col-' + col).innerHTML = '';
+  }
+  const counts = { overdue: 0, today: 0, tomorrow: 0, week: 0 };
+  for (const t of TASKS) {
+    const col = columnOf(t);
+    counts[col]++;
+    document.getElementById('col-' + col).appendChild(renderCard(t));
+  }
+  for (const c of Object.keys(counts)) {
+    document.getElementById('count-' + c).textContent = counts[c];
+  }
+  // 顶栏计数
+  document.getElementById('cnt-progress').textContent = TASKS.filter(t => t.status === 'In-progress').length;
+  document.getElementById('cnt-blocked').textContent  = TASKS.filter(t => t.status === 'Blocked' || t.status === 'Waiting-on').length;
+  document.getElementById('cnt-people').textContent   = new Set(TASKS.filter(t => t.person).map(t => t.person)).size;
+}
+
+function renderCard(t) {
+  const card = $el(`<div class="task-card is-${t.status.toLowerCase()}" data-id="${t.id}"></div>`);
+  if (t.recurring) card.classList.add('is-recurring');
+  const blockNote = (t.status === 'Blocked' || t.status === 'Waiting-on') && t.blocked_reason
+    ? `<div class="blocked-note">${t.status === 'Waiting-on' ? '⏳ ' : '⛔ '}${escapeHTML(t.blocked_reason)}${t.waiting_on ? ' · 等 <b>@' + escapeHTML(t.waiting_on) + '</b>' : ''}</div>` : '';
+  const meta = [];
+  if (t.person) meta.push(`<span class="person">@${escapeHTML(t.person)}</span>`);
+  if (t.project) meta.push(`<span class="project">#${escapeHTML(t.project)}</span>`);
+  card.innerHTML = `
+    <div class="title">${escapeHTML(t.title)}</div>
+    ${meta.length ? '<div class="meta">' + meta.join('') + '</div>' : ''}
+    ${blockNote}
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:2px">
+      <span class="status-badge" data-st="${t.status}" data-action="status">${STATUS_LABEL[t.status]}</span>
+    </div>`;
+  card.addEventListener('click', (e) => {
+    if (e.target.dataset.action === 'status') return; // 状态徽章自己处理
+    onCardClick(t, e);
+  });
+  card.querySelector('[data-action="status"]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    openStatusMenu(t, e.currentTarget);
+  });
+  return card;
+}
+
+/* =========================================================
+ * 状态菜单（A/B/C 共用）
+ * ========================================================= */
+function openStatusMenu(task, anchor) {
+  const menu = document.getElementById('status-menu');
+  menu.innerHTML = STATUSES.map(s => `
+    <div class="item" data-st="${s}" onclick="pickStatus(${task.id}, '${s}')">
+      <span class="dot" style="background:${cssVar(s)}"></span>
+      ${STATUS_LABEL[s]}${task.status === s ? ' ✓' : ''}
+    </div>`).join('');
+  const r = anchor.getBoundingClientRect();
+  menu.style.top  = (window.scrollY + r.bottom + 4) + 'px';
+  menu.style.left = (window.scrollX + r.left) + 'px';
+  menu.hidden = false;
+  const close = (e) => {
+    if (menu.contains(e.target)) return;
+    menu.hidden = true;
+    document.removeEventListener('click', close);
+  };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+function pickStatus(id, st) {
+  const t = getTask(id);
+  const prev = t.status;
+  t.status = st;
+  if (st === 'Blocked' || st === 'Waiting-on') {
+    if (!t.blocked_at) t.blocked_at = new Date().toISOString().slice(0, 16).replace('T', ' ');
+  } else {
+    t.blocked_at = null;
+  }
+  document.getElementById('status-menu').hidden = true;
+  renderToday();
+  // 变体 C 在切到 Blocked/Waiting-on 后弹模态收集原因（避免无原因记录）
+  if ((st === 'Blocked' || st === 'Waiting-on') && CURRENT_VARIANT === 'C' && !t.blocked_reason) {
+    openEditC(id, { focusBlockReason: true });
+    return;
+  }
+  // 变体 A：刷新 sheet（如果开着）
+  if (sheetA_currentId === id) openSheetA(id);
+  toast(`状态：${STATUS_LABEL[prev]} → ${STATUS_LABEL[st]}`);
+}
+function cssVar(s) { return getComputedStyle(document.documentElement).getPropertyValue('--st-' + s.toLowerCase()).trim() || '#999'; }
+
+/* =========================================================
+ * 列尾 + 新建（保留全局 ⌘N 之外的另一入口）
+ * ========================================================= */
+function colAdd(col) {
+  // 简化：列尾新建只设置 due_at 默认值，复用全局新建弹窗
+  openCreate({ defaultDue: col });
+}
+
+/* =========================================================
+ * ⌘K 与新建（顶栏按钮）
+ * ========================================================= */
+function openCmdK() {
+  document.getElementById('cmdk').hidden = false;
+  document.getElementById('cmdk-backdrop').hidden = false;
+  setTimeout(() => document.getElementById('cmdk-input').focus(), 50);
+}
+function closeCmdK() {
+  document.getElementById('cmdk').hidden = true;
+  document.getElementById('cmdk-backdrop').hidden = true;
+}
+function openCreate() {
+  // 简化版：仅 toast 提示「沿用 #9 v3 弹窗」
+  toast('沿用 #9 v3 新建弹窗（contenteditable + @ # + 截止 chip + 周期 toggle）');
+  closeCmdK();
+}
+let toastTimer;
+function toast(msg) {
+  document.getElementById('toast-msg').textContent = msg;
+  document.getElementById('toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => document.getElementById('toast').hidden = true, 3000);
+}
+function dismissToast() { document.getElementById('toast').hidden = true; }
+
+/* =========================================================
+ * 卡片点击 → 走当前变体的编辑入口
+ * ========================================================= */
+let CURRENT_VARIANT = 'A';
+function onCardClick(t, e) {
+  if (CURRENT_VARIANT === 'A') openSheetA(t.id);
+  else if (CURRENT_VARIANT === 'B') openPopoverB(t.id, e.currentTarget);
+  else if (CURRENT_VARIANT === 'C') openEditC(t.id);
+}
+
+/* =========================================================
+ * 变体 A：Sheet-as-detail
+ *  - 右侧 480px sheet 同时承担详情 + 编辑
+ *  - 标题直接编辑（contenteditable 简化为单行）
+ *  - 状态徽章点击弹菜单（共用）
+ *  - Blocked/Waiting-on：sheet 内嵌面板，要求填原因 / 选 waiting_on
+ *  - 改期：sheet 内 chip 行 + 日期输入
+ *  - 必填：标题 + 截止（提交前提示）
+ * ========================================================= */
+let sheetA_currentId = null;
+function openSheetA(id) {
+  sheetA_currentId = id;
+  const t = getTask(id);
+  const sheet = document.getElementById('sheet-A');
+  const body = document.getElementById('sheet-A-body');
+  document.getElementById('sheet-A-title').textContent = STATUS_LABEL[t.status];
+  document.getElementById('sheet-A-crumb').textContent = `任务 #${t.id} · 创建于 ${t.id} 天前`;
+  body.innerHTML = `
+    <div class="field-block">
+      <div class="label">标题（必填）</div>
+      <div class="title-edit" contenteditable="true">${renderTitleHTML(t)}</div>
+    </div>
+
+    <div class="field-block">
+      <div class="label">状态</div>
+      <span class="status-badge" data-st="${t.status}" data-action="status-sheet">${STATUS_LABEL[t.status]}</span>
+      <span style="font-size:11px;color:var(--muted-fg);margin-left:8px">点击切换</span>
+    </div>
+
+    <div class="field-block">
+      <div class="label">截止（必填）</div>
+      <div class="control" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <button class="quick-chip" data-due="today" onclick="sheetA_setDue('${id}', 'today', this)">今天</button>
+        <button class="quick-chip" data-due="tomorrow" onclick="sheetA_setDue('${id}', 'tomorrow', this)">明天</button>
+        <button class="quick-chip" data-due="week" onclick="sheetA_setDue('${id}', 'week', this)">一周后</button>
+        <button class="quick-chip" data-due="next-week" onclick="sheetA_setDue('${id}', 'next-week', this)">下周一</button>
+        <button class="quick-chip quick-chip-warn" data-due="none" onclick="sheetA_setDue('${id}', 'none', this)">无截止</button>
+        <input class="input" type="date" value="${(t.due_at || '').slice(0, 10)}" onchange="sheetA_setDueDate('${id}', this.value)" style="max-width:140px">
+        ${t.due_at ? `<span style="font-size:11px;color:var(--muted-fg)">当前：${t.due_at}</span>` : '<span style="font-size:11px;color:#b91c1c">⚠ 未设置</span>'}
+      </div>
+    </div>
+
+    <div class="field-block">
+      <div class="label">分配给</div>
+      <select class="input" onchange="sheetA_setPerson('${id}', this.value)" style="max-width:200px">
+        <option value="">未分配</option>
+        ${PEOPLE.map(p => `<option value="${escapeHTML(p.name)}" ${p.name === t.person ? 'selected' : ''}>${escapeHTML(p.name)}（${escapeHTML(p.team)}）</option>`).join('')}
+      </select>
+    </div>
+
+    <div class="field-block">
+      <div class="label">所属项目</div>
+      <select class="input" onchange="sheetA_setProject('${id}', this.value)" style="max-width:240px">
+        <option value="">无</option>
+        ${PROJECTS.map(p => `<option value="${escapeHTML(p.name)}" ${p.name === t.project ? 'selected' : ''}>${escapeHTML(p.name)}</option>`).join('')}
+      </select>
+    </div>
+
+    ${(t.status === 'Blocked' || t.status === 'Waiting-on') ? blockPanelSheetA(t) : ''}
+
+    <div class="field-block">
+      <div class="label">描述</div>
+      <textarea class="input" rows="3" placeholder="可选">${escapeHTML(t.description || '')}</textarea>
+    </div>
+
+    <dl class="meta-grid" style="margin-top:18px;padding-top:12px;border-top:1px solid var(--border)">
+      <dt>创建</dt><dd>2026-09-${String(3 + (t.id % 7)).padStart(2, '0')} 10:00</dd>
+      <dt>更新</dt><dd>2026-09-10 11:25</dd>
+      ${t.blocked_at ? `<dt>阻塞自</dt><dd><span style="color:#9a3412">${t.blocked_at}</span></dd>` : ''}
+      <dt>关联</dt><dd>${t.recurring ? '<span style="color:var(--st-progress)">↻ 周期实例</span>' : '一次性任务'}</dd>
+    </dl>`;
+  // 状态徽章点击 → 状态菜单
+  body.querySelector('[data-action="status-sheet"]').addEventListener('click', (e) => {
+    openStatusMenu(t, e.currentTarget);
+  });
+  sheet.hidden = false;
+  document.getElementById('sheet-backdrop').hidden = false;
+}
+function closeSheetA() {
+  document.getElementById('sheet-A').hidden = true;
+  document.getElementById('sheet-backdrop').hidden = true;
+  sheetA_currentId = null;
+}
+function renderTitleHTML(t) {
+  // 简化：标题里的 @xxx / #xxx 渲染为 chip
+  return escapeHTML(t.title).replace(/@([一-龥]+)/g, '<span class="token-person">@$1</span>')
+                              .replace(/#([一-龥 A-Za-z0-9]+)/g, '<span class="token-project">#$1</span>');
+}
+function blockPanelSheetA(t) {
+  return `
+    <div class="block-panel" data-kind="${t.status === 'Waiting-on' ? 'waiting' : 'block'}">
+      <div class="row"><strong>${t.status === 'Waiting-on' ? '⏳ 等待中原因' : '⛔ 阻塞原因'}</strong>${t.blocked_at ? `<span style="margin-left:auto;font-size:11px;color:#9a3412">起始：${t.blocked_at}</span>` : ''}</div>
+      <textarea class="input" rows="2" placeholder="例：等外委单位盖章 / 等分管领导批示" onchange="sheetA_setBlockReason('${t.id}', this.value)">${escapeHTML(t.blocked_reason || '')}</textarea>
+      ${t.status === 'Waiting-on' ? `
+        <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+          <span style="font-size:12px;color:var(--muted-fg)">等待</span>
+          <select class="input" style="max-width:160px" onchange="sheetA_setWaitingOn('${t.id}', this.value)">
+            <option value="">未指定</option>
+            ${PEOPLE.map(p => `<option value="${escapeHTML(p.name)}" ${p.name === t.waiting_on ? 'selected' : ''}>@${escapeHTML(p.name)}</option>`).join('')}
+          </select>
+        </div>` : ''}
+    </div>`;
+}
+function sheetA_setDue(id, kind, el) {
+  const t = getTask(id);
+  document.querySelectorAll('#sheet-A .quick-chip').forEach(c => c.dataset.checked = 'false');
+  el.dataset.checked = 'true';
+  const map = { today: fmt(TODAY), tomorrow: fmt(addDays(TODAY, 1)),
+                week: fmt(addDays(TODAY, 7)),
+                'next-week': nextMonday(TODAY), none: '' };
+  t.due_at = map[kind];
+  openSheetA(id); // 整 sheet 重渲染（取最新值）
+  toast(`截止：${kind === 'none' ? '无' : map[kind]}`);
+  renderToday();
+}
+function sheetA_setDueDate(id, v) { const t = getTask(id); t.due_at = v; openSheetA(id); renderToday(); }
+function sheetA_setPerson(id, v) { getTask(id).person = v || null; renderToday(); }
+function sheetA_setProject(id, v) { getTask(id).project = v || null; renderToday(); }
+function sheetA_setBlockReason(id, v) { getTask(id).blocked_reason = v || null; }
+function sheetA_setWaitingOn(id, v) { getTask(id).waiting_on = v || null; }
+function nextMonday(d) { const r = new Date(d); const day = r.getDay(); const diff = (8 - day) % 7 || 7; r.setDate(r.getDate() + diff); return fmt(r); }
+function markDoneFromSheet() {
+  if (sheetA_currentId) pickStatus(sheetA_currentId, 'Done');
+}
+
+/* =========================================================
+ * 变体 B：Inline popover
+ *  - 卡片右侧浮 320px 弹层
+ *  - 状态徽章直接可点（共用状态菜单）
+ *  - 改期：弹层底部 chip 行（一键顺延）
+ *  - Blocked/Waiting-on：弹层内联原因输入（卡片主区域也展示）
+ *  - 必填：标题必填，截止可空（带⚠）
+ * ========================================================= */
+let popoverB_currentId = null;
+let popoverB_gen = 0;
+function openPopoverB(id, anchor) {
+  popoverB_currentId = id;
+  const t = getTask(id);
+  const pop = document.getElementById('popover-B');
+  pop.innerHTML = `
+    <div class="pop-head">
+      <span class="status-badge" data-st="${t.status}" data-action="status-pop">${STATUS_LABEL[t.status]}</span>
+      <span class="title-mini">#${t.id}</span>
+    </div>
+    <div style="font-size:13px;font-weight:500;line-height:1.4">${escapeHTML(t.title)}</div>
+    <div class="pop-row">
+      <span class="lbl">人员</span>
+      <select class="input" style="max-width:160px;font-size:12px;padding:4px 6px" onchange="popB_set('${id}','person',this.value)">
+        <option value="">未分配</option>
+        ${PEOPLE.map(p => `<option value="${escapeHTML(p.name)}" ${p.name === t.person ? 'selected' : ''}>${escapeHTML(p.name)}</option>`).join('')}
+      </select>
+      <span class="lbl" style="margin-left:8px">项目</span>
+      <select class="input" style="max-width:160px;font-size:12px;padding:4px 6px" onchange="popB_set('${id}','project',this.value)">
+        <option value="">无</option>
+        ${PROJECTS.map(p => `<option value="${escapeHTML(p.name)}" ${p.name === t.project ? 'selected' : ''}>${escapeHTML(p.name)}</option>`).join('')}
+      </select>
+    </div>
+    ${(t.status === 'Blocked' || t.status === 'Waiting-on') ? `
+      <div style="background:${t.status === 'Waiting-on' ? '#fefce8' : '#fff7ed'};padding:8px;border-radius:6px;border:1px solid ${t.status === 'Waiting-on' ? '#fde68a' : '#fed7aa'}">
+        <div style="font-size:11px;color:${t.status === 'Waiting-on' ? '#854d0e' : '#9a3412'};margin-bottom:4px"><b>${t.status === 'Waiting-on' ? '等待中' : '已阻塞'}</b>${t.blocked_at ? ' · ' + t.blocked_at : ''}</div>
+        <textarea class="input" rows="2" style="font-size:12px" placeholder="原因" onchange="popB_set('${id}','blocked_reason',this.value)">${escapeHTML(t.blocked_reason || '')}</textarea>
+      </div>` : ''}
+    <div class="resched-row">
+      <span class="lbl">顺延到</span>
+      <div style="display:flex;gap:4px;flex-wrap:wrap">
+        <button class="quick-chip" onclick="popB_resched('${id}','today')">今天</button>
+        <button class="quick-chip" onclick="popB_resched('${id}','tomorrow')">明天</button>
+        <button class="quick-chip" onclick="popB_resched('${id}','mon')">下周一</button>
+        <button class="quick-chip" onclick="popB_resched('${id}','clear')">清除</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-outline" onclick="popB_openFull('${id}')">完整编辑 ↗</button>
+      <button class="btn btn-primary" onclick="popB_done('${id}')">标记完成</button>
+    </div>`;
+  // 状态徽章点击
+  pop.querySelector('[data-action="status-pop"]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    openStatusMenu(t, e.currentTarget);
+  });
+  // 定位
+  const r = anchor.getBoundingClientRect();
+  pop.style.top  = (window.scrollY + r.top) + 'px';
+  // 默认贴右侧；越界则贴左
+  let left = window.scrollX + r.right + 8;
+  if (left + 320 > window.scrollX + window.innerWidth - 16) left = window.scrollX + r.left - 320 - 8;
+  pop.style.left = left + 'px';
+  pop.hidden = false;
+  // 外部点击关闭（用 generation 避免上一个 popover 的监听器误关新开的）
+  const myGen = ++popoverB_gen;
+  setTimeout(() => {
+    const close = (e) => {
+      if (myGen !== popoverB_gen) return;
+      if (pop.contains(e.target)) return;
+      pop.hidden = true;
+      popoverB_currentId = null;
+      document.removeEventListener('click', close);
+    };
+    document.addEventListener('click', close);
+  }, 0);
+}
+function popB_set(id, key, val) {
+  const t = getTask(id);
+  t[key] = val || null;
+  if (key === 'blocked_reason' && val && !t.blocked_at) {
+    t.blocked_at = new Date().toISOString().slice(0, 16).replace('T', ' ');
+  }
+  renderToday();
+}
+function popB_resched(id, kind) {
+  const t = getTask(id);
+  const map = { today: fmt(TODAY), tomorrow: fmt(addDays(TODAY, 1)),
+                mon: nextMonday(TODAY), clear: '' };
+  t.due_at = map[kind];
+  renderToday();
+  document.getElementById('popover-B').hidden = true;
+  toast(kind === 'clear' ? '已清除截止' : `顺延到 ${map[kind]}`);
+}
+function popB_openFull(id) {
+  // popover 内提供「完整编辑」入口 → 切到 A 变体打开 sheet（cross-variant fallback）
+  document.getElementById('popover-B').hidden = true;
+  setVariant('A');
+  setTimeout(() => openSheetA(id), 50);
+}
+function popB_done(id) {
+  document.getElementById('popover-B').hidden = true;
+  pickStatus(id, 'Done');
+}
+
+/* =========================================================
+ * 变体 C：Modal-everywhere（编辑 = 复用主弹窗）
+ *  - 540px 居中弹窗
+ *  - 标题直接编辑（contenteditable，@ # token 简单展示）
+ *  - 状态：徽章 + 点击菜单
+ *  - 截止：chip + 日期
+ *  - 阻塞：弹窗底部一个折叠面板
+ *  - 必填：标题必填，截止可空（警告但不阻止保存）
+ * ========================================================= */
+let editC_currentId = null;
+function openEditC(id, opts = {}) {
+  editC_currentId = id;
+  const t = getTask(id);
+  document.getElementById('edit-h2').textContent = '编辑任务';
+  document.getElementById('edit-crumb').textContent = `#${t.id} · ${STATUS_LABEL[t.status]}`;
+  const body = document.getElementById('edit-body');
+  body.innerHTML = `
+    <div class="title-wrap">
+      <div class="title-input" contenteditable="true" data-placeholder="任务标题…" id="edit-title">${renderTitleHTML(t)}</div>
+    </div>
+
+    <div class="field-row">
+      <span class="label-cell">状态</span>
+      <div class="control">
+        <span class="status-badge" data-st="${t.status}" data-action="status-edit">${STATUS_LABEL[t.status]}</span>
+      </div>
+    </div>
+
+    <div class="field-row">
+      <span class="label-cell">截止</span>
+      <div class="control">
+        <button class="quick-chip" onclick="editC_setDue('${id}','today',this)" ${t.due_at === fmt(TODAY) ? 'data-checked="true"' : ''}>今天</button>
+        <button class="quick-chip" onclick="editC_setDue('${id}','tomorrow',this)" ${t.due_at === fmt(addDays(TODAY, 1)) ? 'data-checked="true"' : ''}>明天</button>
+        <button class="quick-chip" onclick="editC_setDue('${id}','week',this)" ${t.due_at === fmt(addDays(TODAY, 7)) ? 'data-checked="true"' : ''}>一周后</button>
+        <button class="quick-chip" onclick="editC_setDue('${id}','none',this)" ${!t.due_at ? 'data-checked="true"' : ''}>无</button>
+        <input class="input" type="date" value="${(t.due_at || '').slice(0, 10)}" onchange="editC_setDueDate('${id}',this.value)" style="max-width:140px">
+      </div>
+    </div>
+
+    <div class="field-row">
+      <span class="label-cell">分配给</span>
+      <div class="control">
+        <select class="input" style="max-width:200px" onchange="editC_set('${id}','person',this.value)">
+          <option value="">未分配</option>
+          ${PEOPLE.map(p => `<option value="${escapeHTML(p.name)}" ${p.name === t.person ? 'selected' : ''}>${escapeHTML(p.name)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+
+    <div class="field-row">
+      <span class="label-cell">所属项目</span>
+      <div class="control">
+        <select class="input" style="max-width:240px" onchange="editC_set('${id}','project',this.value)">
+          <option value="">无</option>
+          ${PROJECTS.map(p => `<option value="${escapeHTML(p.name)}" ${p.name === t.project ? 'selected' : ''}>${escapeHTML(p.name)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+
+    <div class="field-row" style="align-items:flex-start">
+      <span class="label-cell">${(t.status === 'Blocked' || t.status === 'Waiting-on') ? '<span style="color:#9a3412">阻塞信息</span>' : '阻塞信息'}</span>
+      <div class="control" style="flex-direction:column;align-items:stretch;gap:6px">
+        ${(t.status === 'Blocked' || t.status === 'Waiting-on') ? `
+          <textarea id="edit-block-reason" class="input" rows="2" placeholder="原因（必填）" onchange="editC_set('${id}','blocked_reason',this.value)" style="font-size:12px">${escapeHTML(t.blocked_reason || '')}</textarea>
+          ${t.status === 'Waiting-on' ? `
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px">
+              <span style="color:var(--muted-fg)">等待</span>
+              <select class="input" style="max-width:160px" onchange="editC_set('${id}','waiting_on',this.value)">
+                <option value="">未指定</option>
+                ${PEOPLE.map(p => `<option value="${escapeHTML(p.name)}" ${p.name === t.waiting_on ? 'selected' : ''}>@${escapeHTML(p.name)}</option>`).join('')}
+              </select>
+            </div>` : ''}
+          ${t.blocked_at ? `<div style="font-size:11px;color:#9a3412">起始：${t.blocked_at}</div>` : ''}
+        ` : '<span style="font-size:11px;color:var(--muted-fg)">切到「阻塞 / 等待中」时填</span>'}
+      </div>
+    </div>
+
+    <details style="margin-top:14px" ${opts.focusBlockReason ? '' : ''}>
+      <summary style="font-size:12px;color:var(--muted-fg);cursor:pointer;padding:4px 0">添加描述（可选）</summary>
+      <textarea class="input" rows="2" style="margin-top:6px" placeholder="详细描述">${escapeHTML(t.description || '')}</textarea>
+    </details>`;
+  // 状态徽章
+  body.querySelector('[data-action="status-edit"]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    openStatusMenu(t, e.currentTarget);
+  });
+  document.getElementById('edit-dialog').hidden = false;
+  document.getElementById('edit-backdrop').hidden = false;
+  // 切到 Blocked/Waiting-on 但没填原因 → 弹窗已展开后聚焦到原因输入
+  if (opts.focusBlockReason) {
+    setTimeout(() => {
+      const ta = document.getElementById('edit-block-reason');
+      if (ta) ta.focus();
+    }, 100);
+  }
+}
+function closeEditC() {
+  document.getElementById('edit-dialog').hidden = true;
+  document.getElementById('edit-backdrop').hidden = true;
+  editC_currentId = null;
+}
+function saveEditC() {
+  // 取标题编辑后的值
+  if (editC_currentId) {
+    const t = getTask(editC_currentId);
+    const titleEl = document.getElementById('edit-title');
+    if (titleEl) t.title = titleEl.innerText.trim() || t.title;
+  }
+  closeEditC();
+  renderToday();
+  toast('已保存修改');
+}
+function editC_setDue(id, kind, el) {
+  const t = getTask(id);
+  el.parentNode.querySelectorAll('.quick-chip').forEach(c => c.dataset.checked = 'false');
+  el.dataset.checked = 'true';
+  const map = { today: fmt(TODAY), tomorrow: fmt(addDays(TODAY, 1)),
+                week: fmt(addDays(TODAY, 7)), none: '' };
+  t.due_at = map[kind];
+  renderToday();
+}
+function editC_setDueDate(id, v) { getTask(id).due_at = v; renderToday(); }
+function editC_set(id, key, val) {
+  const t = getTask(id);
+  t[key] = val || null;
+  if (key === 'blocked_reason' && val && !t.blocked_at) {
+    t.blocked_at = new Date().toISOString().slice(0, 16).replace('T', ' ');
+  }
+  renderToday();
+}
+
+/* =========================================================
+ * 变体切换
+ * ========================================================= */
+const VARIANT_META = {
+  A: 'A · Sheet-as-detail',
+  B: 'B · Inline popover',
+  C: 'C · Modal-everywhere',
+};
+function setVariant(v) {
+  CURRENT_VARIANT = v;
+  for (const k of ['A','B','C']) {
+    document.getElementById('sw-' + k).setAttribute('aria-current', k === v ? 'true' : 'false');
+  }
+  document.getElementById('sw-meta').textContent = VARIANT_META[v];
+  // 关掉所有打开的面板
+  closeSheetA(); closeEditC();
+  document.getElementById('popover-B').hidden = true;
+  document.getElementById('status-menu').hidden = true;
+  // URL 同步
+  const url = new URL(location.href);
+  url.searchParams.set('variant', v);
+  history.replaceState(null, '', url);
+}
+function cycleVariant(dir) {
+  const order = ['A','B','C'];
+  const i = order.indexOf(CURRENT_VARIANT);
+  setVariant(order[(i + dir + order.length) % order.length]);
+}
+
+/* =========================================================
+ * 全局快捷键
+ * ========================================================= */
+document.addEventListener('keydown', (e) => {
+  const meta = e.metaKey || e.ctrlKey;
+  const inEditable = e.target.matches?.('input, textarea, [contenteditable]');
+  if (meta && e.key === 'n') { e.preventDefault(); openCreate(); }
+  if (meta && e.key === 'k') { e.preventDefault(); openCmdK(); }
+  if (e.key === 'Escape') {
+    if (!document.getElementById('sheet-A').hidden) closeSheetA();
+    else if (!document.getElementById('edit-dialog').hidden) closeEditC();
+    else if (!document.getElementById('cmdk').hidden) closeCmdK();
+  }
+  // ← → 切变体（输入态不吃）
+  if (!inEditable && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    cycleVariant(e.key === 'ArrowRight' ? 1 : -1);
+  }
+});
+
+/* =========================================================
+ * 初始化
+ * ========================================================= */
+(function init() {
+  // URL → 当前变体
+  const v = new URLSearchParams(location.search).get('variant');
+  if (v && VARIANT_META[v]) setVariant(v);
+  else setVariant('A');
+  renderToday();
+})();
+</script>
+
+</body>
+</html>
