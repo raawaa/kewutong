@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<!--
+  一次性原型 —— 用完即弃，不要合进 master。
+  问题：核心三视图（今日/本周、人员矩阵、项目看板）应该长什么样？
+  铺法：顶部 tab 切三个视图；每个视图下的变体用底部悬浮条 / ←→ 方向键切换，URL 为 ?view=&variant=
+        · 今日/本周：A 列表流 / B 主栏+侧栏 / C 瓦片+时间轴纵列 → 科长已选定 C（默认）
+        · 人员矩阵：1 分段瀑布流 / 2 横向列+分组树（原稿）
+        · 项目看板：单稿
+  参见 issue #4（map #2）。全部数据为写死的示例数据，无功能、无持久化。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>科务通 · 核心三视图原型（示例数据）</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #09090b;
+    --muted: #f4f4f5;
+    --muted-fg: #71717a;
+    --border: #e4e4e7;
+    --card: #ffffff;
+    --accent: #f4f4f5;
+    --primary: #18181b;
+    --primary-fg: #fafafa;
+    --radius: 8px;
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / .05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / .07), 0 2px 4px -2px rgb(0 0 0 / .05);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / .1), 0 4px 6px -4px rgb(0 0 0 / .1);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1,h2,h3,h4 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  /* ---------- 示例数据横幅 ---------- */
+  .sample-banner {
+    background: #fefce8; border-bottom: 1px solid #fde68a; color: #854d0e;
+    font-size: 12px; padding: 6px 20px; display: flex; align-items: center; gap: 8px;
+  }
+  .sample-banner strong { font-weight: 600; }
+  .sample-banner .spacer { flex: 1; }
+  .sample-banner button {
+    font: inherit; font-size: 11px; border: 1px solid #fcd34d; background: #fffbeb;
+    color: #854d0e; border-radius: 6px; padding: 2px 8px; cursor: pointer;
+  }
+
+  /* ---------- 顶栏 + tabs ---------- */
+  .appbar {
+    height: 52px; border-bottom: 1px solid var(--border); display: flex;
+    align-items: center; gap: 20px; padding: 0 20px; background: var(--bg);
+    position: sticky; top: 0; z-index: 30;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+  .brand .logo {
+    width: 24px; height: 24px; border-radius: 6px; background: var(--primary);
+    color: var(--primary-fg); display: grid; place-items: center; font-size: 12px;
+  }
+  .tabs { display: flex; gap: 2px; background: var(--muted); padding: 3px; border-radius: var(--radius); }
+  .tabs button {
+    font: inherit; font-size: 13px; font-weight: 500; border: 0; background: transparent;
+    color: var(--muted-fg); padding: 5px 14px; border-radius: 6px; cursor: pointer;
+  }
+  .tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); box-shadow: var(--shadow-sm); }
+  .appbar .spacer { flex: 1; }
+  .kbd {
+    font-size: 11px; color: var(--muted-fg); border: 1px solid var(--border);
+    border-bottom-width: 2px; border-radius: 5px; padding: 2px 6px; background: var(--muted);
+  }
+
+  /* ---------- 通用积木 ---------- */
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); }
+  .section-title { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .section-title .count {
+    font-size: 11px; font-weight: 500; color: var(--muted-fg);
+    background: var(--muted); border-radius: 999px; padding: 1px 7px;
+  }
+  .muted { color: var(--muted-fg); }
+  .avatar {
+    width: 26px; height: 26px; border-radius: 999px; flex: 0 0 auto;
+    display: grid; place-items: center; font-size: 11px; font-weight: 600; color: #fff;
+  }
+  .avatar.sm { width: 20px; height: 20px; font-size: 10px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 500;
+    padding: 1px 7px; border-radius: 999px; white-space: nowrap; border: 1px solid transparent;
+  }
+  .badge.open      { background: #f4f4f5; color: #52525b; border-color: #e4e4e7; }
+  .badge.inprogress{ background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+  .badge.blocked   { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+  .badge.waiting   { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+  .badge.done      { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }
+  .badge.cancelled { background: #fafafa; color: #a1a1aa; border-color: #e4e4e7; text-decoration: line-through; }
+  .badge.recur     { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
+  .due { font-size: 12px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+  .due.overdue { color: #b91c1c; font-weight: 500; }
+  .due.today { color: #b45309; font-weight: 500; }
+  .proj-chip {
+    font-size: 11px; color: var(--muted-fg); background: var(--muted);
+    padding: 1px 7px; border-radius: 5px; white-space: nowrap;
+  }
+
+  /* 列表行 */
+  .row {
+    display: flex; align-items: center; gap: 10px; padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .row:last-child { border-bottom: 0; }
+  .row:hover { background: #fafafa; }
+  .row .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row.is-cancelled .title { text-decoration: line-through; color: var(--muted-fg); }
+
+  /* 任务卡 */
+  .tcard {
+    border: 1px solid var(--border); border-radius: 7px; background: var(--card);
+    padding: 9px 11px; display: flex; flex-direction: column; gap: 6px; box-shadow: var(--shadow-sm);
+  }
+  .tcard:hover { box-shadow: var(--shadow-md); }
+  .tcard .t { font-size: 13px; font-weight: 500; line-height: 1.35; }
+  .tcard .meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .tcard.blocked-edge { border-left: 3px solid #ef4444; }
+  .tcard.waiting-edge { border-left: 3px solid #f59e0b; }
+
+  /* 统计条 / 瓦片 */
+  .statstrip { display: flex; gap: 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .statstrip .s { flex: 1; padding: 12px 16px; border-right: 1px solid var(--border); }
+  .statstrip .s:last-child { border-right: 0; }
+  .statstrip .n { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .statstrip .l { font-size: 12px; color: var(--muted-fg); }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .tile { padding: 16px 18px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--card); }
+  .tile .n { font-size: 30px; font-weight: 600; letter-spacing: -0.03em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .tile .l { font-size: 12px; color: var(--muted-fg); margin-top: 2px; }
+  .tile .sub { font-size: 11px; color: var(--muted-fg); margin-top: 6px; }
+  .tile.warn { background: #fef2f2; border-color: #fecaca; }
+  .tile.warn .n, .tile.warn .l { color: #b91c1c; }
+
+  /* 页面容器 */
+  .page { padding: 20px; }
+  .page.wide { padding: 20px 20px 92px; }
+
+  /* ---------- 底部悬浮变体条 ---------- */
+  #switcher {
+    position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 50;
+    display: flex; align-items: center; gap: 2px; background: #18181b; color: #fafafa;
+    border-radius: 999px; padding: 5px 6px; box-shadow: var(--shadow-lg);
+    font-size: 12px;
+  }
+  #switcher button {
+    font: inherit; border: 0; background: transparent; color: #a1a1aa; cursor: pointer;
+    width: 26px; height: 26px; border-radius: 999px; display: grid; place-items: center; font-size: 14px;
+  }
+  #switcher button:hover { background: #27272a; color: #fafafa; }
+  #switcher .label { padding: 0 10px; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  #switcher .hint { color: #52525b; padding-right: 8px; font-size: 11px; }
+  #switcher[hidden] { display: none; }
+
+  /* ---------- 变体 B：双栏 ---------- */
+  .split { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 20px; align-items: start; }
+  .side-sticky { position: sticky; top: 72px; }
+
+  /* ---------- 变体 C：时间轴纵列 ---------- */
+  .timecols { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; }
+  .timecol { background: var(--muted); border-radius: var(--radius); padding: 10px; min-height: 320px; }
+  .timecol > header { display: flex; align-items: baseline; gap: 7px; padding: 2px 4px 10px; }
+  .timecol > header .h { font-size: 13px; font-weight: 600; }
+  .timecol > header .d { font-size: 11px; color: var(--muted-fg); }
+  .timecol .stack { display: flex; flex-direction: column; gap: 8px; }
+  .timecol.danger { background: #fef2f2; }
+
+  /* ---------- 人员矩阵 ---------- */
+  .matrix { display: grid; grid-template-columns: 210px minmax(0,1fr); gap: 0; height: calc(100vh - 52px - 29px); }
+  .matrix .tree { border-right: 1px solid var(--border); padding: 14px 12px; overflow-y: auto; }
+  .matrix .tree .grp { margin-bottom: 6px; }
+  .matrix .tree .grp > .gh {
+    display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 6px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .matrix .tree .grp > .gh:hover { background: var(--muted); }
+  .matrix .tree .grp > .gh .n { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--muted-fg); }
+  .matrix .tree .person {
+    display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 22px;
+    border-radius: 6px; font-size: 13px; cursor: pointer;
+  }
+  .matrix .tree .person:hover { background: var(--muted); }
+  .matrix .tree .person .n { margin-left: auto; font-size: 11px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+  .matrix .tree .person .dot { width: 6px; height: 6px; border-radius: 999px; background: #ef4444; }
+  .matrix .cols { overflow: auto; padding: 14px; display: flex; gap: 12px; align-items: flex-start; }
+  .pcol { width: 240px; flex: 0 0 auto; background: var(--muted); border-radius: var(--radius); padding: 10px; }
+  .pcol.collapsed { width: 52px; padding: 10px 8px; }
+  .pcol > header { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; cursor: pointer; }
+  .pcol > header .name { font-size: 13px; font-weight: 600; }
+  .pcol > header .n { margin-left: auto; font-size: 11px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+  .pcol > header .chev { color: var(--muted-fg); font-size: 11px; }
+  .pcol.collapsed > header { flex-direction: column; padding-bottom: 0; gap: 6px; }
+  .pcol.collapsed .stack { display: none; }
+  .pcol .stack { display: flex; flex-direction: column; gap: 8px; }
+  .pcol .empty { font-size: 12px; color: var(--muted-fg); padding: 8px 2px; }
+  .grp-divider {
+    flex: 0 0 auto; width: 1px; align-self: stretch; background: var(--border); margin: 0 4px;
+    position: relative;
+  }
+  .grp-label {
+    flex: 0 0 auto; writing-mode: vertical-rl; font-size: 11px; font-weight: 600;
+    color: var(--muted-fg); letter-spacing: 0.08em; padding: 6px 2px; align-self: stretch;
+  }
+
+  /* ---------- 人员矩阵：瀑布流变体 ---------- */
+  .mgroup { margin-bottom: 24px; }
+  .mgroup > h3 {
+    display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600;
+    margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  .masonry { columns: 258px; column-gap: 12px; }
+  .pcard {
+    break-inside: avoid; margin-bottom: 12px; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow-sm);
+    overflow: hidden;
+  }
+  .pcard.has-blocked { border-left: 3px solid #ef4444; }
+  .pcard > header {
+    display: flex; align-items: center; gap: 8px; padding: 8px 11px;
+    border-bottom: 1px solid var(--border); background: #fafafa;
+  }
+  .pcard > header .name { font-size: 13px; font-weight: 600; }
+  .pcard > header .n { margin-left: auto; font-size: 11px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+  .pcard.off > header .name { color: var(--muted-fg); }
+  .pcard .trow {
+    display: flex; align-items: center; gap: 7px; padding: 6px 11px;
+    border-bottom: 1px solid #f4f4f5; font-size: 12px;
+  }
+  .pcard .trow:last-child { border-bottom: 0; }
+  .pcard .trow:hover { background: #fafafa; }
+  .pcard .trow .dot2 { width: 6px; height: 6px; border-radius: 999px; flex: 0 0 auto; }
+  .pcard .trow .tt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pcard .empty2 { padding: 9px 11px; font-size: 12px; color: var(--muted-fg); }
+
+  /* ---------- 项目看板 ---------- */
+  .projgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .projcard { padding: 14px; cursor: pointer; transition: box-shadow .12s, border-color .12s; }
+  .projcard:hover { box-shadow: var(--shadow-md); }
+  .projcard[aria-selected="true"] { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+  .projcard .ph { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
+  .projcard .ph .t { font-size: 14px; font-weight: 600; flex: 1; line-height: 1.3; }
+  .bar { height: 6px; background: var(--muted); border-radius: 999px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--primary); border-radius: 999px; }
+  .bar.risky > i { background: #ef4444; }
+  .projcard .pf { display: flex; align-items: center; gap: 8px; margin-top: 9px; font-size: 12px; color: var(--muted-fg); }
+  .statuscols { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 10px; }
+  .scol { background: var(--muted); border-radius: var(--radius); padding: 9px; min-height: 200px; }
+  .scol > header { display: flex; align-items: center; gap: 6px; padding: 1px 3px 9px; }
+  .scol > header .n { margin-left: auto; font-size: 11px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+  .scol .stack { display: flex; flex-direction: column; gap: 7px; }
+  .scol .empty { font-size: 11px; color: #a1a1aa; padding: 6px 3px; }
+</style>
+</head>
+<body>
+
+<div class="sample-banner">
+  <strong>示例数据</strong>
+  <span>本页所有人员、项目、任务均为演示用假数据，仅用于走查布局，无任何真实内容。</span>
+  <span class="spacer"></span>
+  <button type="button" onclick="alert('（原型占位）真实应用里这里会一键清空全部示例数据。')">一键清空示例数据</button>
+</div>
+
+<div class="appbar">
+  <div class="brand"><span class="logo">科</span> 科务通</div>
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <div class="spacer"></div>
+  <span class="kbd">⌘K</span>
+  <span class="muted" style="font-size:12px">命令面板</span>
+</div>
+
+<main id="root"></main>
+
+<div id="switcher" hidden>
+  <button type="button" id="prevVariant" title="上一个变体">‹</button>
+  <span class="label" id="variantLabel"></span>
+  <button type="button" id="nextVariant" title="下一个变体">›</button>
+  <span class="hint">← → 切换</span>
+</div>
+
+<script>
+/* =====================================================================
+   示例数据（写死）。今天 = 2026-09-10（周四），本周 = 09-07 一 ~ 09-13 日。
+   ===================================================================== */
+const TODAY = '2026-09-10';
+const WEEK  = ['2026-09-07','2026-09-08','2026-09-09','2026-09-10','2026-09-11','2026-09-12','2026-09-13'];
+const WDAY  = { '2026-09-07':'周一','2026-09-08':'周二','2026-09-09':'周三','2026-09-10':'周四',
+                '2026-09-11':'周五','2026-09-12':'周六','2026-09-13':'周日' };
+
+const GROUPS = [
+  { id:'g1', name:'综合组',   people:['王志强','李建国','张敏','刘洋','陈晓芸','赵鹏','孙立'] },
+  { id:'g2', name:'业务一组', people:['周涛','吴敏华','郑凯','冯雪','蒋文斌','韩璐','曹阳'] },
+  { id:'g3', name:'业务二组', people:['沈括','许静','何伟','吕晨','施红梅','葛宁'] },
+];
+const OFF_DUTY = ['曹阳','葛宁']; // 请假/外出
+
+const PROJECTS = [
+  { id:'p1', name:'年度安全生产检查', owner:'王志强', due:'2026-10-31' },
+  { id:'p2', name:'三季度绩效核算',   owner:'李建国', due:'2026-09-25' },
+  { id:'p3', name:'新办公系统上线',   owner:'周涛',   due:'2026-11-15' },
+  { id:'p4', name:'科室档案数字化',   owner:'沈括',   due:'2026-12-20' },
+  { id:'p5', name:'秋季消防演练',     owner:'张敏',   due:'2026-10-15' },
+];
+
+// status: open | inprogress | blocked | waiting | done | cancelled
+const T = (title, who, proj, status, due, note) => ({ title, who, proj, status, due, note });
+const TASKS = [
+  // —— 逾期 ——
+  T('二车间隐患整改回执收集','刘洋','p1','blocked','2026-09-08','等外委单位盖章'),
+  T('绩效系数表模板确认','陈晓芸','p2','waiting','2026-09-09','等分管领导批示'),
+  // —— 今日到期 ——
+  T('安全检查通报初稿','王志强','p1','inprogress',TODAY),
+  T('8月考勤汇总校对','李建国','p2','inprogress',TODAY),
+  T('新系统账号导入清单','周涛','p3','blocked',TODAY,'等信息中心开权限'),
+  T('档案扫描第 3 批交接','沈括','p4','inprogress',TODAY),
+  T('演练脚本人员分工','张敏','p5','open',TODAY),
+  // —— 本周剩余 ——
+  T('隐患整改台账更新','赵鹏','p1','open','2026-09-11'),
+  T('绩效初核结果内部复核','李建国','p2','open','2026-09-11'),
+  T('新系统操作手册（草稿）','冯雪','p3','inprogress','2026-09-11'),
+  T('第 4 批档案预清点','许静','p4','open','2026-09-12'),
+  T('消防器材台账盘点','孙立','p5','open','2026-09-12'),
+  T('周报汇总','张敏',null,'open','2026-09-12'),
+  T('新系统 UAT 用例评审','郑凯','p3','waiting','2026-09-13','等业务口反馈'),
+  T('安全培训签到表归档','韩璐','p1','open','2026-09-13'),
+  // —— 下周及以后 ——
+  T('三级安全教育记录抽查','刘洋','p1','open','2026-09-16'),
+  T('绩效结果公示稿','陈晓芸','p2','open','2026-09-17'),
+  T('历史数据清洗规则确认','蒋文斌','p3','blocked','2026-09-18','等旧系统导出口径'),
+  T('新系统上线切换预案','周涛','p3','open','2026-09-22'),
+  T('档案著录质量抽检','何伟','p4','inprogress','2026-09-19'),
+  T('档案库房温湿度记录仪校准','吕晨','p4','open','2026-09-24'),
+  T('疏散通道标识排查','施红梅','p5','open','2026-09-26'),
+  T('演练现场医疗保障对接','孙立','p5','waiting','2026-09-28','等卫生所回复'),
+  T('应急预案修订送审','王志强','p5','open','2026-10-09'),
+  T('外委单位资质复核','赵鹏','p1','open','2026-09-30'),
+  T('绩效申诉窗口值守安排','李建国','p2','open','2026-09-23'),
+  // —— 已完成 ——
+  T('检查方案下发','王志强','p1','done','2026-09-02'),
+  T('检查组分工确认','赵鹏','p1','done','2026-09-03'),
+  T('隐患排查表回收（一车间）','刘洋','p1','done','2026-09-05'),
+  T('培训 PPT 定稿','韩璐','p1','done','2026-09-04'),
+  T('考勤原始数据导出','李建国','p2','done','2026-09-01'),
+  T('绩效指标口径宣贯','陈晓芸','p2','done','2026-09-03'),
+  T('新系统服务器验收','周涛','p3','done','2026-09-01'),
+  T('组织架构数据整理','冯雪','p3','done','2026-09-05'),
+  T('档案分类方案确认','沈括','p4','done','2026-08-28'),
+  T('第 1 批档案扫描','许静','p4','done','2026-09-02'),
+  T('第 2 批档案扫描','何伟','p4','done','2026-09-08'),
+  T('扫描设备租赁合同','吕晨','p4','done','2026-08-26'),
+  T('库房货架编号','施红梅','p4','done','2026-09-04'),
+  T('演练时间报备','张敏','p5','done','2026-09-05'),
+  // —— 已取消 ——
+  T('纸质通报印刷','韩璐','p1','cancelled','2026-09-09'),
+  T('旧系统并行运行一周','蒋文斌','p3','cancelled','2026-09-15'),
+];
+
+// 今日触发的周期性实例（由 Template 物化而来）
+const INSTANCES = [
+  { title:'科室周例会（每周四 09:00）', who:'王志强', status:'open',       time:'09:00', tmpl:'每周四 09:00' },
+  { title:'每日交接班记录',             who:'孙立',   status:'done',       time:'08:00', tmpl:'每工作日 08:00' },
+  { title:'月度报表报送（每月 10 日）', who:'李建国', status:'inprogress', time:'14:00', tmpl:'每月 10 日' },
+  { title:'安全巡查打卡',               who:'赵鹏',   status:'open',       time:'16:30', tmpl:'每工作日 16:30' },
+];
+
+/* =====================================================================
+   工具
+   ===================================================================== */
+const STATUS_LABEL = { open:'待办', inprogress:'进行中', blocked:'阻塞', waiting:'等待中', done:'已完成', cancelled:'已取消' };
+const STATUS_ORDER = ['open','inprogress','blocked','waiting','done','cancelled'];
+const AVATAR_COLORS = ['#0f766e','#b45309','#1d4ed8','#7c3aed','#be123c','#15803d','#0369a1','#a16207','#9333ea','#c2410c'];
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hash = s => [...s].reduce((a,c) => a + c.charCodeAt(0), 0);
+const projName = id => (PROJECTS.find(p => p.id === id) || {}).name || '';
+const groupOf = who => (GROUPS.find(g => g.people.includes(who)) || {}).name || '';
+const mmdd = d => d.slice(5).replace('-','/');
+const isOverdue = t => t.due < TODAY && t.status !== 'done' && t.status !== 'cancelled';
+const isOpenish = t => t.status !== 'done' && t.status !== 'cancelled';
+
+function avatar(name, sm) {
+  const c = AVATAR_COLORS[hash(name) % AVATAR_COLORS.length];
+  return `<span class="avatar${sm ? ' sm' : ''}" style="background:${c}" title="${esc(name)}">${esc(name.slice(-1))}</span>`;
+}
+function badge(status) {
+  return `<span class="badge ${status}">${STATUS_LABEL[status]}</span>`;
+}
+function dueLabel(d) {
+  if (d < TODAY) return `<span class="due overdue">逾期 ${mmdd(d)}</span>`;
+  if (d === TODAY) return `<span class="due today">今天</span>`;
+  return `<span class="due">${mmdd(d)}${WDAY[d] ? ' ' + WDAY[d] : ''}</span>`;
+}
+
+// 列表行（变体 A / 变体 B 主栏）
+function taskRow(t, opts = {}) {
+  return `<div class="row ${t.status === 'cancelled' ? 'is-cancelled' : ''}">
+    ${avatar(t.who)}
+    <span class="title">${esc(t.title)}${t.note ? ` <span class="muted" style="font-size:12px">· ${esc(t.note)}</span>` : ''}</span>
+    ${t.proj ? `<span class="proj-chip">${esc(projName(t.proj))}</span>` : ''}
+    ${badge(t.status)}
+    ${opts.hideDue ? '' : dueLabel(t.due)}
+  </div>`;
+}
+
+// 紧凑卡（变体 C / 人员矩阵 / 项目看板）
+function taskCard(t, opts = {}) {
+  const edge = t.status === 'blocked' ? ' blocked-edge' : t.status === 'waiting' ? ' waiting-edge' : '';
+  return `<div class="tcard${edge}">
+    <div class="t" ${t.status === 'cancelled' ? 'style="text-decoration:line-through;color:var(--muted-fg)"' : ''}>${esc(t.title)}</div>
+    <div class="meta">
+      ${opts.hideWho ? '' : avatar(t.who, true)}
+      ${badge(t.status)}
+      ${opts.hideProj || !t.proj ? '' : `<span class="proj-chip">${esc(projName(t.proj))}</span>`}
+      ${opts.hideDue ? '' : dueLabel(t.due)}
+    </div>
+    ${t.note ? `<div class="muted" style="font-size:11px">${esc(t.note)}</div>` : ''}
+  </div>`;
+}
+
+function instanceRow(i) {
+  return `<div class="row">
+    <span class="due" style="width:42px">${i.time}</span>
+    ${avatar(i.who)}
+    <span class="title">${esc(i.title)}</span>
+    <span class="badge recur">↻ ${esc(i.tmpl)}</span>
+    ${badge(i.status)}
+  </div>`;
+}
+function instanceCard(i) {
+  return `<div class="tcard">
+    <div class="t">${esc(i.title)}</div>
+    <div class="meta">
+      <span class="due">${i.time}</span>${avatar(i.who, true)}${badge(i.status)}
+      <span class="badge recur">↻</span>
+    </div>
+  </div>`;
+}
+
+/* 派生数据 */
+const overdue   = TASKS.filter(isOverdue).sort((a,b) => a.due.localeCompare(b.due));
+const dueToday  = TASKS.filter(t => t.due === TODAY && isOpenish(t));
+const dueTmr    = TASKS.filter(t => t.due === '2026-09-11' && isOpenish(t));
+const restWeek  = TASKS.filter(t => t.due > '2026-09-11' && t.due <= '2026-09-13' && isOpenish(t))
+                       .sort((a,b) => a.due.localeCompare(b.due));
+const weekAhead = TASKS.filter(t => t.due > TODAY && t.due <= '2026-09-13' && isOpenish(t))
+                       .sort((a,b) => a.due.localeCompare(b.due));
+const STATS = {
+  onDuty:   GROUPS.reduce((n,g) => n + g.people.length, 0) - OFF_DUTY.length,
+  headcount:GROUPS.reduce((n,g) => n + g.people.length, 0),
+  progress: TASKS.filter(t => t.status === 'inprogress').length,
+  blocked:  TASKS.filter(t => t.status === 'blocked').length,
+  waiting:  TASKS.filter(t => t.status === 'waiting').length,
+  today:    dueToday.length,
+  overdue:  overdue.length,
+};
+
+/* =====================================================================
+   视图：今日 / 本周 —— 变体 A：摘要条 + 三段纵向列表流
+   ===================================================================== */
+function renderTodayA() {
+  const sec = (title, n, inner, extra = '') => `
+    <section style="margin-top:20px">
+      <div class="section-title" style="margin-bottom:8px">${title}<span class="count">${n}</span>${extra}</div>
+      <div class="card">${inner || '<div class="row muted">暂无</div>'}</div>
+    </section>`;
+  return `<div class="page wide" style="max-width:1080px;margin:0 auto">
+    <h1 style="font-size:20px">今天 · 9月10日 周四</h1>
+    <p class="muted" style="margin:4px 0 16px;font-size:13px">本周 9/7 – 9/13</p>
+
+    <div class="statstrip">
+      <div class="s"><div class="n">${STATS.onDuty} <span class="muted" style="font-size:13px;font-weight:400">/ ${STATS.headcount}</span></div><div class="l">在岗人数</div></div>
+      <div class="s"><div class="n">${STATS.progress}</div><div class="l">进行中</div></div>
+      <div class="s"><div class="n" style="color:#b91c1c">${STATS.blocked}</div><div class="l">阻塞</div></div>
+      <div class="s"><div class="n" style="color:#b45309">${STATS.waiting}</div><div class="l">等待中</div></div>
+      <div class="s"><div class="n">${STATS.today}</div><div class="l">今日到期</div></div>
+    </div>
+
+    ${overdue.length ? sec('⚠️ 已逾期', overdue.length, overdue.map(t => taskRow(t)).join('')) : ''}
+    ${sec('今日到期', dueToday.length, dueToday.map(t => taskRow(t)).join(''))}
+    ${sec('今日周期性事务', INSTANCES.length, INSTANCES.map(instanceRow).join(''))}
+    ${sec('本周到期（今日之后）', weekAhead.length, weekAhead.map(t => taskRow(t)).join(''))}
+  </div>`;
+}
+
+/* =====================================================================
+   视图：今日 / 本周 —— 变体 B：左「今日」主栏 + 右「本周展望」侧栏
+   ===================================================================== */
+function renderTodayB() {
+  const byDay = {};
+  weekAhead.forEach(t => (byDay[t.due] = byDay[t.due] || []).push(t));
+  const sideDays = Object.keys(byDay).sort().map(d => `
+    <div style="padding:9px 12px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:600;margin-bottom:5px">${WDAY[d]} <span class="muted" style="font-weight:400">${mmdd(d)}</span></div>
+      ${byDay[d].map(t => `<div style="display:flex;align-items:center;gap:6px;padding:2px 0">
+          ${avatar(t.who, true)}
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${esc(t.title)}</span>
+          <span class="badge ${t.status}">${STATUS_LABEL[t.status]}</span>
+        </div>`).join('')}
+    </div>`).join('');
+
+  return `<div class="page wide">
+    <div class="split" style="max-width:1320px;margin:0 auto">
+      <div>
+        <h1 style="font-size:22px">今天 · 9月10日 周四</h1>
+        <p class="muted" style="margin:4px 0 16px;font-size:13px">${STATS.onDuty}/${STATS.headcount} 人在岗 · ${STATS.progress} 条进行中 · ${STATS.blocked} 条阻塞</p>
+
+        ${overdue.length ? `
+        <div class="card" style="margin-bottom:16px;border-color:#fecaca">
+          <div style="padding:10px 14px;border-bottom:1px solid #fecaca;background:#fef2f2;border-radius:7px 7px 0 0">
+            <div class="section-title" style="color:#b91c1c">已逾期<span class="count" style="background:#fee2e2;color:#b91c1c">${overdue.length}</span></div>
+          </div>
+          ${overdue.map(t => taskRow(t)).join('')}
+        </div>` : ''}
+
+        <div class="section-title" style="margin-bottom:8px">今日到期<span class="count">${dueToday.length}</span></div>
+        <div class="card" style="margin-bottom:20px">${dueToday.map(t => taskRow(t, {hideDue:true})).join('')}</div>
+
+        <div class="section-title" style="margin-bottom:8px">今日周期性事务<span class="count">${INSTANCES.length}</span></div>
+        <div class="card">${INSTANCES.map(instanceRow).join('')}</div>
+      </div>
+
+      <aside class="side-sticky">
+        <div class="card" style="padding:14px;margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;padding:3px 0"><span class="muted" style="font-size:12px">在岗</span><b>${STATS.onDuty} / ${STATS.headcount}</b></div>
+          <div style="display:flex;justify-content:space-between;padding:3px 0"><span class="muted" style="font-size:12px">进行中</span><b>${STATS.progress}</b></div>
+          <div style="display:flex;justify-content:space-between;padding:3px 0"><span class="muted" style="font-size:12px">阻塞</span><b style="color:#b91c1c">${STATS.blocked}</b></div>
+          <div style="display:flex;justify-content:space-between;padding:3px 0"><span class="muted" style="font-size:12px">等待中</span><b style="color:#b45309">${STATS.waiting}</b></div>
+          <div style="border-top:1px solid var(--border);margin:8px 0 6px"></div>
+          <div class="muted" style="font-size:11px">请假 / 外出：${OFF_DUTY.join('、')}</div>
+        </div>
+        <div class="card">
+          <div style="padding:10px 12px;border-bottom:1px solid var(--border)">
+            <div class="section-title">本周展望<span class="count">${weekAhead.length}</span></div>
+          </div>
+          ${sideDays || '<div style="padding:12px" class="muted">本周剩余无到期</div>'}
+        </div>
+      </aside>
+    </div>
+  </div>`;
+}
+
+/* =====================================================================
+   视图：今日 / 本周 —— 变体 C：顶部计数瓦片 + 时间轴纵列
+   ===================================================================== */
+function renderTodayC() {
+  const col = (h, d, items, danger) => `
+    <div class="timecol${danger ? ' danger' : ''}">
+      <header><span class="h">${h}</span><span class="d">${d}</span><span class="d" style="margin-left:auto">${items.length}</span></header>
+      <div class="stack">${items.length ? items.join('') : '<div class="muted" style="font-size:12px;padding:4px 2px">—</div>'}</div>
+    </div>`;
+
+  return `<div class="page wide">
+    <h1 style="font-size:20px;margin-bottom:14px">今天 · 9月10日 周四</h1>
+
+    <div class="tiles" style="margin-bottom:18px">
+      <div class="tile">
+        <div class="n">${STATS.onDuty}<span class="muted" style="font-size:16px;font-weight:400"> / ${STATS.headcount}</span></div>
+        <div class="l">在岗人数</div>
+        <div class="sub">请假 / 外出：${OFF_DUTY.join('、')}</div>
+      </div>
+      <div class="tile">
+        <div class="n">${STATS.progress}</div><div class="l">进行中</div>
+        <div class="sub">覆盖 ${PROJECTS.length} 个项目</div>
+      </div>
+      <div class="tile warn">
+        <div class="n">${STATS.blocked}</div><div class="l">阻塞</div>
+        <div class="sub">最长已阻塞 4 天</div>
+      </div>
+      <div class="tile">
+        <div class="n">${INSTANCES.length}</div><div class="l">今日周期性事务</div>
+        <div class="sub">${INSTANCES.filter(i => i.status === 'done').length} 项已完成</div>
+      </div>
+    </div>
+
+    <div class="timecols">
+      ${col('已逾期','', overdue.map(t => taskCard(t)), true)}
+      ${col('今天','9/10 周四', [
+          ...INSTANCES.map(instanceCard),
+          ...dueToday.map(t => taskCard(t)),
+        ])}
+      ${col('明天','9/11 周五', dueTmr.map(t => taskCard(t)))}
+      ${col('本周剩余','9/12 – 9/13', restWeek.map(t => taskCard(t)))}
+    </div>
+  </div>`;
+}
+
+/* =====================================================================
+   视图：人员矩阵 —— 变体 1：分段瀑布流（每个子组一段，段内按窗口宽度自动分列）
+   ===================================================================== */
+const DOT = { open:'#a1a1aa', inprogress:'#3b82f6', blocked:'#ef4444', waiting:'#f59e0b', done:'#22c55e', cancelled:'#d4d4d8' };
+
+function openTasksOf(p) {
+  return TASKS.filter(t => t.who === p && isOpenish(t))
+              .sort((a,b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || a.due.localeCompare(b.due));
+}
+
+function personCard(p) {
+  const mine = openTasksOf(p);
+  const blk  = mine.some(t => t.status === 'blocked');
+  const off  = OFF_DUTY.includes(p);
+  return `<div class="pcard${blk ? ' has-blocked' : ''}${off ? ' off' : ''}">
+    <header>
+      ${avatar(p)}<span class="name">${esc(p)}</span>
+      ${off ? '<span class="badge open">请假</span>' : ''}
+      <span class="n">${mine.length}</span>
+    </header>
+    ${mine.length ? mine.map(t => `<div class="trow">
+        <span class="dot2" style="background:${DOT[t.status]}" title="${STATUS_LABEL[t.status]}"></span>
+        <span class="tt" title="${esc(t.title)}">${esc(t.title)}</span>
+        ${dueLabel(t.due)}
+      </div>`).join('') : '<div class="empty2">手上没有在办任务</div>'}
+  </div>`;
+}
+
+function renderPeopleMasonry() {
+  const totalOpen = TASKS.filter(isOpenish).length;
+  return `<div class="page wide">
+    <h1 style="font-size:20px">人员矩阵</h1>
+    <p class="muted" style="margin:4px 0 18px;font-size:13px">
+      ${GROUPS.length} 个子组 · ${STATS.headcount} 人（在岗 ${STATS.onDuty}）· 在办 ${totalOpen} 条
+    </p>
+    ${GROUPS.map(g => {
+      const gOpen = g.people.reduce((n,p) => n + openTasksOf(p).length, 0);
+      const gBlk  = g.people.reduce((n,p) => n + openTasksOf(p).filter(t => t.status === 'blocked').length, 0);
+      return `<section class="mgroup">
+        <h3>${esc(g.name)}
+          <span class="count">${g.people.length} 人 · ${gOpen} 条在办</span>
+          ${gBlk ? `<span class="badge blocked">${gBlk} 阻塞</span>` : ''}
+        </h3>
+        <div class="masonry">${g.people.map(personCard).join('')}</div>
+      </section>`;
+    }).join('')}
+  </div>`;
+}
+
+/* =====================================================================
+   视图：人员矩阵 —— 变体 2：左侧分组树 + 每人一列的横向卡片堆（原稿，留作对比）
+   ===================================================================== */
+const collapsed = new Set();
+function renderPeopleColumns() {
+  const tree = GROUPS.map(g => `
+    <div class="grp">
+      <div class="gh">▾ ${esc(g.name)}<span class="n">${g.people.length} 人</span></div>
+      ${g.people.map(p => {
+        const mine = TASKS.filter(t => t.who === p && isOpenish(t));
+        const blk = mine.filter(t => t.status === 'blocked').length;
+        return `<div class="person">${avatar(p, true)}<span style="${OFF_DUTY.includes(p) ? 'color:var(--muted-fg)' : ''}">${esc(p)}${OFF_DUTY.includes(p) ? ' <span style="font-size:10px">(请假)</span>' : ''}</span>
+          ${blk ? '<span class="dot" title="有阻塞"></span>' : ''}<span class="n">${mine.length}</span></div>`;
+      }).join('')}
+    </div>`).join('');
+
+  const cols = GROUPS.map(g => {
+    const inner = g.people.map(p => {
+      const mine = TASKS.filter(t => t.who === p && isOpenish(t))
+                        .sort((a,b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || a.due.localeCompare(b.due));
+      const isCol = collapsed.has(p);
+      return `<div class="pcol${isCol ? ' collapsed' : ''}">
+        <header onclick="toggleCol('${p}')">
+          ${avatar(p)}
+          ${isCol ? `<span class="n">${mine.length}</span>` : `<span class="name">${esc(p)}</span><span class="n">${mine.length}</span><span class="chev">▾</span>`}
+        </header>
+        <div class="stack">${mine.length ? mine.map(t => taskCard(t, {hideWho:true})).join('') : '<div class="empty">手上没有在办任务</div>'}</div>
+      </div>`;
+    }).join('');
+    return `<div class="grp-label">${esc(g.name)}</div>${inner}<div class="grp-divider"></div>`;
+  }).join('');
+
+  return `<div class="matrix">
+    <div class="tree">
+      <div class="muted" style="font-size:11px;font-weight:600;letter-spacing:.06em;padding:0 8px 8px">子组 / 人员</div>
+      ${tree}
+    </div>
+    <div class="cols">${cols}</div>
+  </div>`;
+}
+function toggleCol(p) { collapsed.has(p) ? collapsed.delete(p) : collapsed.add(p); render(); }
+
+/* =====================================================================
+   视图：项目看板 —— 项目卡网格 + 选中项目的任务按状态分列
+   ===================================================================== */
+let selectedProj = 'p1';
+function renderProjects() {
+  const cards = PROJECTS.map(p => {
+    const mine = TASKS.filter(t => t.proj === p.id);
+    const done = mine.filter(t => t.status === 'done').length;
+    const blk  = mine.filter(t => t.status === 'blocked').length;
+    const pct  = mine.length ? Math.round(done / mine.length * 100) : 0;
+    return `<div class="card projcard" aria-selected="${p.id === selectedProj}" onclick="selectProj('${p.id}')">
+      <div class="ph">
+        <div class="t">${esc(p.name)}</div>
+        ${blk ? `<span class="badge blocked">${blk} 阻塞</span>` : ''}
+      </div>
+      <div class="bar${blk >= 3 ? ' risky' : ''}"><i style="width:${pct}%"></i></div>
+      <div class="pf">
+        ${avatar(p.owner, true)} <span>${esc(p.owner)}</span>
+        <span style="margin-left:auto;font-variant-numeric:tabular-nums">${done}/${mine.length} · ${pct}%</span>
+      </div>
+      <div class="pf" style="margin-top:4px"><span>截止 ${p.due.slice(0,4) === '2026' ? mmdd(p.due) : p.due}</span></div>
+    </div>`;
+  }).join('');
+
+  const sel = PROJECTS.find(p => p.id === selectedProj);
+  const mine = TASKS.filter(t => t.proj === selectedProj);
+  const cols = STATUS_ORDER.map(s => {
+    const items = mine.filter(t => t.status === s);
+    return `<div class="scol">
+      <header>${badge(s)}<span class="n">${items.length}</span></header>
+      <div class="stack">${items.length ? items.map(t => taskCard(t, {hideProj:true})).join('') : '<div class="empty">—</div>'}</div>
+    </div>`;
+  }).join('');
+
+  return `<div class="page wide">
+    <h1 style="font-size:20px;margin-bottom:12px">项目看板 <span class="muted" style="font-size:13px;font-weight:400">${PROJECTS.length} 个在办项目</span></h1>
+    <div class="projgrid" style="margin-bottom:24px">${cards}</div>
+    <div class="section-title" style="margin-bottom:10px">
+      ${esc(sel.name)} · 任务分布<span class="count">${mine.length}</span>
+      <span class="muted" style="font-weight:400;font-size:12px">点上方项目卡切换</span>
+    </div>
+    <div class="statuscols">${cols}</div>
+  </div>`;
+}
+function selectProj(id) { selectedProj = id; render(); }
+
+/* =====================================================================
+   路由：?view= 与 ?variant=（变体按视图分组，每个视图各自记住自己的选择）
+   ===================================================================== */
+const VIEWS = [
+  { key:'today',    label:'今日 / 本周' },
+  { key:'people',   label:'人员矩阵' },
+  { key:'projects', label:'项目看板' },
+];
+const VARIANTS = {
+  today: [
+    { key:'A', name:'摘要条 + 列表流',        render: renderTodayA },
+    { key:'B', name:'今日主栏 + 本周侧栏',    render: renderTodayB },
+    { key:'C', name:'计数瓦片 + 时间轴纵列 ✓', render: renderTodayC },
+  ],
+  people: [
+    { key:'1', name:'分段瀑布流（纵向滚动）',   render: renderPeopleMasonry },
+    { key:'2', name:'横向列 + 分组树（原稿）', render: renderPeopleColumns },
+  ],
+  projects: [
+    { key:'1', name:'项目卡 + 状态分列', render: renderProjects },
+  ],
+};
+
+const params = new URLSearchParams(location.search);
+let view = VIEWS.some(v => v.key === params.get('view')) ? params.get('view') : 'today';
+// 每个视图各自的当前变体；今日/本周默认 C（科长已选定）
+const chosen = { today:'C', people:'1', projects:'1' };
+if (VARIANTS[view].some(v => v.key === params.get('variant'))) chosen[view] = params.get('variant');
+
+const curVariants = () => VARIANTS[view];
+const curVariant  = () => curVariants().find(v => v.key === chosen[view]);
+
+function syncUrl() {
+  const p = new URLSearchParams();
+  p.set('view', view);
+  p.set('variant', chosen[view]);
+  history.replaceState(null, '', location.pathname + '?' + p);
+}
+
+function render() {
+  document.getElementById('tabs').innerHTML = VIEWS.map(v =>
+    `<button role="tab" aria-selected="${v.key === view}" onclick="setView('${v.key}')">${v.label}</button>`).join('');
+
+  document.getElementById('root').innerHTML = curVariant().render();
+
+  const sw = document.getElementById('switcher');
+  sw.hidden = curVariants().length < 2;
+  if (!sw.hidden) {
+    const v = curVariant();
+    document.getElementById('variantLabel').textContent =
+      `${v.key} · ${v.name}   (${curVariants().findIndex(x => x.key === v.key) + 1}/${curVariants().length})`;
+  }
+  syncUrl();
+}
+function setView(k) { view = k; window.scrollTo(0,0); render(); }
+function cycle(step) {
+  const vs = curVariants();
+  if (vs.length < 2) return;
+  const i = vs.findIndex(v => v.key === chosen[view]);
+  chosen[view] = vs[(i + step + vs.length) % vs.length].key;
+  window.scrollTo(0,0);
+  render();
+}
+
+document.getElementById('prevVariant').onclick = () => cycle(-1);
+document.getElementById('nextVariant').onclick = () => cycle(1);
+document.addEventListener('keydown', e => {
+  const el = document.activeElement;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+  if (e.key === 'ArrowLeft')  cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+});
+
+render();
+</script>
+</body>
+</html>
