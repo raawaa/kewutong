@@ -1,0 +1,2 @@
+# refinery 的 embed_migrations! 要求这个目录在编译期存在。
+# V001__initial.sql 等实际迁移由数据层 ticket 落进来。
