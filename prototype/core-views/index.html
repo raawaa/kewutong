@@ -2,8 +2,10 @@
 <!--
   一次性原型 —— 用完即弃，不要合进 master。
   问题：核心三视图（今日/本周、人员矩阵、项目看板）应该长什么样？
-  铺法：顶部 tab 切三个视图；「今日/本周」出 3 个结构上截然不同的变体，
-        通过 ?variant=A|B|C 与底部悬浮条切换。另两个视图各 1 稿。
+  铺法：顶部 tab 切三个视图；每个视图下的变体用底部悬浮条 / ←→ 方向键切换，URL 为 ?view=&variant=
+        · 今日/本周：A 列表流 / B 主栏+侧栏 / C 瓦片+时间轴纵列 → 科长已选定 C（默认）
+        · 人员矩阵：1 分段瀑布流 / 2 横向列+分组树（原稿）
+        · 项目看板：单稿
   参见 issue #4（map #2）。全部数据为写死的示例数据，无功能、无持久化。
 -->
 <html lang="zh-CN">
@@ -214,6 +216,36 @@
     flex: 0 0 auto; writing-mode: vertical-rl; font-size: 11px; font-weight: 600;
     color: var(--muted-fg); letter-spacing: 0.08em; padding: 6px 2px; align-self: stretch;
   }
+
+  /* ---------- 人员矩阵：瀑布流变体 ---------- */
+  .mgroup { margin-bottom: 24px; }
+  .mgroup > h3 {
+    display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600;
+    margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  .masonry { columns: 258px; column-gap: 12px; }
+  .pcard {
+    break-inside: avoid; margin-bottom: 12px; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow-sm);
+    overflow: hidden;
+  }
+  .pcard.has-blocked { border-left: 3px solid #ef4444; }
+  .pcard > header {
+    display: flex; align-items: center; gap: 8px; padding: 8px 11px;
+    border-bottom: 1px solid var(--border); background: #fafafa;
+  }
+  .pcard > header .name { font-size: 13px; font-weight: 600; }
+  .pcard > header .n { margin-left: auto; font-size: 11px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+  .pcard.off > header .name { color: var(--muted-fg); }
+  .pcard .trow {
+    display: flex; align-items: center; gap: 7px; padding: 6px 11px;
+    border-bottom: 1px solid #f4f4f5; font-size: 12px;
+  }
+  .pcard .trow:last-child { border-bottom: 0; }
+  .pcard .trow:hover { background: #fafafa; }
+  .pcard .trow .dot2 { width: 6px; height: 6px; border-radius: 999px; flex: 0 0 auto; }
+  .pcard .trow .tt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pcard .empty2 { padding: 9px 11px; font-size: 12px; color: var(--muted-fg); }
 
   /* ---------- 项目看板 ---------- */
   .projgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
@@ -567,10 +599,59 @@ function renderTodayC() {
 }
 
 /* =====================================================================
-   视图：人员矩阵 —— 左侧分组树 + 每人一列的在手任务卡片堆
+   视图：人员矩阵 —— 变体 1：分段瀑布流（每个子组一段，段内按窗口宽度自动分列）
+   ===================================================================== */
+const DOT = { open:'#a1a1aa', inprogress:'#3b82f6', blocked:'#ef4444', waiting:'#f59e0b', done:'#22c55e', cancelled:'#d4d4d8' };
+
+function openTasksOf(p) {
+  return TASKS.filter(t => t.who === p && isOpenish(t))
+              .sort((a,b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || a.due.localeCompare(b.due));
+}
+
+function personCard(p) {
+  const mine = openTasksOf(p);
+  const blk  = mine.some(t => t.status === 'blocked');
+  const off  = OFF_DUTY.includes(p);
+  return `<div class="pcard${blk ? ' has-blocked' : ''}${off ? ' off' : ''}">
+    <header>
+      ${avatar(p)}<span class="name">${esc(p)}</span>
+      ${off ? '<span class="badge open">请假</span>' : ''}
+      <span class="n">${mine.length}</span>
+    </header>
+    ${mine.length ? mine.map(t => `<div class="trow">
+        <span class="dot2" style="background:${DOT[t.status]}" title="${STATUS_LABEL[t.status]}"></span>
+        <span class="tt" title="${esc(t.title)}">${esc(t.title)}</span>
+        ${dueLabel(t.due)}
+      </div>`).join('') : '<div class="empty2">手上没有在办任务</div>'}
+  </div>`;
+}
+
+function renderPeopleMasonry() {
+  const totalOpen = TASKS.filter(isOpenish).length;
+  return `<div class="page wide">
+    <h1 style="font-size:20px">人员矩阵</h1>
+    <p class="muted" style="margin:4px 0 18px;font-size:13px">
+      ${GROUPS.length} 个子组 · ${STATS.headcount} 人（在岗 ${STATS.onDuty}）· 在办 ${totalOpen} 条
+    </p>
+    ${GROUPS.map(g => {
+      const gOpen = g.people.reduce((n,p) => n + openTasksOf(p).length, 0);
+      const gBlk  = g.people.reduce((n,p) => n + openTasksOf(p).filter(t => t.status === 'blocked').length, 0);
+      return `<section class="mgroup">
+        <h3>${esc(g.name)}
+          <span class="count">${g.people.length} 人 · ${gOpen} 条在办</span>
+          ${gBlk ? `<span class="badge blocked">${gBlk} 阻塞</span>` : ''}
+        </h3>
+        <div class="masonry">${g.people.map(personCard).join('')}</div>
+      </section>`;
+    }).join('')}
+  </div>`;
+}
+
+/* =====================================================================
+   视图：人员矩阵 —— 变体 2：左侧分组树 + 每人一列的横向卡片堆（原稿，留作对比）
    ===================================================================== */
 const collapsed = new Set();
-function renderPeople() {
+function renderPeopleColumns() {
   const tree = GROUPS.map(g => `
     <div class="grp">
       <div class="gh">▾ ${esc(g.name)}<span class="n">${g.people.length} 人</span></div>
@@ -655,27 +736,41 @@ function renderProjects() {
 function selectProj(id) { selectedProj = id; render(); }
 
 /* =====================================================================
-   路由：?view= 与 ?variant=
+   路由：?view= 与 ?variant=（变体按视图分组，每个视图各自记住自己的选择）
    ===================================================================== */
 const VIEWS = [
   { key:'today',    label:'今日 / 本周' },
   { key:'people',   label:'人员矩阵' },
   { key:'projects', label:'项目看板' },
 ];
-const VARIANTS = [
-  { key:'A', name:'摘要条 + 列表流',   render: renderTodayA },
-  { key:'B', name:'今日主栏 + 本周侧栏', render: renderTodayB },
-  { key:'C', name:'计数瓦片 + 时间轴纵列', render: renderTodayC },
-];
+const VARIANTS = {
+  today: [
+    { key:'A', name:'摘要条 + 列表流',        render: renderTodayA },
+    { key:'B', name:'今日主栏 + 本周侧栏',    render: renderTodayB },
+    { key:'C', name:'计数瓦片 + 时间轴纵列 ✓', render: renderTodayC },
+  ],
+  people: [
+    { key:'1', name:'分段瀑布流（纵向滚动）',   render: renderPeopleMasonry },
+    { key:'2', name:'横向列 + 分组树（原稿）', render: renderPeopleColumns },
+  ],
+  projects: [
+    { key:'1', name:'项目卡 + 状态分列', render: renderProjects },
+  ],
+};
 
 const params = new URLSearchParams(location.search);
-let view    = VIEWS.some(v => v.key === params.get('view')) ? params.get('view') : 'today';
-let variant = VARIANTS.some(v => v.key === params.get('variant')) ? params.get('variant') : 'A';
+let view = VIEWS.some(v => v.key === params.get('view')) ? params.get('view') : 'today';
+// 每个视图各自的当前变体；今日/本周默认 C（科长已选定）
+const chosen = { today:'C', people:'1', projects:'1' };
+if (VARIANTS[view].some(v => v.key === params.get('variant'))) chosen[view] = params.get('variant');
+
+const curVariants = () => VARIANTS[view];
+const curVariant  = () => curVariants().find(v => v.key === chosen[view]);
 
 function syncUrl() {
   const p = new URLSearchParams();
   p.set('view', view);
-  if (view === 'today') p.set('variant', variant);
+  p.set('variant', chosen[view]);
   history.replaceState(null, '', location.pathname + '?' + p);
 }
 
@@ -683,24 +778,23 @@ function render() {
   document.getElementById('tabs').innerHTML = VIEWS.map(v =>
     `<button role="tab" aria-selected="${v.key === view}" onclick="setView('${v.key}')">${v.label}</button>`).join('');
 
-  const root = document.getElementById('root');
-  if (view === 'today')         root.innerHTML = VARIANTS.find(v => v.key === variant).render();
-  else if (view === 'people')   root.innerHTML = renderPeople();
-  else                          root.innerHTML = renderProjects();
+  document.getElementById('root').innerHTML = curVariant().render();
 
   const sw = document.getElementById('switcher');
-  sw.hidden = view !== 'today';
-  if (view === 'today') {
-    const v = VARIANTS.find(x => x.key === variant);
-    document.getElementById('variantLabel').textContent = `${v.key} · ${v.name}`;
+  sw.hidden = curVariants().length < 2;
+  if (!sw.hidden) {
+    const v = curVariant();
+    document.getElementById('variantLabel').textContent =
+      `${v.key} · ${v.name}   (${curVariants().findIndex(x => x.key === v.key) + 1}/${curVariants().length})`;
   }
   syncUrl();
 }
 function setView(k) { view = k; window.scrollTo(0,0); render(); }
 function cycle(step) {
-  if (view !== 'today') return;
-  const i = VARIANTS.findIndex(v => v.key === variant);
-  variant = VARIANTS[(i + step + VARIANTS.length) % VARIANTS.length].key;
+  const vs = curVariants();
+  if (vs.length < 2) return;
+  const i = vs.findIndex(v => v.key === chosen[view]);
+  chosen[view] = vs[(i + step + vs.length) % vs.length].key;
   window.scrollTo(0,0);
   render();
 }
