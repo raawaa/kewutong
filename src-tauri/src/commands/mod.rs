@@ -9,3 +9,4 @@
 
 pub mod diagnostics;
 pub mod personnel;
+pub mod task;

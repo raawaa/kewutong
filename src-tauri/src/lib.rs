@@ -29,6 +29,10 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         commands::personnel::deactivate_person,
         commands::personnel::reactivate_person,
         commands::personnel::delete_person,
+        // —— 任务管理（ticket #18）——
+        commands::task::create_task,
+        commands::task::set_task_status,
+        commands::task::list_tasks,
     ])
 }
 
