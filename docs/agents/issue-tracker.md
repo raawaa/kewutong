@@ -1,45 +1,47 @@
-# Issue tracker: GitHub
+# Issue tracker: Gitee
 
-Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
+Issues and specs for this repo live as Gitee issues at https://gitee.com/raawaa/kewutong. Use the `gitee` CLI for all operations.
 
 ## Conventions
 
-- **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
-- **Read an issue**: `gh issue view <number> --comments`, filtering comments by `jq` and also fetching labels.
-- **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
-- **Comment on an issue**: `gh issue comment <number> --body "..."`
-- **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
-- **Close**: `gh issue close <number> --comment "..."`
-
-Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
+- **Create an issue**: `gitee issue create -t "<title>" -b "<body>" --labels <csv>`. The CLI infers the repo from `git remote` when run inside a clone; pass `-R owner/repo` to override. **Multi-line bodies**: write to a temp file and pass `-b "$(cat /path/to/body.md)"` — there is no `--body-file` flag.
+- **Read an issue**: `gitee issue view <number>`. Output includes title, body, labels, assignee, state, milestone, comments. For machine-readable output add `-j`.
+- **List issues**: `gitee issue list --state open -j | jq '...'`. Filter with `-j` and post-process — there are no per-field flags like on `gh`.
+- **Comment**: `gitee issue comment <number> -b "<body>"`. Same multi-line caveat as create.
+- **Edit**: `gitee issue edit <number> -t "<title>" -b "<body>" --labels <csv> -a <user> --milestone <n>`. At least one editing flag is required in non-interactive mode.
+- **Close / reopen**: `gitee issue close <number>` / `gitee issue reopen <number>`.
+- **Labels**: per-repo. There is no `gitee label` subcommand. Create labels with `gitee api repos/<owner>/<repo>/labels -X POST -f "name=<name>" -f "color=<6-hex>" -f "description=<text>"`. Allowed name characters: letters, digits, `.`, `_`, `-`, `/`, `\`, full-width; length 2–20.
+- **Issue identifiers**: Gitee uses alphanumeric identifiers (e.g. `ICX4FO`) in API calls, but `#<number>` references in body text render as issue links. Use `#<n>` in body text and the alphanumeric id when scripting.
 
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
 
-When set to `yes`, PRs run through the same labels and states as issues, using the `gh pr` equivalents:
-
-- **Read a PR**: `gh pr view <number> --comments` and `gh pr diff <number>` for the diff.
-- **List external PRs for triage**: `gh pr list --state open --json number,title,body,labels,author,authorAssociation,comments` then keep only `authorAssociation` of `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, or `NONE` (drop `OWNER`/`MEMBER`/`COLLABORATOR`).
-- **Comment / label / close**: `gh pr comment`, `gh pr edit --add-label`/`--remove-label`, `gh pr close`.
-
-GitHub shares one number space across issues and PRs, so a bare `#42` may be either: resolve with `gh pr view 42` and fall back to `gh issue view 42`.
+When set to `yes`, PRs run through the same labels and states as issues, using the `gitee pr` equivalents.
 
 ## When a skill says "publish to the issue tracker"
 
-Create a GitHub issue.
+Create a Gitee issue.
 
 ## When a skill says "fetch the relevant ticket"
 
-Run `gh issue view <number> --comments`.
+Run `gitee issue view <number>`.
 
 ## Wayfinding operations
 
 Used by `/wayfinder`. The **map** is a single issue with **child** issues as tickets.
 
-- **Map**: a single issue labelled `wayfinder:map`, holding the Notes / Decisions-so-far / Fog body. `gh issue create --label wayfinder:map`.
-- **Child ticket**: an issue linked to the map as a GitHub sub-issue (`gh api` on the sub-issues endpoint). Where sub-issues aren't enabled, add the child to a task list in the map body and put `Part of #<map>` at the top of the child body. Labels: `wayfinder:<type>` (`research`/`prototype`/`grilling`/`task`). Once claimed, the ticket is assigned to the driving dev.
-- **Blocking**: GitHub's **native issue dependencies**, the canonical, UI-visible representation. Add an edge with `gh api --method POST repos/<owner>/<repo>/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`, where `<blocker-db-id>` is the blocker's numeric **database id** (`gh api repos/<owner>/<repo>/issues/<n> --jq .id`, _not_ the `#number` or `node_id`). GitHub reports `issue_dependencies_summary.blocked_by` (open blockers only, the live gate). Where dependencies aren't available, fall back to a `Blocked by: #<n>, #<n>` line at the top of the child body. A ticket is unblocked when every blocker is closed.
-- **Frontier query**: list the map's open children (`gh issue list --state open`, scoped to the map's sub-issues / task list), drop any with an open blocker (`issue_dependencies_summary.blocked_by > 0`, or an open issue in the `Blocked by` line) or an assignee; first in map order wins.
-- **Claim**: `gh issue edit <n> --add-assignee @me`, the session's first write.
-- **Resolve**: `gh issue comment <n> --body "<answer>"`, then `gh issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
+- **Map**: a single issue labelled `wayfinder-map`, holding the Notes / Decisions-so-far / Not-yet-specified / Out-of-scope body. `gitee issue create -t "..." -b "$(cat map-body.md)" --labels wayfinder-map`.
+- **Child ticket**: Gitee has **no native sub-issues**. The convention is two body-line markers at the top of every child ticket:
+  - `Part of: #<map-number>` — links the ticket to the map (rendered as a Gitee issue reference).
+  - `Blocked by: #<n>, #<n>` — when the ticket has open blockers; the live gate is "every line item is in `closed` state". To mark a ticket as blocked, edit the ticket's body to include the line; to unblock, edit it again to remove the line.
+  Labels: `wayfinder-<type>` — `wayfinder-research` / `wayfinder-prototype` / `wayfinder-grilling` / `wayfinder-task`. Once claimed, the ticket is assigned to the driving dev via `gitee issue edit <n> -a <username>`.
+- **Blocking**: Gitee has **no native issue dependencies**. The body-line `Blocked by:` convention is the source of truth.
+- **Frontier query**: list the map's tickets by filtering issues whose body contains `Part of: #<map-number>`, are open, are unassigned, and have no open `Blocked by:` references. The exact pipeline is gnarly in pure `jq`; keep a small helper script at `scripts/wayfinder-frontier.sh <map-number>` that:
+  1. `gitee issue list --state open -j` to get every open issue
+  2. `.[] | select(.body | test("^Part of: #<map-number>"))` to keep only map children
+  3. `.[] | select(.assignee == null)` to drop claimed tickets
+  4. For each candidate, walk the `Blocked by:` line, look up each referenced issue's state, and drop the candidate if any blocker is still open
+  5. Return the first issue-number-order survivor
+- **Claim**: `gitee issue edit <n> -a <username>`, the session's first write.
+- **Resolve**: `gitee issue comment <n> -b "<answer>"`, then `gitee issue close <n>`, then append a context pointer (one-line gist + `#<n>` link) to the map's **Decisions so far** by editing the map's body (`gitee issue edit <map-n> -b "$(cat updated-map-body.md)"`).

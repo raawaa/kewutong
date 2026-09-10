@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-Issues and specs live as GitHub issues in this repo. Use the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues and specs live as Gitee issues at https://gitee.com/raawaa/kewutong. Use the `gitee` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
