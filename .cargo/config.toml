@@ -1,0 +1,8 @@
+# 让 `cargo xtask <args>` 等价于 `cargo run --bin xtask -- <args>`。
+# ADR 0003 §维护节奏要求运行者打 `cargo xtask fetch-holidays <year>`,
+# 但 cargo 没有默认 xtask 别名——加这条让维护者少敲一行。
+#
+# xtask 二进制当前位于 src-tauri/src/bin/xtask.rs(单 crate 布局;
+# ADR §后果期望的 `tools/fetch-holidays/` 路径留给后续 workspace 化时迁)。
+[alias]
+xtask = "run --bin xtask --"

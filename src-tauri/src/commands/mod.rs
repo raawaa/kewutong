@@ -8,6 +8,7 @@
 //! - 「现在」只从 [`crate::state::AppState::now`] 取，不直接读宿主时间。
 
 pub mod diagnostics;
+pub mod holiday;
 pub mod personnel;
 pub mod project;
 pub mod task;

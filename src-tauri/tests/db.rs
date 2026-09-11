@@ -6,10 +6,11 @@ use kewutong_lib::testing::{fresh_db, fresh_db_file};
 /// 当前已落盘的迁移数：
 /// - V001（sub_team / person / task 骨架）
 /// - V002（project 全列,ticket #20）
+/// - V003（holiday_override 表,ticket #23）
 ///
 /// 后续每加一张 migration 都要把这里 +1,并在 issue 里说明；fixture 测试
 /// 断言的应是「迁移能跑通且幂等」,而不是固定数字。
-const EXPECTED_APPLIED_MIGRATIONS: i64 = 2;
+const EXPECTED_APPLIED_MIGRATIONS: i64 = 3;
 
 #[test]
 fn migrations_能跑通且版本号可读() {

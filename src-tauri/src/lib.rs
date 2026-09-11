@@ -4,9 +4,11 @@ pub mod clock;
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod holiday;
 pub mod state;
 pub mod testing;
 
+use chrono::Datelike;
 use state::AppState;
 use tauri::Manager;
 
@@ -47,6 +49,10 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         commands::project::delete_project,
         // —— 人员矩阵视图（ticket #22）——
         commands::personnel::personnel_matrix,
+        // —— 节假日数据层与日历视图（ticket #23）——
+        commands::holiday::holiday_calendar,
+        commands::holiday::set_holiday_override,
+        commands::holiday::clear_holiday_override,
     ])
 }
 
@@ -71,9 +77,39 @@ pub fn run() {
     register_commands(builder)
         .setup(|app| {
             let db_path = app.path().app_data_dir()?.join(DB_FILE_NAME);
-            app.manage(AppState::with_system_clock(db::open(&db_path)?));
+            let state = AppState::with_system_clock(db::open(&db_path)?);
+            install_holiday_calendar(app.handle(), &state)?;
+            app.manage(state);
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("科室任务管理启动失败");
+}
+
+/// 启动时合并打包 `holidays/cn-<year>.json` 与 SQLite `holiday_override`
+/// 表,装进 [`AppState`]。两年都缺文件时降级为空日历——年末过渡场景。
+///
+/// 资源目录由 [`tauri::Manager::path`] 的 `resource_dir()` 给出（开发模式
+/// 指向 `target/debug` 下的 Tauri 资源根,发布模式指向 app bundle）。
+fn install_holiday_calendar<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &AppState,
+) -> tauri::Result<()> {
+    use tauri::Manager;
+    let resource_dir = app.path().resource_dir()?;
+    let conn = state.db().map_err(app_error_to_tauri)?;
+    let today = state.today();
+    let calendar = holiday::HolidayCalendar::load(&resource_dir, today.year(), &conn)
+        .map_err(app_error_to_tauri)?;
+    state.install_calendar(calendar);
+    Ok(())
+}
+
+/// `AppError` → `tauri::Error`：Tauri 没有给 `AppError` 实现 `From`,在
+/// setup 钩子边界手动包一次。给科长看的 `message` 通过 `Display` 透到
+/// tauri 的 setup 失败日志。
+fn app_error_to_tauri(err: error::AppError) -> tauri::Error {
+    let detail = err.to_string();
+    let boxed: Box<dyn std::error::Error> = detail.into();
+    tauri::Error::Setup(boxed.into())
 }
