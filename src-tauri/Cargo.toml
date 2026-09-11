@@ -27,7 +27,12 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 # xtask 抓取脚本同步拉取 holiday-cn / date.nager.at 用——同步阻塞 API
 # 足够,一年一次,不引 async runtime
-ureq = { version = "2", default-features = false, features = ["json"] }
+#
+# `tls` 是必须的:主备源都是 HTTPS,无 TLS 后端时 ureq 直接报
+# "Unknown Scheme: cannot make HTTPS request because no TLS backend is configured"
+# ——把 `default-features` 关掉又忘了显式开就是踩这个坑。`gzip` 跟着 default
+# 一起要,响应压缩省一点带宽。
+ureq = { version = "2", features = ["json"] }
 
 [[bin]]
 name = "kewutong"

@@ -7,7 +7,9 @@
 //! 的 PublicHolidays API——后者只含法定假首日、**无调休**，SKIP 路径仍
 //! 准,SHIFT 路径可能漏跳过个别调休;维护者下个发版补回 holiday-cn。
 //!
-//! 输出文件路径 `holidays/cn-<year>.json`(相对 xtask 启动时的 cwd)；
+//! 输出文件路径 `<repo-root>/holidays/cn-<year>.json`；由
+//! `env!("CARGO_MANIFEST_DIR")` 解析,无视调用方 cwd——cargo 总是把
+//! cwd 钉在 `src-tauri/`,裸的相对路径会写到错地方。
 //! 若文件已存在,**不**自动覆盖——避免冲掉人工编辑的本地调整,先打印
 //! 「文件已存在,跳过」并退出。
 //!
@@ -21,7 +23,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 // ---------------------------------------------------------------------------
@@ -89,6 +91,24 @@ fn main() -> ExitCode {
 }
 
 fn fetch_holidays(args: &[String]) -> Result<String, XtaskError> {
+    fetch_holidays_at(args, &holidays_dir_for(&repo_root()))
+}
+
+/// `cargo xtask` 运行时 cargo 把 cwd 钉在 package 根 (`src-tauri/`)，
+/// 节假日数据得写到仓库根 `holidays/`——也就是 Tauri bundle
+/// `bundle.resources: ["../holidays/*"]` 指向的那一处。`CARGO_MANIFEST_DIR`
+/// 在编译期钉死,无视 cwd,这是唯一可靠的写法。
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// `holidays/` 目录相对 `repo_root()` 的位置——`src-tauri/` 的兄弟目录。
+/// 抽成纯函数是为了让测试能用 tempdir 替换而不污染真仓库。
+fn holidays_dir_for(base: &Path) -> PathBuf {
+    base.join("..").join("holidays")
+}
+
+fn fetch_holidays_at(args: &[String], holidays_dir: &Path) -> Result<String, XtaskError> {
     let year: i32 = args
         .first()
         .ok_or_else(|| XtaskError::Usage("缺少年份参数".into()))?
@@ -101,7 +121,7 @@ fn fetch_holidays(args: &[String]) -> Result<String, XtaskError> {
         )));
     }
 
-    let output_path = PathBuf::from("holidays").join(format!("cn-{year}.json"));
+    let output_path = holidays_dir.join(format!("cn-{year}.json"));
     if output_path.exists() {
         return Ok(format!(
             "文件 {} 已存在,跳过——避免冲掉人工编辑;若要重抓请先删除",
@@ -137,7 +157,7 @@ fn fetch_primary(year: i32) -> Result<HolidayFile, XtaskError> {
     let url = JSDELIVR_URL_TEMPLATE.replace("{year}", &year.to_string());
     let response = match ureq::get(&url).call() {
         Ok(resp) => resp,
-        Err(ureq::Error::Status(code, resp)) if code == 404 => {
+        Err(ureq::Error::Status(404, _resp)) => {
             // ADR 0003 §响应映射 point 6: 备源仅在主源「当前年份文件缺失」
             // 时介入——只有 404 才是缺失。5xx / 网络故障应是 fatal。
             return Err(XtaskError::PrimaryMissing(url));
@@ -502,11 +522,21 @@ mod tests {
 
     #[test]
     fn 已存在的输出文件_跳过_不冲掉() {
-        // tmpdir 写一个文件,跑 fetch——应当直接返回 Ok("已存在,跳过")。
+        // 把 holidays 目录放到 tempdir 里,放一个 cn-2099.json 后调
+        // fetch——应当返回「已存在,跳过」,且原文件内容不被冲掉。
         let dir = tempfile::tempdir().expect("临时目录");
-        // 临时改变 cwd 不优雅；直接用文件存在检查
-        let path = dir.path().join("cn-2099.json");
-        std::fs::write(&path, "{}\n").expect("写");
-        assert!(path.exists());
+        let sentinel = "{}\n";
+        let existing = dir.path().join("cn-2099.json");
+        std::fs::write(&existing, sentinel).expect("写哨兵");
+
+        let args = ["2099".to_string()];
+        let summary = fetch_holidays_at(&args, dir.path()).expect("skip 路径");
+
+        assert!(
+            summary.contains("已存在"),
+            "summary 应说明跳过,实际: {summary}",
+        );
+        let after = std::fs::read_to_string(&existing).expect("读回哨兵");
+        assert_eq!(after, sentinel, "哨兵文件不应被 fetch 覆盖");
     }
 }
