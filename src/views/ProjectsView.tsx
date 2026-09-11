@@ -19,18 +19,7 @@ import {
   type Task,
   type TaskStatus,
 } from "@/lib/ipc";
-
-/**
- * 6 状态的中文标签与色板——与任务列表共用同一套配色，方便跨视图识别。
- */
-const STATUS_STYLE: Record<TaskStatus, { label: string; className: string }> = {
-  Open: { label: "待开始", className: "bg-muted text-muted-foreground" },
-  "In-progress": { label: "进行中", className: "bg-blue-50 text-blue-600" },
-  Blocked: { label: "已阻塞", className: "bg-orange-50 text-orange-600" },
-  "Waiting-on": { label: "等待中", className: "bg-yellow-50 text-yellow-600" },
-  Done: { label: "已完成", className: "bg-green-50 text-green-600" },
-  Cancelled: { label: "已取消", className: "bg-muted text-muted-foreground line-through" },
-};
+import { STATUS_STYLE } from "@/lib/taskStatusStyle";
 
 /**
  * 项目状态（Active / Done / Cancelled）的色板——三色一一映射,与上面任务

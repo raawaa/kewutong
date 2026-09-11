@@ -3,7 +3,6 @@ import {
   CalendarDays,
   UserRound,
   CalendarOff,
-  Repeat,
 } from "lucide-react";
 import {
   listPeople,
@@ -21,6 +20,7 @@ import {
   type TaskStatus,
   type TodayWeek as TodayWeekDto,
 } from "@/lib/ipc";
+import { STATUS_STYLE } from "@/lib/taskStatusStyle";
 
 /**
  * 「今日 / 本周」视图（ticket #21，默认落地页）。
@@ -36,16 +36,12 @@ import {
  *   一天,本周剩余只在中间日期有内容；周日当天本周剩余为空。
  * - 点瓦片下钻到对应筛选结果——在岗 → 人员卡片,进行中 / 阻塞中等 →
  *   对应状态的任务清单。
+ *
+ * 不在范围（spec #21 user story 64）："今天的周期性实例混排进'今天'列
+ * 并带 ↻"。周期性 Template / Instance 由 #22 落地,届时在桶查询里加
+ * `(recurring_template_id IS NULL OR scheduled_at &lt;=&gt; due_date)`
+ * 分支,前端复用 `Repeat` 徽章——本视图先把一次性的四列时间轴跑通。
  */
-
-const STATUS_STYLE: Record<TaskStatus, { label: string; className: string }> = {
-  Open: { label: "待开始", className: "bg-muted text-muted-foreground" },
-  "In-progress": { label: "进行中", className: "bg-blue-50 text-blue-600" },
-  Blocked: { label: "已阻塞", className: "bg-orange-50 text-orange-600" },
-  "Waiting-on": { label: "等待中", className: "bg-yellow-50 text-yellow-600" },
-  Done: { label: "已完成", className: "bg-green-50 text-green-600" },
-  Cancelled: { label: "已取消", className: "bg-muted text-muted-foreground line-through" },
-};
 
 /** 瓦片下钻面板展示什么。 */
 type Drill =
@@ -346,9 +342,6 @@ function TaskCard({
 }) {
   const status = STATUS_STYLE[task.status];
   const owner = peopleById.get(task.ownerPersonId);
-  // 周期性 instance 通过 `recurringTemplateId != null` 标记——本期视图
-  // 还没有 instance 数据,但留好 ↻ 标记的位置；当前数据下都为 false。
-  const isRecurring = false;
   return (
     <button
       type="button"
@@ -362,12 +355,6 @@ function TaskCard({
           {status.label}
         </span>
         <span className="flex-1 font-medium leading-snug">{task.title}</span>
-        {isRecurring && (
-          <Repeat
-            className="text-muted-foreground size-3 shrink-0"
-            aria-label="周期性实例"
-          />
-        )}
       </div>
       <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-0.5">
         {owner && (

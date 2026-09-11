@@ -532,8 +532,6 @@ fn 四列_跨日_时钟跨过本地午夜后_今天跟着本地走() {
     assert_eq!(after_view.buckets.overdue.len(), 1);
     // 明天 = 09-12
     assert_eq!(after_view.buckets.tomorrow.len(), 1);
-    // 本周剩余(09-13 周日)
-    let _ = chrono::TimeDelta::hours(1);
 }
 
 // ---------------------------------------------------------------------------
