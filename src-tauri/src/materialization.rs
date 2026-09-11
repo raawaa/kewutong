@@ -553,16 +553,25 @@ pub fn materialize_template(
                         template.rule.byhour as u32,
                         template.rule.byminute as u32,
                     );
-                    let inserted = insert_instance(
+                    let target_title = instance_title(&template.name, original);
+                    // 走共享 INSERT 体——与手工 reschedule 路径同形。
+                    let new_id = insert_rescheduled_instance(
                         &tx,
                         template,
                         &target_utc,
-                        target,
-                        Some(original),
-                        cancelled_id,
-                        "Open",
+                        &original_utc,
+                        &target_title,
                     )?;
-                    if inserted {
+                    // 回填 rescheduled_from_id。幂等命中时(已有 target 行)
+                    // 该 UPDATE 是 no-op(0 rows affected),跳过即可。
+                    let updated = tx.execute(
+                        "UPDATE task
+                            SET rescheduled_from_id = ?1
+                          WHERE id = ?2
+                            AND rescheduled_from_id IS NULL",
+                        params![cancelled_id, new_id],
+                    )?;
+                    if updated > 0 {
                         counts.shifted += 1;
                     }
                 } else {
@@ -822,7 +831,7 @@ fn parse_int_array(text: Option<&str>) -> Result<Option<Vec<i32>>> {
 /// 优先级:`sub_team_id` 内的最小 id 在岗人员 → `project_id` 的
 /// `owner_person_id` → 全员最小 id 在岗人员。空库 → `Internal` 错误
 /// (此时物化没法给 instance 写 owner)。
-fn resolve_owner(
+pub(crate) fn resolve_owner(
     conn: &Connection,
     project_id: Option<i64>,
     sub_team_id: Option<i64>,
@@ -920,6 +929,53 @@ fn insert_instance_inner(
         ],
     )?;
     Ok(affected > 0)
+}
+
+/// 写一条新的「改期后」instance 行。SHIFT 路径（[`materialize_template`]
+/// 里节假日顺延）与手工改期路径（[`crate::commands::instance`]
+///::`::reschedule_instance`）**共用**这一段 INSERT 体——验收点 #26 AC：
+/// 两条路径产出的数据形状一致。
+///
+/// 与 [`insert_instance`] 的差别：本函数由调用方传完整时间戳（不再
+/// `wall_clock_to_utc_sql` 一次），方便手工改期时把"原始模板时间"和
+/// "新时间"分别由调用方算好；返回新行的 id（用于回填 `rescheduled_from_id`）。
+///
+/// 幂等性同样靠 V005 的唯一索引 `(recurring_template_id, scheduled_at)
+/// WHERE recurring_template_id IS NOT NULL`——同 (template, scheduled_at)
+/// 重复调会被 `INSERT OR IGNORE` 静默吃掉。
+pub fn insert_rescheduled_instance(
+    tx: &rusqlite::Transaction<'_>,
+    template: &TemplateMaterializeInput,
+    new_scheduled_at_utc: &str,
+    original_scheduled_at_utc: &str,
+    title: &str,
+) -> Result<i64> {
+    tx.execute(
+        "INSERT OR IGNORE INTO task
+            (title, status, owner_person_id, project_id, sub_team_id,
+             recurring_template_id, scheduled_at, original_scheduled_at,
+             rescheduled_from_id, created_at, updated_at)
+         VALUES (?1, 'Open', ?2, ?3, ?4, ?5, ?6, ?7, NULL, datetime('now'), datetime('now'))",
+        params![
+            title,
+            template.owner_person_id,
+            template.project_id,
+            template.sub_team_id,
+            template.id,
+            new_scheduled_at_utc,
+            original_scheduled_at_utc,
+        ],
+    )?;
+    // INSERT OR IGNORE 之后,last_insert_rowid() 仅在新行被实际插入时
+    // 有意义；幂等命中（已存在）需要 SELECT 一次拿原行 id。
+    let id: i64 = tx
+        .query_row(
+            "SELECT id FROM task
+              WHERE recurring_template_id = ?1 AND scheduled_at = ?2",
+            params![template.id, new_scheduled_at_utc],
+            |row| row.get(0),
+        )?;
+    Ok(id)
 }
 
 #[allow(clippy::too_many_arguments)]

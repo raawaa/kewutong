@@ -346,7 +346,10 @@ pub fn parse_rrule_into_structured(text: &str) -> Result<StructuredRule> {
 // 内部校验小函数
 // ---------------------------------------------------------------------------
 
-fn validate_iana_zone(zone: &str) -> Result<()> {
+/// iana_zone 校验入口——命令层直接拿本函数复用,不在外面又写一遍字面量比较。
+///
+/// 返回 `Err(AppError::InvalidArgument)` 时 `message` 已是给科长看的中文。
+pub fn validate_iana_zone(zone: &str) -> Result<()> {
     if zone.trim().is_empty() {
         return Err(AppError::invalid("时区不能为空。"));
     }

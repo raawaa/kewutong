@@ -155,7 +155,13 @@ export type TaskStatus =
   | "Done"
   | "Cancelled";
 
-/** 任务 DTO（与 Rust `commands::task::Task` 一一对应）。 */
+/** 任务 DTO（与 Rust `commands::task::Task` 一一对应）。
+ *
+ * 一次性 / instance 共享同一 DTO 形状——`isRecurring` /
+ * `recurringTemplateId` / `scheduledAt` / `originalScheduledAt` /
+ * `rescheduledFromId` / `effectiveDate` 在一次性 task 上都是 `null` /
+ * `false`；instance 上有值（见 CONTEXT.md「Instance」词条）。
+ */
 export type Task = {
   id: number;
   title: string;
@@ -164,6 +170,21 @@ export type Task = {
   ownerPersonId: number;
   projectId: number | null;
   dueDate: string | null;
+  /** instance 才有:所属周期性模板 id。一次性 task 为 `null`。 */
+  recurringTemplateId: number | null;
+  /** instance 才有:UTC 时刻 `'YYYY-MM-DD HH:MM:SS'`。一次性 task 为 `null`。 */
+  scheduledAt: string | null;
+  /** instance 改期路径上才有:模板原定时间。一次性 task 为 `null`；Keep 路径
+   * 上与 scheduledAt 相同；SHIFT / 手工改期路径上指向被改期前的那条 instance。 */
+  originalScheduledAt: string | null;
+  /** instance 改期路径上才有:指向原 cancelled instance。 */
+  rescheduledFromId: number | null;
+  /** `true` = instance（带 ↻ 标记）；`false` = 一次性 task。 */
+  isRecurring: boolean;
+  /** 视图按本地日历日分桶的「有效日期」（`YYYY-MM-DD`）。一次性走
+   * `dueDate`；instance 走 `date(scheduled_at, '+8 hours')`。UI 永远按这
+   * 个字段排序。 */
+  effectiveDate: string | null;
   createdAt: string;
   updatedAt: string;
   blockedAt: string | null;
@@ -506,6 +527,59 @@ export function setRecurringTemplateEnabled(
   args: SetRecurringTemplateEnabledArgs,
 ): Promise<RecurringTemplate> {
   return invoke<RecurringTemplate>("set_recurring_template_enabled", { args });
+}
+
+// ---------------------------------------------------------------------------
+// 实例动作与改期溯源（ticket #26）
+// ---------------------------------------------------------------------------
+
+/** `reschedule_instance` 入参。把 instance 从原 scheduled_at 挪到
+ * new_scheduled_at——原 instance 标 Cancelled,新 instance 创建并指向它。 */
+export type RescheduleInstanceArgs = {
+  taskId: number;
+  newScheduledAt: string;
+};
+
+/** `override_instance_scheduled_at` 入参。仅改 instance 的 scheduled_at,
+ * 不创建新 instance,不改 rescheduled_from_id——出差场景使用。 */
+export type OverrideInstanceScheduledAtArgs = {
+  taskId: number;
+  newScheduledAt: string;
+};
+
+/** `update_recurring_template_zone` 入参。出差整体切时区用。 */
+export type UpdateTemplateZoneArgs = {
+  templateId: number;
+  ianaZone: string;
+};
+
+/** `instance_reschedule_chain` 入参。沿 `rescheduled_from_id` 一路回溯。 */
+export type InstanceIdArgs = { taskId: number };
+
+export function rescheduleInstance(
+  args: RescheduleInstanceArgs,
+): Promise<Task> {
+  return invoke<Task>("reschedule_instance", { args });
+}
+
+export function overrideInstanceScheduledAt(
+  args: OverrideInstanceScheduledAtArgs,
+): Promise<Task> {
+  return invoke<Task>("override_instance_scheduled_at", { args });
+}
+
+export function updateRecurringTemplateZone(
+  args: UpdateTemplateZoneArgs,
+): Promise<RecurringTemplate> {
+  return invoke<RecurringTemplate>("update_recurring_template_zone", {
+    args,
+  });
+}
+
+export function instanceRescheduleChain(
+  args: InstanceIdArgs,
+): Promise<Task[]> {
+  return invoke<Task[]>("instance_reschedule_chain", { args });
 }
 
 // byday_mask bit 常量（与 Rust 端 `recurring::byday` 一一对应）

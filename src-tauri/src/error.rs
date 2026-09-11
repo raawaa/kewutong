@@ -49,6 +49,11 @@ impl AppError {
         }
     }
 
+    /// 应用内部状态异常——同 [`Self::Internal`] 变体的便利构造。
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::Internal(message.into())
+    }
+
     /// 机器可读的错误码，前端据此分支。
     pub fn code(&self) -> &'static str {
         match self {

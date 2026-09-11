@@ -757,7 +757,7 @@ fn row_to_task(row: &Row<'_>) -> rusqlite::Result<Task> {
     })
 }
 
-fn fetch_task(conn: &rusqlite::Connection, id: i64) -> Result<Option<Task>> {
+pub(crate) fn fetch_task(conn: &rusqlite::Connection, id: i64) -> Result<Option<Task>> {
     let sql = format!("SELECT {TASK_COLUMNS} FROM task WHERE id = ?1");
     conn.query_row(&sql, params![id], row_to_task)
         .optional()

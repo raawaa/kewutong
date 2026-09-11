@@ -3,6 +3,8 @@ import {
   CalendarDays,
   UserRound,
   CalendarOff,
+  RotateCw,
+  Link2,
 } from "lucide-react";
 import {
   listPeople,
@@ -340,7 +342,15 @@ function TaskCard({
   subTeamNameById: Map<number, string>;
   onClick: () => void;
 }) {
-  const status = STATUS_STYLE[task.status];
+  // instance + Cancelled = "已跳过"(issue #26 AC #2:Skip = 设 Cancelled,
+  // UI 端按 recurring_template_id IS NOT NULL && status='Cancelled' 显示
+  // 「已跳过」徽章)。其它 Cancelled 仍是软删,显示「已取消」。
+  const isSkippedInstance =
+    task.status === "Cancelled" && task.isRecurring === true;
+  const statusLabel = isSkippedInstance ? "已跳过" : STATUS_STYLE[task.status].label;
+  const statusClass = isSkippedInstance
+    ? "bg-muted text-muted-foreground line-through"
+    : STATUS_STYLE[task.status].className;
   const owner = peopleById.get(task.ownerPersonId);
   return (
     <button
@@ -350,12 +360,26 @@ function TaskCard({
     >
       <div className="flex items-start gap-1.5">
         <span
-          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${status.className}`}
+          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${statusClass}`}
         >
-          {status.label}
+          {statusLabel}
         </span>
+        {task.isRecurring && (
+          <span className="text-muted-foreground shrink-0" title="周期性 instance">
+            <RotateCw className="size-3" />
+          </span>
+        )}
         <span className="flex-1 font-medium leading-snug">{task.title}</span>
       </div>
+      {task.rescheduledFromId != null && (
+        <div
+          className="text-muted-foreground flex items-center gap-1 text-[10px]"
+          title="沿 rescheduled_from_id 可追溯到原 instance"
+        >
+          <Link2 className="size-3" />
+          改期自上游 instance
+        </div>
+      )}
       <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-0.5">
         {owner && (
           <span className="flex items-center gap-1">
@@ -370,6 +394,11 @@ function TaskCard({
           <span className="flex items-center gap-1">
             <CalendarDays className="size-3" />
             {task.dueDate}
+          </span>
+        ) : task.scheduledAt ? (
+          <span className="flex items-center gap-1">
+            <CalendarDays className="size-3" />
+            {task.scheduledAt}
           </span>
         ) : (
           <span className="flex items-center gap-1 opacity-60">

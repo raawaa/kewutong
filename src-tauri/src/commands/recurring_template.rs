@@ -347,7 +347,7 @@ fn row_to_template(row: &Row<'_>) -> rusqlite::Result<RecurringTemplate> {
     })
 }
 
-fn fetch_template(conn: &Connection, id: i64) -> Result<Option<RecurringTemplate>> {
+pub(crate) fn fetch_template(conn: &Connection, id: i64) -> Result<Option<RecurringTemplate>> {
     let sql = "SELECT id, name, freq, byday_mask, bymonthday, bymonth, byhour, byminute,
                       iana_zone, ends_on, ends_after_n, holiday_behavior, rrule_text,
                       project_id, sub_team_id, enabled, notes, created_at

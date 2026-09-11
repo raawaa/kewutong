@@ -33,50 +33,58 @@ vi.mock("@/lib/ipc", async (importOriginal) => ({
   setTaskStatus: vi.fn(),
 }));
 
-const 张三的任务: Task = {
+// 一次性 task 的最小 fixture——其他字段(默认 instance 列为 null、blocked
+// 三列为 null)在基类里给齐,各测试只覆盖差异部分。
+function 一次性任务(overrides: Partial<Task>): Task {
+  return {
+    id: 0,
+    title: "示例",
+    description: null,
+    status: "Open",
+    ownerPersonId: 0,
+    projectId: null,
+    dueDate: null,
+    recurringTemplateId: null,
+    scheduledAt: null,
+    originalScheduledAt: null,
+    rescheduledFromId: null,
+    isRecurring: false,
+    effectiveDate: null,
+    createdAt: "2026-09-01 09:00:00",
+    updatedAt: "2026-09-01 09:00:00",
+    blockedAt: null,
+    blockedReason: null,
+    waitingOnPersonId: null,
+    ...overrides,
+  };
+}
+
+const 张三的任务: Task = 一次性任务({
   id: 11,
   title: "整理季度报表",
-  description: null,
-  status: "Open",
   ownerPersonId: 7,
-  projectId: null,
   dueDate: "2026-09-10",
-  createdAt: "2026-09-01 09:00:00",
-  updatedAt: "2026-09-01 09:00:00",
-  blockedAt: null,
-  blockedReason: null,
-  waitingOnPersonId: null,
-};
+  effectiveDate: "2026-09-10",
+});
 
-const 张三的另一条任务: Task = {
+const 张三的另一条任务: Task = 一次性任务({
   id: 12,
   title: "等外委回函",
-  description: null,
   status: "Blocked",
   ownerPersonId: 7,
-  projectId: null,
   dueDate: "2026-09-11",
-  createdAt: "2026-09-01 09:00:00",
-  updatedAt: "2026-09-01 09:00:00",
+  effectiveDate: "2026-09-11",
   blockedAt: "2026-09-09 10:00:00",
   blockedReason: "卡审批",
-  waitingOnPersonId: null,
-};
+});
 
-const 王五的任务: Task = {
+const 王五的任务: Task = 一次性任务({
   id: 13,
   title: "巡检记录",
-  description: null,
-  status: "Open",
   ownerPersonId: 9,
-  projectId: null,
   dueDate: "2026-09-10",
-  createdAt: "2026-09-01 09:00:00",
-  updatedAt: "2026-09-01 09:00:00",
-  blockedAt: null,
-  blockedReason: null,
-  waitingOnPersonId: null,
-};
+  effectiveDate: "2026-09-10",
+});
 
 const ROSTER = [
   {

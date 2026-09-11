@@ -69,6 +69,11 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         // —— 物化引擎（ticket #25）——
         commands::materialization::materialize_now,
         commands::materialization::materialize_if_new_week,
+        // —— 实例动作与改期溯源（ticket #26）——
+        commands::instance::reschedule_instance,
+        commands::instance::override_instance_scheduled_at,
+        commands::instance::update_recurring_template_zone,
+        commands::instance::instance_reschedule_chain,
     ])
 }
 
