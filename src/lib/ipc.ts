@@ -288,6 +288,47 @@ export function listAssigneeCandidates(
 }
 
 // ---------------------------------------------------------------------------
+// 人员矩阵视图（ticket #22）
+// ---------------------------------------------------------------------------
+
+/** `personnel_matrix` 的入参。`includeDeactivated = false`（默认）时
+ * 段内离岗人员不出现，整段全离岗时该段也不出现。
+ */
+export type PersonnelMatrixArgs = {
+  includeDeactivated: boolean;
+};
+
+/** 矩阵卡片上的一位人员：基础信息 + 两个计数 + 在飞任务列表。 */
+export type PersonnelMatrixPerson = {
+  person: Person;
+  /** 在飞任务数（排除 Done / Cancelled）。 */
+  inFlightCount: number;
+  /** 阻塞任务数（Blocked + Waiting-on）。 */
+  blockedCount: number;
+  /** 在飞任务列表，按"状态优先级 + due_date"排序。
+   *  卡片就地展示与「点徽章 → 6 项菜单」改状态都基于这个列表。
+   */
+  tasks: Task[];
+};
+
+/** 矩阵的一"段"——一个子组。 */
+export type PersonnelMatrixSegment = {
+  subTeam: SubTeam;
+  people: PersonnelMatrixPerson[];
+};
+
+/** 「人员矩阵」视图的 DTO。一次性拉完整张看板。 */
+export type PersonnelMatrix = {
+  segments: PersonnelMatrixSegment[];
+};
+
+export function personnelMatrix(
+  args: PersonnelMatrixArgs,
+): Promise<PersonnelMatrix> {
+  return invoke<PersonnelMatrix>("personnel_matrix", { args });
+}
+
+// ---------------------------------------------------------------------------
 // 项目（ticket #20）
 // ---------------------------------------------------------------------------
 

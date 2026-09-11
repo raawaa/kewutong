@@ -696,6 +696,39 @@ fn fetch_task(conn: &rusqlite::Connection, id: i64) -> Result<Option<Task>> {
     .map_err(Into::into)
 }
 
+/// 取一名人员的**在飞**任务列表（ticket #22 · 人员矩阵）。
+///
+/// 公开入口:`personnel.rs` 在每位人员身上各调用一次。命中
+/// `idx_task_owner_status_due`（前两列 `owner_person_id` + `status` 都进了
+/// WHERE / ORDER BY 表达式）。排序与 [`personnel_matrix`] 视图保持一致:
+/// 状态优先级 + due_date 升序 + id 兜底。
+///
+/// 不在签名上暴露 `Connection` 的借用给其它命令模块,避免 row mapper 等
+/// 内部细节外泄——调用方拿到的是 `Vec<Task>`。
+pub fn fetch_in_flight_tasks_for_person(
+    conn: &rusqlite::Connection,
+    owner_person_id: i64,
+) -> Result<Vec<Task>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, description, status, owner_person_id, project_id, due_date, \
+                created_at, updated_at, blocked_at, blocked_reason, waiting_on_person_id \
+           FROM task \
+          WHERE owner_person_id = ?1 \
+            AND status IN ('Open','In-progress','Blocked','Waiting-on') \
+          ORDER BY CASE status \
+                     WHEN 'Open'        THEN 0 \
+                     WHEN 'In-progress' THEN 1 \
+                     WHEN 'Blocked'     THEN 2 \
+                     WHEN 'Waiting-on'  THEN 3 \
+                   END ASC, \
+                   CASE WHEN due_date IS NULL THEN 1 ELSE 0 END ASC, \
+                   due_date ASC, \
+                   id ASC",
+    )?;
+    let rows = stmt.query_map(params![owner_person_id], row_to_task)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+}
+
 fn parse_status(text: &str) -> Option<TaskStatus> {
     match text {
         "Open" => Some(TaskStatus::Open),

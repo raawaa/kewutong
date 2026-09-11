@@ -45,6 +45,8 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         commands::project::create_project,
         commands::project::update_project,
         commands::project::delete_project,
+        // —— 人员矩阵视图（ticket #22）——
+        commands::personnel::personnel_matrix,
     ])
 }
 

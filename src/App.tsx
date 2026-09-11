@@ -5,6 +5,7 @@ import {
   TaskDialog,
   type TaskDialogTarget,
 } from "@/components/task/TaskDialog";
+import { PersonnelMatrixView } from "@/views/PersonnelMatrixView";
 import { PersonnelView } from "@/views/PersonnelView";
 import { ProjectsView } from "@/views/ProjectsView";
 import { TodayWeekView } from "@/views/TodayWeekView";
@@ -15,17 +16,17 @@ import type {
 } from "@/lib/ipc";
 
 /**
- * 顶层 tab——spec #15 user story 60-66：三个主视图平级。
+ * 顶层 tab——spec #15 user story 60-66：四个主视图平级。
  *
- * 「今日 / 本周」是默认落地页（ticket #21），另两个是「人员矩阵」与
- * 「项目看板」。原本还有一个独立的"任务列表"tab,本周被并入今日/本周
- * 视图（瓦片下钻 + 四列时间轴已覆盖高频查询,纯列表入口由后续 ticket
- * 决定是否补回）。
+ * 「今日 / 本周」是默认落地页（ticket #21），「人员矩阵」（ticket #22）、
+ * 「项目看板」（ticket #20）并列。「人员」单独一个 tab——做子组 / 人员
+ * CRUD,与矩阵的"读"视角分开。
  */
-type Tab = "today" | "projects" | "personnel";
+type Tab = "today" | "matrix" | "projects" | "personnel";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "today", label: "今日 / 本周" },
+  { id: "matrix", label: "人员矩阵" },
   { id: "projects", label: "项目" },
   { id: "personnel", label: "人员" },
 ];
@@ -119,6 +120,11 @@ export default function App() {
 
       {tab === "today" ? (
         <TodayWeekView
+          refreshToken={refreshToken}
+          onOpenTask={openEditTask}
+        />
+      ) : tab === "matrix" ? (
+        <PersonnelMatrixView
           refreshToken={refreshToken}
           onOpenTask={openEditTask}
         />

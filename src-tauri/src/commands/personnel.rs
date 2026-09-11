@@ -644,3 +644,156 @@ fn ensure_sub_team_exists(conn: &rusqlite::Connection, id: i64) -> Result<()> {
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// 人员矩阵视图（ticket #22）
+// ---------------------------------------------------------------------------
+
+/// 「人员矩阵」视图查询入参。
+///
+/// `include_deactivated = false`（默认）：整段全离岗的子组不再出现；段内离岗
+/// 的人也从人员列表中过滤掉。`true` 时所有人仍出现，离岗的挂在段尾。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonnelMatrixArgs {
+    pub include_deactivated: bool,
+}
+
+/// 矩阵中一位人员的统计卡片。
+///
+/// `in_flight_count` / `blocked_count` 由命令层算出——前端不二次聚合。
+/// `tasks` 是该人员**在飞**的任务列表（已剔除 Done / Cancelled），按
+/// "状态优先级 + due_date" 排序，供矩阵卡片就地展示与改状态。
+///
+/// `tasks` 复用 task 模块的 `Task` DTO——`Task` 是全 app 共用的稳定 wire
+/// 形状（出现在 `list_tasks` / `today_week` 等多处），人员矩阵的"就地改
+/// 状态"手势也要拿到完整 `Task`。新增/调整 `Task` 字段时,矩阵 wire 形
+/// 状会跟随变化——这是有意的统一契约,不是模块泄漏。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonnelMatrixPerson {
+    pub person: Person,
+    pub in_flight_count: i64,
+    pub blocked_count: i64,
+    pub tasks: Vec<crate::commands::task::Task>,
+}
+
+/// 矩阵的一"段"——一个子组。
+///
+/// `sub_team` 段头；`people` 是该子组下应出现在矩阵中的人员列表（含
+/// `include_deactivated` 过滤）。整段无人在岗（且 `include_deactivated = false`）
+/// 时，整段从结果中略去——前端不再为它留一个空标题。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonnelMatrixSegment {
+    pub sub_team: SubTeam,
+    pub people: Vec<PersonnelMatrixPerson>,
+}
+
+/// 「人员矩阵」视图的 DTO（ticket #22）。
+///
+/// 一次性拉完整张看板——段（按 `sub_team.sort_order` 升序）、人员（段内按
+/// 花名册既有顺序：在岗优先，离岗置后）、每人两个计数 + 在飞任务列表。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonnelMatrix {
+    pub segments: Vec<PersonnelMatrixSegment>,
+}
+
+/// 「人员矩阵」视图查询（ticket #22）。
+///
+/// 单一 SQL 一次拉完：先按子组分段 + 段内人员顺序（沿用 [`list_people`] 的
+/// 既有顺序），再按 `(owner_person_id, status, due_date)` 索引取出每人
+/// 的在飞任务列表，最后在 Rust 端把每段里每个人的 `in_flight_count` 与
+/// `blocked_count` 聚出来。
+///
+/// 设计要点：
+/// - **不在 SQL 里 `GROUP BY`** 算两个计数——一次拉任务行再在 Rust 端聚
+///   合，命中 `idx_task_owner_status_due` 即可；COUNT/SUM 会引入临时聚合，
+///   索引反而不一定走。
+/// - **不在 SQL 里 `JOIN`**：子组 / 人员 / 任务分三段简单 SELECT，分别走
+///   `idx_person_sub_team_deactivated_at` 与 `idx_task_owner_status_due`。
+///   段内的「在岗过滤 / 段尾挂离岗」由 Rust 端复用 [`list_people`] 的既有
+///   排序约定。
+/// - **空段隐藏**：`include_deactivated = false` 时若整段人全离岗,
+///   `people` 数组为空——该段直接不进 `segments`。
+#[tauri::command]
+pub fn personnel_matrix(
+    state: State<'_, AppState>,
+    args: PersonnelMatrixArgs,
+) -> Result<PersonnelMatrix> {
+    let conn = state.db()?;
+
+    // 1) 段头:按 sort_order 升序拉全部子组。
+    let mut stmt = conn.prepare(
+        "SELECT id, name, description, sort_order, created_at \
+           FROM sub_team \
+          ORDER BY sort_order ASC, id ASC",
+    )?;
+    let segments: Vec<SubTeam> = stmt
+        .query_map([], row_to_sub_team)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(AppError::from)?;
+
+    // 2) 段内人员:复用 list_people 的"子组内顺序"约定——在岗优先、按 id 升序;
+    //    include_deactivated = false 时整段被略去。
+    let mut people_stmt = conn.prepare(
+        "SELECT id, name, sub_team_id, contact, deactivated_at, created_at \
+           FROM person \
+          WHERE sub_team_id = ?1 \
+          ORDER BY CASE WHEN deactivated_at IS NULL THEN 0 ELSE 1 END ASC, id ASC",
+    )?;
+
+    let mut result: Vec<PersonnelMatrixSegment> = Vec::with_capacity(segments.len());
+    for team in segments {
+        let people_rows = people_stmt
+            .query_map(params![team.id], row_to_person)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(AppError::from)?;
+        // 离岗过滤:include_deactivated = false 时仅保留在岗的;
+        // 全员离岗的段直接不进结果。
+        let filtered: Vec<Person> = if args.include_deactivated {
+            people_rows
+        } else {
+            people_rows
+                .into_iter()
+                .filter(|p| p.deactivated_at.is_none())
+                .collect()
+        };
+        if filtered.is_empty() {
+            continue;
+        }
+
+        let mut people: Vec<PersonnelMatrixPerson> = Vec::with_capacity(filtered.len());
+        for person in filtered {
+            // 每人单条任务查询——封装在 task 模块,命中 idx_task_owner_status_due。
+            // 这里不直接 prepare,因为每人都要执行;让 task 模块替我们管这条 SQL。
+            let tasks = crate::commands::task::fetch_in_flight_tasks_for_person(
+                &conn,
+                person.id,
+            )?;
+            let in_flight_count = tasks.len() as i64;
+            let blocked_count = tasks
+                .iter()
+                .filter(|t| matches!(
+                    t.status,
+                    crate::commands::task::TaskStatus::Blocked
+                        | crate::commands::task::TaskStatus::WaitingOn
+                ))
+                .count() as i64;
+            people.push(PersonnelMatrixPerson {
+                person,
+                in_flight_count,
+                blocked_count,
+                tasks,
+            });
+        }
+
+        result.push(PersonnelMatrixSegment {
+            sub_team: team,
+            people,
+        });
+    }
+
+    Ok(PersonnelMatrix { segments: result })
+}
