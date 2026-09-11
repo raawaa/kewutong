@@ -2,7 +2,7 @@
 
 use crate::clock::{Clock, SystemClock};
 use crate::error::{AppError, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -39,5 +39,11 @@ impl AppState {
     /// 可直接入库的「现在」。
     pub fn now_sql(&self) -> String {
         self.clock.now_sql()
+    }
+
+    /// 科长本地的「今天」。截止日这类**日历日**语义一律从这里取，
+    /// 不要自己拿 [`AppState::now`] 做时区换算。
+    pub fn today(&self) -> NaiveDate {
+        self.clock.today()
     }
 }

@@ -13,8 +13,10 @@
 //! 所有命令入参与返回都是稳定 DTO（camelCase），不透传行结构。
 //! 时间戳统一用 UTC 入库格式 `"%Y-%m-%d %H:%M:%S"`，由 [`crate::clock`] 渲染。
 
+use crate::clock::{parse_sql_date, to_sql_date};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
+use chrono::{Days, NaiveDate};
 use rusqlite::{params, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -110,6 +112,46 @@ pub struct ListTasksArgs {
     pub project_id: Option<i64>,
 }
 
+/// 编辑态保存的入参（ticket #19「编辑即详情」）。
+///
+/// 字段集与新建一致——点开已有任务看到的就是同一套表单。**不含 `status`
+/// 与阻塞三列**：状态机的唯一入口仍是 [`set_task_status`]，编辑保存不得
+/// 成为第二个入口（ADR 0003 §D6）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTaskArgs {
+    pub id: i64,
+    pub title: String,
+    pub description: Option<String>,
+    pub owner_person_id: i64,
+    pub project_id: Option<i64>,
+    pub due_date: Option<String>,
+}
+
+/// 截止 chip 行的一格（ticket #19）。
+///
+/// 「无」这一格的 `due_date` 是 `None`——它不是某个日期，而是"不设截止"。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DueDateChip {
+    Today,
+    Tomorrow,
+    NextWeek,
+    None,
+}
+
+/// 截止 chip 行的一格连同它此刻代表的日期。
+///
+/// `label` 一并由命令层给出：界面纯中文硬编码、无 i18n 层（spec #15），
+/// 前端照着渲染即可，不自己拼文案，也不自己算日期。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DueDateOption {
+    pub chip: DueDateChip,
+    pub label: String,
+    pub due_date: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // 命令
 // ---------------------------------------------------------------------------
@@ -121,7 +163,7 @@ pub struct ListTasksArgs {
 pub fn create_task(state: State<'_, AppState>, args: CreateTaskArgs) -> Result<Task> {
     let title = require_non_blank(args.title, "任务标题不能为空。")?;
     let description = trim_to_option(args.description);
-    let due_date = trim_to_option(args.due_date);
+    let due_date = parse_due_date(args.due_date)?;
 
     let conn = state.db()?;
     ensure_person_exists(&conn, args.owner_person_id)?;
@@ -146,6 +188,62 @@ pub fn create_task(state: State<'_, AppState>, args: CreateTaskArgs) -> Result<T
     fetch_task(&conn, id)?.ok_or_else(|| {
         AppError::Internal(format!("刚插入的任务 id={id} 立即查不到,数据库状态异常"))
     })
+}
+
+/// 编辑态保存（ticket #19「编辑即详情」）。
+///
+/// 改写标题 / 描述 / 负责人 / 所属项目 / 截止日五个字段 + `updated_at`。
+/// **刻意不碰** `status` 与阻塞三列——那是 [`set_task_status`] 的专属职责，
+/// 两个入口都能写状态就等于没有唯一入口。
+#[tauri::command]
+pub fn update_task(state: State<'_, AppState>, args: UpdateTaskArgs) -> Result<Task> {
+    let title = require_non_blank(args.title, "任务标题不能为空。")?;
+    let description = trim_to_option(args.description);
+    let due_date = parse_due_date(args.due_date)?;
+
+    let conn = state.db()?;
+    ensure_person_exists(&conn, args.owner_person_id)?;
+    if let Some(project_id) = args.project_id {
+        ensure_project_exists(&conn, project_id)?;
+    }
+
+    let now = state.now_sql();
+    let affected = conn.execute(
+        "UPDATE task
+            SET title           = ?1,
+                description     = ?2,
+                owner_person_id = ?3,
+                project_id      = ?4,
+                due_date        = ?5,
+                updated_at      = ?6
+          WHERE id = ?7",
+        params![
+            title,
+            description,
+            args.owner_person_id,
+            args.project_id,
+            due_date,
+            now,
+            args.id,
+        ],
+    )?;
+
+    if affected == 0 {
+        return Err(AppError::invalid("任务不存在或已被删除。"));
+    }
+
+    fetch_task(&conn, args.id)?
+        .ok_or_else(|| AppError::Internal(format!("任务 id={} 查询不一致", args.id)))
+}
+
+/// 截止 chip 行此刻的取值（ticket #19）。
+///
+/// 「今天 / 明天 / 一周后」是相对**科长本地日历日**的，随时钟走；chip 有哪
+/// 几格、什么文案、什么顺序，也都在这里定死。前端拿到就渲染，不自己算日期
+/// ——否则同一个「今天」会在 Rust 与 TS 两处各算一遍，迟早在时区上分叉。
+#[tauri::command]
+pub fn list_due_date_options(state: State<'_, AppState>) -> Result<Vec<DueDateOption>> {
+    Ok(due_date_options(state.today()))
 }
 
 /// **全 app 唯一**的状态变更入口（ADR 0003 §D6）。
@@ -263,6 +361,43 @@ pub fn list_tasks(state: State<'_, AppState>, args: ListTasksArgs) -> Result<Vec
 // ---------------------------------------------------------------------------
 // 内部辅助
 // ---------------------------------------------------------------------------
+
+/// 截止 chip 行的取值表——chip 集合、文案、顺序、日期算法的单一来源。
+///
+/// 「一周后」= 今天 + 7 天，走日历加法而不是裸算术，跨月跨年由 `chrono` 兜。
+/// 理论上 `checked_add_days` 只在逼近 `NaiveDate::MAX`（约公元 26 万年）时
+/// 返回 `None`；真到了那天，不如没有这一格，也好过整行 chip 取不出来。
+fn due_date_options(today: NaiveDate) -> Vec<DueDateOption> {
+    let offset_option = |chip, label: &str, days: u64| DueDateOption {
+        chip,
+        label: label.to_string(),
+        due_date: today.checked_add_days(Days::new(days)).map(to_sql_date),
+    };
+    vec![
+        offset_option(DueDateChip::Today, "今天", 0),
+        offset_option(DueDateChip::Tomorrow, "明天", 1),
+        offset_option(DueDateChip::NextWeek, "一周后", 7),
+        DueDateOption {
+            chip: DueDateChip::None,
+            label: "无".to_string(),
+            due_date: Option::None,
+        },
+    ]
+}
+
+/// 截止日入库前的校验：空白折叠为「无截止」，非空必须是合法的 `YYYY-MM-DD`。
+///
+/// 严格到底而不宽松兜底——日历精确选日与 chip 行走同一条路，一旦放进
+/// `2026-13-01` 这种值，后面按 `due_date` 排序与分桶的三视图会静默错位。
+fn parse_due_date(value: Option<String>) -> Result<Option<String>> {
+    let Some(text) = trim_to_option(value) else {
+        return Ok(None);
+    };
+    match parse_sql_date(&text) {
+        Some(date) => Ok(Some(to_sql_date(date))),
+        None => Err(AppError::invalid("截止日格式不对,应形如 2026-09-10。")),
+    }
+}
 
 /// 状态变更时计算 `blocked_at` / `blocked_reason` / `waiting_on_person_id`
 /// 三列的目标值。规则承接 ADR 0003 §D2 / §D3 / §D4：

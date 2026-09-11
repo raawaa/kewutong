@@ -10,15 +10,20 @@
 //!   - `UNIQUE(sub_team_id, name)` 同子组重名 → 中文错误
 //!   - 必填字符串空白 → 中文错误
 //! - 离岗过滤后的花名册查询（`include_deactivated = false`）
+//!
+//! ticket #19 追加：
+//! - `list_assignee_candidates` 是 `@` 内联选人候选的权威：按输入过滤、
+//!   排除离岗人员、条数封顶；前端只渲染返回的列表
 
 mod support;
 
 use kewutong_lib::clock::FixedClock;
 use kewutong_lib::commands::personnel::{
     create_person, create_sub_team, deactivate_person, delete_person, delete_sub_team,
-    list_people, list_sub_teams, reactivate_person, reorder_sub_teams, update_person,
-    update_sub_team, CreatePersonArgs, CreateSubTeamArgs, DeleteSubTeamArgs, ListPeopleArgs,
-    PersonIdArgs, ReorderSubTeamsArgs, UpdatePersonArgs, UpdateSubTeamArgs,
+    list_assignee_candidates, list_people, list_sub_teams, reactivate_person, reorder_sub_teams,
+    update_person, update_sub_team, CreatePersonArgs, CreateSubTeamArgs, DeleteSubTeamArgs,
+    ListAssigneeCandidatesArgs, ListPeopleArgs, PersonIdArgs, ReorderSubTeamsArgs,
+    UpdatePersonArgs, UpdateSubTeamArgs,
 };
 use kewutong_lib::testing::{fresh_db, fresh_db_with_clock};
 use std::sync::Arc;
@@ -759,4 +764,183 @@ fn 花名册_include_deactivated_为假时_离岗人员被滤掉() {
     )
     .expect("空结果也是合法的");
     assert!(empty.is_empty());
+}
+// ---------------------------------------------------------------------------
+// `@` 内联选人的候选查询（ticket #19）
+// ---------------------------------------------------------------------------
+
+/// 建 2 个子组 + 5 个人的花名册，供候选查询的几条测试共用。
+/// 暖通：张三 / 张小五 / 李四（李四离岗）；电气：王五 / 赵六。
+fn 花名册() -> tauri::App<tauri::test::MockRuntime> {
+    let clock = Arc::new(FixedClock::at("2026-09-10 08:00:00"));
+    let app = mock_app(fresh_db_with_clock(clock));
+
+    let 暖通 = create_sub_team(
+        app.state(),
+        CreateSubTeamArgs {
+            name: "暖通".into(),
+            description: None,
+        },
+    )
+    .expect("建组应当成功");
+    let 电气 = create_sub_team(
+        app.state(),
+        CreateSubTeamArgs {
+            name: "电气".into(),
+            description: None,
+        },
+    )
+    .expect("建组应当成功");
+
+    for (name, team) in [
+        ("张三", 暖通.id),
+        ("张小五", 暖通.id),
+        ("李四", 暖通.id),
+        ("王五", 电气.id),
+        ("赵六", 电气.id),
+    ] {
+        create_person(
+            app.state(),
+            CreatePersonArgs {
+                name: name.into(),
+                sub_team_id: team,
+                contact: "示例".into(),
+            },
+        )
+        .expect("录人应当成功");
+    }
+
+    let 李四 = list_people(
+        app.state(),
+        ListPeopleArgs {
+            include_deactivated: true,
+            sub_team_id: None,
+        },
+    )
+    .expect("查花名册")
+    .into_iter()
+    .find(|p| p.name == "李四")
+    .expect("李四应当在花名册里");
+    deactivate_person(app.state(), PersonIdArgs { id: 李四.id }).expect("离岗应当成功");
+
+    app
+}
+
+fn 候选名单(app: &tauri::App<tauri::test::MockRuntime>, query: Option<&str>) -> Vec<String> {
+    list_assignee_candidates(
+        app.state(),
+        ListAssigneeCandidatesArgs {
+            query: query.map(str::to_string),
+        },
+    )
+    .expect("候选查询应当成功")
+    .into_iter()
+    .map(|c| c.name)
+    .collect()
+}
+
+#[test]
+fn 候选_空查询给出全部在岗人员并带子组名() {
+    let app = 花名册();
+
+    let candidates = list_assignee_candidates(
+        app.state(),
+        ListAssigneeCandidatesArgs { query: None },
+    )
+    .expect("候选查询应当成功");
+
+    // 离岗的李四不在候选里；顺序跟花名册一致（子组顺序 → 组内 id）
+    let shape: Vec<(&str, &str)> = candidates
+        .iter()
+        .map(|c| (c.name.as_str(), c.sub_team_name.as_str()))
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            ("张三", "暖通"),
+            ("张小五", "暖通"),
+            ("王五", "电气"),
+            ("赵六", "电气"),
+        ]
+    );
+    assert!(candidates.iter().all(|c| c.person_id > 0));
+}
+
+#[test]
+fn 候选_按输入过滤_子串匹配() {
+    let app = 花名册();
+
+    assert_eq!(候选名单(&app, Some("张")), vec!["张三", "张小五"]);
+    assert_eq!(候选名单(&app, Some("小")), vec!["张小五"], "匹配的是子串,不只是前缀");
+    assert_eq!(候选名单(&app, Some("五")), vec!["张小五", "王五"]);
+}
+
+#[test]
+fn 候选_排除离岗人员() {
+    let app = 花名册();
+
+    assert!(
+        候选名单(&app, Some("李")).is_empty(),
+        "离岗的人不该出现在指派候选里"
+    );
+}
+
+#[test]
+fn 候选_查询空白等同于不过滤() {
+    let app = 花名册();
+
+    assert_eq!(候选名单(&app, Some("   ")), 候选名单(&app, None));
+    assert_eq!(候选名单(&app, Some("")), 候选名单(&app, None));
+}
+
+#[test]
+fn 候选_无人匹配时给空列表而不是报错() {
+    let app = 花名册();
+
+    assert!(候选名单(&app, Some("不存在的人")).is_empty());
+}
+
+#[test]
+fn 候选_通配符按字面量匹配不当成模式() {
+    let app = 花名册();
+
+    // `%` / `_` 是 SQL LIKE 的通配符；用户打进来的必须当普通字符,
+    // 否则打一个 `%` 就把全员刷出来了。
+    assert!(候选名单(&app, Some("%")).is_empty());
+    assert!(候选名单(&app, Some("_")).is_empty());
+    assert!(候选名单(&app, Some("张%")).is_empty());
+}
+
+#[test]
+fn 候选_条数封顶不把二十人的科室全糊到下拉里() {
+    let clock = Arc::new(FixedClock::at("2026-09-10 08:00:00"));
+    let app = mock_app(fresh_db_with_clock(clock));
+    let team = create_sub_team(
+        app.state(),
+        CreateSubTeamArgs {
+            name: "运行".into(),
+            description: None,
+        },
+    )
+    .expect("建组应当成功");
+    for i in 0..20 {
+        create_person(
+            app.state(),
+            CreatePersonArgs {
+                name: format!("值班员{i:02}"),
+                sub_team_id: team.id,
+                contact: "示例".into(),
+            },
+        )
+        .expect("录人应当成功");
+    }
+
+    let candidates = list_assignee_candidates(
+        app.state(),
+        ListAssigneeCandidatesArgs { query: None },
+    )
+    .expect("候选查询应当成功");
+
+    assert_eq!(candidates.len(), 6);
+    assert_eq!(candidates[0].name, "值班员00", "封顶取的是花名册顺序的前几个");
 }

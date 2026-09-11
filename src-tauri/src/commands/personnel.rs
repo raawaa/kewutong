@@ -116,6 +116,30 @@ pub struct PersonIdArgs {
     pub id: i64,
 }
 
+/// `@` 内联选人的候选查询入参（ticket #19）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListAssigneeCandidatesArgs {
+    /// 科长在 `@` 后面已经打出的部分；空白或缺省 = 不过滤。
+    pub query: Option<String>,
+}
+
+/// `@` 下拉里的一条候选。
+///
+/// `sub_team_name` 是下拉右侧的副行——科室里跨组重名是常态（ADR 0001
+/// §3.2 只保证组内唯一），只给姓名科长选不准人。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssigneeCandidate {
+    pub person_id: i64,
+    pub name: String,
+    pub sub_team_name: String,
+}
+
+/// `@` 下拉最多显示几条。原型 v3（`prototype/recurring-flow`）的下拉高度就是
+/// 6 行；封顶在命令层而不是前端，"候选列表是什么"才只有一处权威。
+const ASSIGNEE_CANDIDATE_LIMIT: usize = 6;
+
 // ---------------------------------------------------------------------------
 // 子组命令
 // ---------------------------------------------------------------------------
@@ -305,6 +329,51 @@ pub fn list_people(state: State<'_, AppState>, args: ListPeopleArgs) -> Result<V
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
 }
 
+/// `@` 内联选人的候选（ticket #19）。
+///
+/// 这是「候选列表是什么」的唯一权威：
+/// - 只给在岗的人（离岗的从指派候选里消失，spec #15 user story 4）；
+/// - 按 `query` 做**子串**匹配（"小"能命中"张小五"——中文场景下前缀匹配太窄）；
+/// - 条数封顶 [`ASSIGNEE_CANDIDATE_LIMIT`]；
+/// - 顺序沿用花名册：子组顺序 → 组内 id。
+///
+/// 前端只渲染返回的列表，不再自己过滤一遍。
+#[tauri::command]
+pub fn list_assignee_candidates(
+    state: State<'_, AppState>,
+    args: ListAssigneeCandidatesArgs,
+) -> Result<Vec<AssigneeCandidate>> {
+    let conn = state.db()?;
+
+    // `query` 里的 `%` / `_` 是科长打进来的普通字符，不是通配符——不转义的话
+    // 打一个 `%` 就把全员刷出来了。
+    let pattern = match trim_to_option(args.query) {
+        Some(query) => format!("%{}%", escape_like(&query)),
+        None => "%".to_string(),
+    };
+
+    let mut stmt = conn.prepare(
+        "SELECT p.id, p.name, st.name
+           FROM person p
+           JOIN sub_team st ON st.id = p.sub_team_id
+          WHERE p.deactivated_at IS NULL
+            AND p.name LIKE ?1 ESCAPE '\\'
+          ORDER BY st.sort_order ASC, st.id ASC, p.id ASC
+          LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(
+        params![pattern, ASSIGNEE_CANDIDATE_LIMIT as i64],
+        |row| {
+            Ok(AssigneeCandidate {
+                person_id: row.get(0)?,
+                name: row.get(1)?,
+                sub_team_name: row.get(2)?,
+            })
+        },
+    )?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+}
+
 /// 新增人员。
 #[tauri::command]
 pub fn create_person(
@@ -487,6 +556,19 @@ fn trim_to_option(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+/// 把用户输入里的 LIKE 元字符（`%` / `_` / 反斜杠本身）转义掉，
+/// 配合 SQL 里的 `ESCAPE '\'` 使用。
+fn escape_like(raw: &str) -> String {
+    let mut escaped = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
 }
 
 /// 预检查：子组名在「另一条记录」上已被占用则拒绝。
