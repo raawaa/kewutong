@@ -164,3 +164,56 @@ CREATE INDEX idx_task_template_scheduled_at
 -- 不加——离岗记录也需要被查询到（只是被应用层过滤掉）。
 CREATE INDEX idx_person_sub_team_deactivated_at
     ON person(sub_team_id, deactivated_at);
+
+-- ----------------------------------------------------------------------------
+-- task_fts — 任务 FTS5 影子表（ticket #27 全文搜索）
+-- ----------------------------------------------------------------------------
+-- ADR 0001 §FTS5 决议：`tokenize = 'trigram'`、`external content = 'task'`、
+-- 增删改全量同步。trigram 在中文场景下做子串召回（搜"合同"能命中"外委合
+-- 同评审"），不依赖 ICU；未来若召回不够，按 ADR 0001 §代码层「FTS5 升级
+-- 路径」的决议改写 `fts5_tokenizer_v2` 包装（jieba-rs），不走可加载扩展。
+--
+-- 只索引标题与描述两列——这正是科长在 ⌘K 命令面板（issue #28）输入的关键
+-- 词落点；status / owner / project 不进 FTS5，是 `list_tasks_filtered` 的
+-- 复合筛选覆盖的维度,两类查询路径刻意分开。
+--
+-- `content = 'task'`（external content）：不存原文本，节省空间；DB 层触
+-- 发器同步 task 的 INSERT / DELETE / UPDATE——3 条 trigger 在表创建后紧
+-- 跟定义。
+--
+-- 注意：`CREATE VIRTUAL TABLE` 与 `CREATE TRIGGER` 必须按依赖顺序排列——
+-- 触发器引用 `task_fts`,在影子表建好之后才能建。
+CREATE VIRTUAL TABLE task_fts USING fts5(
+    title,
+    description,
+    content  = 'task',
+    tokenize = 'trigram'
+);
+
+-- ----------------------------------------------------------------------------
+-- 同步触发器（ticket #27）：task 增删改时全量同步 task_fts。
+-- ----------------------------------------------------------------------------
+-- `INSERT INTO task_fts(task_fts, rowid, ...)` 三参形式是 FTS5「外部内容」
+-- 模式的标准写法：
+--   - 第一个参数 `'delete'`（即 shadow 表名作为命令字）= 删除指定 rowid
+--   - 第一个参数缺省 / 其它 = 插入 / 替换（按 rowid）
+-- delete-then-insert 是 UPDATE 触发器的两步写法,先清掉旧 rowid 再插新行
+-- ——避免在 rowid 改变（极少见但理论上可能）的极端情况下残留旧 trigram。
+--
+-- 三条触发器必须在 `task_fts` 建好之后,否则 SQLITE_ERROR。
+CREATE TRIGGER task_ai AFTER INSERT ON task BEGIN
+    INSERT INTO task_fts(rowid, title, description)
+    VALUES (new.id, new.title, new.description);
+END;
+
+CREATE TRIGGER task_ad AFTER DELETE ON task BEGIN
+    INSERT INTO task_fts(task_fts, rowid, title, description)
+    VALUES ('delete', old.id, old.title, old.description);
+END;
+
+CREATE TRIGGER task_au AFTER UPDATE ON task BEGIN
+    INSERT INTO task_fts(task_fts, rowid, title, description)
+    VALUES ('delete', old.id, old.title, old.description);
+    INSERT INTO task_fts(rowid, title, description)
+    VALUES (new.id, new.title, new.description);
+END;

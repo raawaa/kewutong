@@ -17,10 +17,12 @@ use crate::clock::{parse_sql_date, to_sql_date};
 use crate::commands::validation::{ensure_row_exists, require_non_blank, trim_to_option};
 use crate::error::{AppError, Result};
 use crate::materialization::MATERIALIZATION_WINDOW_DAYS;
-use crate::state::AppState;
+use crate::state::{AppState, AppStateInner};
 use chrono::{Days, Datelike, NaiveDate};
+use rusqlite::types::Value;
 use rusqlite::{params, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tauri::State;
 
 // ---------------------------------------------------------------------------
@@ -136,6 +138,62 @@ pub struct ListTasksArgs {
     pub owner_person_id: Option<i64>,
     pub project_id: Option<i64>,
 }
+
+/// 任务复合筛选入参（ticket #27）。
+///
+/// 任意维度组合合法：`statuses` 空 = 不过滤状态；`owner_person_id` /
+/// `project_id` 给定则仅取该范围；`due_date_from` / `due_date_to` 给出
+/// 截止日区间（含两端），两边都为 `None` = 不过滤到期日。
+///
+/// `include_deactivated_owners = false`（默认）：负责人离岗的任务不出现
+/// ——对齐 `personnel_matrix` 的默认语义（spec #15 user story 4）。设
+/// `true` 时保留离岗人员的历史任务，便于"张某请假前那条活谁接了"回溯。
+///
+/// `include_cancelled = false`（默认）：Cancelled 是 task 层软删,从在飞
+/// 列表消失但保留查询入口——`true` 时进历史视图。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListTasksFilteredArgs {
+    /// 状态多选过滤；空 = 不过滤。
+    pub statuses: Vec<TaskStatus>,
+    /// 负责人过滤；`None = 不过滤`。
+    pub owner_person_id: Option<i64>,
+    /// 项目过滤；`None = 不过滤`。
+    pub project_id: Option<i64>,
+    /// 截止日下界（含）；`None = 不限`。
+    pub due_date_from: Option<String>,
+    /// 截止日上界（含）；`None = 不限`。
+    pub due_date_to: Option<String>,
+    /// 默认 false 过滤 Cancelled。
+    pub include_cancelled: bool,
+    /// 默认 false 过滤掉负责人离岗的任务。
+    pub include_deactivated_owners: bool,
+}
+
+/// 全文搜索入参（ticket #27 · ⌘K 命令面板 #28 的数据源）。
+///
+/// `query` 走 FTS5 trigram 分词器,中文子串召回——搜"合同"能命中"外委
+/// 合同评审",不必记住完整措辞。前端把命令面板的输入直接落进来即可。
+///
+/// `include_deactivated_owners` / `include_cancelled` 语义与
+/// [`ListTasksFilteredArgs`] 对齐,默认同样收敛到"在岗 + 在飞"。
+///
+/// `limit` 限定最多返回几条——默认 [`SEARCH_TASKS_LIMIT`]。命令面板只
+/// 渲染前 N 条,长结果集走"翻页 / 重输关键词",不一次性塞回前端。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchTasksArgs {
+    pub query: String,
+    /// 默认 false 过滤 Cancelled。
+    pub include_cancelled: bool,
+    /// 默认 false 过滤掉负责人离岗的任务。
+    pub include_deactivated_owners: bool,
+    /// 最大返回条数；`None` = 用 [`SEARCH_TASKS_LIMIT`]。
+    pub limit: Option<usize>,
+}
+
+/// 命令面板搜索默认上限。封顶在命令层,前端按这个数字决定下拉高度。
+const SEARCH_TASKS_LIMIT: usize = 50;
 
 /// 编辑态保存的入参（ticket #19「编辑即详情」）。
 ///
@@ -386,6 +444,336 @@ pub fn list_tasks(state: State<'_, AppState>, args: ListTasksArgs) -> Result<Vec
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
 }
 
+/// 复合筛选任务列表（ticket #27）。
+///
+/// 状态 × 人员 × 项目 × 到期日区间任意组合 + 是否含 Cancelled / 是否含
+/// 离岗人员负责的任务，结果正确性由 `tests/task_search.rs` 的多维度
+/// 交叉断言兜底。
+///
+/// 与 [`list_tasks`] 平行存在,**不替换**——`list_tasks` 是历史入口,UI
+/// 上若干"无筛选只看"路径仍走它;本命令是 ⌘K 命令面板 / 高级筛选的入口,
+/// 字段集显式、避免旧调用方的隐式默认值漂移。
+///
+/// 索引利用：
+/// - `statuses` 命中 `idx_task_in_flight_status` partial index（在飞四态
+///   子集）或 `idx_task_status_blocked_at`（阻塞态子集）
+/// - `owner_person_id` 命中 `idx_task_owner_status_due` 前导列
+/// - `project_id` 命中 `idx_task_project_status_due` 前导列
+/// - `due_date_from` / `due_date_to` 命中 `idx_task_due_date` partial
+///
+/// 离岗过滤通过 `JOIN person p` + `p.deactivated_at IS NULL` 表达——避免
+/// 在 task 层冗余存"负责人是否离岗"（那是 person 的语义,跨表保持权威）。
+#[tauri::command]
+pub fn list_tasks_filtered(
+    state: State<'_, AppState>,
+    args: ListTasksFilteredArgs,
+) -> Result<Vec<Task>> {
+    // 入参预检:截止日区间两端若有,必须是 YYYY-MM-DD——与 `create_task`
+    // / `parse_optional_date` 的语义一致,避免脏日期混进 SQL 字符串。
+    let due_date_from = parse_optional_filter_date(args.due_date_from.as_deref(), "截止日起")?;
+    let due_date_to = parse_optional_filter_date(args.due_date_to.as_deref(), "截止日止")?;
+
+    let conn = state.db()?;
+
+    // 拼 WHERE:每个维度的占位符按可读顺序固定,绑参顺序跟着走。
+    // 固定顺序的好处:加新维度时只动这一处,row_to_task 不感知 SQL 漂移。
+    let mut where_clauses: Vec<String> = Vec::new();
+    if !args.include_cancelled {
+        where_clauses.push("t.status != 'Cancelled'".into());
+    }
+    if !args.statuses.is_empty() {
+        // 状态枚举数量很小,直接展开 `IN (?, ?, ...)`——`sqlite3_bind`
+        // 不支持动态列数;展开后 `?` 与 bind 参数对齐。
+        let placeholders = vec!["?"; args.statuses.len()].join(",");
+        where_clauses.push(format!("t.status IN ({placeholders})"));
+    }
+    if args.owner_person_id.is_some() {
+        where_clauses.push("t.owner_person_id = ?".into());
+    }
+    if args.project_id.is_some() {
+        where_clauses.push("t.project_id = ?".into());
+    }
+    if due_date_from.is_some() {
+        where_clauses.push("t.due_date >= ?".into());
+    }
+    if due_date_to.is_some() {
+        where_clauses.push("t.due_date <= ?".into());
+    }
+    if !args.include_deactivated_owners {
+        where_clauses.push("p.deactivated_at IS NULL".into());
+    }
+
+    // JOIN person 仅在需要离岗过滤时引入——`include_deactivated_owners`
+    // 不需要 person 的任何列,平白 JOIN 会拖一个 nested loop。其它维度
+    // （状态 / owner / project / due_date）都只读 `task` 表。
+    let mut sql = format!(
+        "SELECT {TASK_COLUMNS_WITH_T} \
+           FROM task t"
+    );
+    if !args.include_deactivated_owners {
+        sql.push_str(" JOIN person p ON p.id = t.owner_person_id");
+    }
+    if !where_clauses.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(&where_clauses.join(" AND "));
+    }
+    // 与 [`list_tasks`] 同序——在飞优先 + due_date + created_at + id 兜底。
+    // 同样的语义不该在两处各写一遍,这里显式重复一份是因为 SQL 形式不同
+    // （多了 `t.` 前缀与 JOIN），单点改时各自走自己的 review 路径。
+    sql.push_str(" ORDER BY CASE WHEN t.status IN (");
+    let in_flight: Vec<String> = [
+        TaskStatus::Open,
+        TaskStatus::InProgress,
+        TaskStatus::Blocked,
+        TaskStatus::WaitingOn,
+    ]
+    .iter()
+    .map(|s| format!("'{}'", s.as_str()))
+    .collect();
+    sql.push_str(&in_flight.join(","));
+    sql.push_str(") THEN 0 ELSE 1 END ASC, t.due_date ASC, t.created_at ASC, t.id ASC");
+
+    let mut stmt = conn.prepare(&sql)?;
+
+    // 参数顺序与 WHERE 拼装顺序一一对应;混合类型走 `Value` 装
+    // 箱——owned 值,避免跨 if-let 借用绑不到 `params` Vec 上。
+    let mut params: Vec<Value> = Vec::new();
+    for status in &args.statuses {
+        params.push(Value::Text(status.as_str().to_string()));
+    }
+    if let Some(o) = args.owner_person_id {
+        params.push(Value::Integer(o));
+    }
+    if let Some(p) = args.project_id {
+        params.push(Value::Integer(p));
+    }
+    if let Some(d) = due_date_from.as_ref() {
+        params.push(Value::Text(d.clone()));
+    }
+    if let Some(d) = due_date_to.as_ref() {
+        params.push(Value::Text(d.clone()));
+    }
+
+    let rows = stmt.query_map(rusqlite::params_from_iter(params), row_to_task)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+}
+
+/// FTS5 trigram 全文搜索（ticket #27 · ⌘K 命令面板 #28）。
+///
+/// 中文子串召回："合同" → "外委合同评审"（不必记住完整措辞,trigram
+/// 分词器把查询切成 3 字 chunks,与索引 chunks 求交集匹配）。
+///
+/// 长查询走 `spawn_blocking`：FTS5 MATCH + 后续 `task` JOIN 在数据量
+/// 增长后会拖慢主线程；`async` 命令把同步 SQL 推进 tokio blocking pool,
+/// 不阻塞 UI 与其它短命令。命令层仍是**同步获取连接 + 同步读库**,只是
+/// 不在调用方的 async 任务上跑。
+///
+/// 索引命中：FTS5 MATCH 走 `task_fts` 自身的 trigram 倒排;`WHERE`
+/// 子句（`status != 'Cancelled'` / `p.deactivated_at IS NULL`）加上 `t.id IN (...)`
+/// 子查询,SID 是 rowid,主键索引兜住,JOIN person 走主键。
+///
+/// query 里的 FTS5 特殊字符（`"`, `*`, `(`, `)`, `:`, `^`, `+`, `-`）
+/// 会被替换成空白——保留中英文 / 数字 / 普通标点的召回;不替换的话会撞
+/// FTS5 query parser 的语法错误（`sqlite3_bind` 给出的英文错信息直接
+/// 抛给前端没意义）。这是项目级决策,不在命令层逐项 prompt。
+#[tauri::command]
+pub async fn search_tasks(
+    state: State<'_, AppState>,
+    args: SearchTasksArgs,
+) -> Result<Vec<Task>> {
+    let query = require_non_blank(args.query, "搜索关键词不能为空。")?;
+    let sanitized = sanitize_fts5_query(&query);
+    if sanitized.is_empty() {
+        // 关键词全是 FTS5 语法字符——视为无命中,直接返回空列表。
+        // 比抛错更友好:UI 命令面板里打了 "***" 想清屏,不应给中文错误。
+        return Ok(Vec::new());
+    }
+    let limit = args.limit.unwrap_or(SEARCH_TASKS_LIMIT);
+
+    // clone Arc 后送进 blocking task——`state.db()` 拿的是 `MutexGuard`,
+    // 不能跨 await 持有。`Arc<AppStateInner>` 共享连接,blocking 任务直
+    // 接走 `Mutex` 拿锁,与其他命令串行化。
+    let state_arc: Arc<AppStateInner> = state.inner().clone();
+    let include_cancelled = args.include_cancelled;
+    let include_deactivated_owners = args.include_deactivated_owners;
+
+    let join = tokio::task::spawn_blocking(move || {
+        search_tasks_blocking(
+            &state_arc,
+            &sanitized,
+            include_cancelled,
+            include_deactivated_owners,
+            limit,
+        )
+    })
+    .await
+    .map_err(|err| AppError::Internal(format!("搜索任务调度失败：{err}")))?;
+    join
+}
+
+/// 同步版 `search_tasks`——把 async 命令的主体从 tokio runtime 上拉
+/// 起来,便于集成测试在没有 Tauri async runtime 的环境下驱动。
+///
+/// 实现与 [`search_tasks`] 共享 [`search_tasks_blocking`] 同步体,仅在
+/// 调度层把 `spawn_blocking` 替换成 `block_on`;测试可以走 `async`
+/// 路径,也可以直接同步调用这条。
+#[doc(hidden)]
+pub fn search_tasks_blocking_for_tests(
+    state: &AppState,
+    args: SearchTasksArgs,
+) -> Result<Vec<Task>> {
+    let query = require_non_blank(args.query, "搜索关键词不能为空。")?;
+    let sanitized = sanitize_fts5_query(&query);
+    if sanitized.is_empty() {
+        return Ok(Vec::new());
+    }
+    let limit = args.limit.unwrap_or(SEARCH_TASKS_LIMIT);
+    search_tasks_blocking(
+        state,
+        &sanitized,
+        args.include_cancelled,
+        args.include_deactivated_owners,
+        limit,
+    )
+}
+
+/// `search_tasks` 在 blocking pool 上跑的同步体——独立函数,便于测试
+/// 跳过 tokio 直接调用。
+///
+/// 查询路径分两段（按 spec #15 子串召回期望）：
+/// - **≥ 3 字**:走 FTS5 `task_fts MATCH ?` —— trigram 索引高效,2 字以上
+///   中文子串能召回（只要 query trigram 与文档 trigram 任意一对匹配）。
+/// - **< 3 字**:trigram 无法生成 token,降级到 `LIKE '%?%'` 对
+///   `title || description` 直接子串匹配——科长打"合同"两字就能命中
+///   "外委合同评审"（issue #27 验收点）。LIKE 不走索引,但短查询过滤
+///   集本来就小,无显著开销。
+///
+/// 两条路径共享同一份 `include_cancelled` / `include_deactivated_owners`
+/// 与排序、limit——搜索语义只有一处权威。
+fn search_tasks_blocking(
+    state: &AppState,
+    sanitized_query: &str,
+    include_cancelled: bool,
+    include_deactivated_owners: bool,
+    limit: usize,
+) -> Result<Vec<Task>> {
+    let conn = state.db()?;
+
+    if sanitized_query.chars().count() < 3 {
+        return search_tasks_like(&conn, sanitized_query, include_cancelled, include_deactivated_owners, limit);
+    }
+
+    // FTS5 query 走 `MATCH`——trigram 分词器对中英文子串都有效。
+    // LIMIT 在 SQL 端做;外层再 JOIN 拉全列。FTS5 子查询只输出 rowid。
+    // `task_fts.rowid` 与 `task.id` 对齐（task 表 `INTEGER PRIMARY KEY`
+    // 复用 rowid）,无需显式关联列。
+    let mut where_clauses: Vec<String> = vec!["t.id IN (SELECT rowid FROM task_fts WHERE task_fts MATCH ?)".into()];
+    if !include_cancelled {
+        where_clauses.push("t.status != 'Cancelled'".into());
+    }
+    if !include_deactivated_owners {
+        where_clauses.push("p.deactivated_at IS NULL".into());
+    }
+
+    let sql = format!(
+        "SELECT {select_cols} \
+           FROM task_fts \
+           JOIN task t ON t.id = task_fts.rowid \
+           JOIN person p ON p.id = t.owner_person_id \
+          WHERE {where_sql} \
+          ORDER BY rank ASC, t.id ASC \
+          LIMIT ?",
+        where_sql = where_clauses.join(" AND "),
+        select_cols = TASK_COLUMNS_WITH_T,
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let mut params: Vec<Value> = vec![Value::Text(sanitized_query.to_string())];
+    params.push(Value::Integer(limit as i64));
+
+    let rows = stmt.query_map(rusqlite::params_from_iter(params), row_to_task)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+}
+
+/// 短查询的 LIKE 子串匹配（`< 3 字` 走这条）——trigram 兜不住的边界。
+///
+/// 不走索引,但短查询本身过滤集小,无显著开销。`LIKE` 的元字符
+/// (`%` / `_` / `\\`) 已在调用 [`sanitize_fts5_query`] 时一并替换成空
+/// 白——这里不再二次转义。
+///
+/// 排序按 id 升序兜底:短查询召回集本来就小,trigram 的 `rank` 不适用,
+/// 稳定呈现比排序质量更重要。
+fn search_tasks_like(
+    conn: &rusqlite::Connection,
+    sanitized_query: &str,
+    include_cancelled: bool,
+    include_deactivated_owners: bool,
+    limit: usize,
+) -> Result<Vec<Task>> {
+    let pattern = format!("%{sanitized_query}%");
+    let mut where_clauses: Vec<String> = vec![
+        "(t.title LIKE ?1 OR t.description LIKE ?1)".into(),
+    ];
+    if !include_cancelled {
+        where_clauses.push("t.status != 'Cancelled'".into());
+    }
+    if !include_deactivated_owners {
+        where_clauses.push("p.deactivated_at IS NULL".into());
+    }
+
+    // 用 [`TASK_COLUMNS_WITH_T`]——LIKE 路径 `JOIN person p` 引入 `p.id`,
+    // 不带 `t.` 前缀的列会让 SQLite 报 ambiguous column。
+    let sql = format!(
+        "SELECT {TASK_COLUMNS_WITH_T} \
+           FROM task t \
+           JOIN person p ON p.id = t.owner_person_id \
+          WHERE {where_sql} \
+          ORDER BY t.id ASC \
+          LIMIT ?2",
+        where_sql = where_clauses.join(" AND "),
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let mut params: Vec<Value> = vec![Value::Text(pattern)];
+    params.push(Value::Integer(limit as i64));
+
+    let rows = stmt.query_map(rusqlite::params_from_iter(params), row_to_task)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+}
+
+/// 把用户输入的 FTS5 query 做一次清洗:替换 FTS5 query syntax 里的特殊
+/// 字符为空白,然后把多余空白折叠成单空格。
+///
+/// 替换目标:`, `*`, `(`, `)`, `:`, `^`, `+`, `-`——
+/// - `"`:短语分隔符；保留会强制把查询切成短语
+/// - `*`:前缀通配符
+/// - `(`, `)`:子表达式,单独出现会触发语法错误
+/// - `:`:列过滤器前缀（如 `title:`）
+/// - `^`:FTS5 排序 hint
+/// - `+`, `-`:必须 / 必须不包含项前缀
+///
+/// 保留汉字 / 字母 / 数字 / 普通标点（空格、`。`、`，`、`/`等）——这些
+/// trigram 分词器能正确 tokenize 成 3 字 chunks。`%` / `_` / `\` 在
+/// 这里一并替换——短查询走 LIKE 兜底路径，不替换会触发 SQL 通配符
+/// 语义。清洗后空串由调用方决定返回空列表还是抛错，本函数只负责
+/// "清洗"。
+fn sanitize_fts5_query(raw: &str) -> String {
+    let replaced: String = raw
+        .chars()
+        .map(|c| {
+            if matches!(
+                c,
+                '"' | '*' | '(' | ')' | ':' | '^' | '+' | '-' | '%' | '_' | '\\'
+            ) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    replaced.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// 「今日 / 本周」视图（ticket #21）的计数瓦片。
 ///
 /// 三个数字都是**全库范围**的——不限于本周；瓦片要回答"全局是什么状态"，
@@ -507,6 +895,14 @@ const TASK_COLUMNS: &str = "id, title, description, status, owner_person_id, pro
         recurring_template_id, scheduled_at, original_scheduled_at, rescheduled_from_id, \
         COALESCE(due_date, date(scheduled_at, '+8 hours')) AS effective_date, \
         waiting_on_person_id";
+
+/// 带 `t.` 前缀的 `task` 列清单——`JOIN` 其它表时（`JOIN person p`
+/// 或 `JOIN task_fts`）避免 `id` 列歧义。
+const TASK_COLUMNS_WITH_T: &str = "t.id, t.title, t.description, t.status, t.owner_person_id, \
+        t.project_id, t.due_date, t.created_at, t.updated_at, t.blocked_at, t.blocked_reason, \
+        t.recurring_template_id, t.scheduled_at, t.original_scheduled_at, t.rescheduled_from_id, \
+        COALESCE(t.due_date, date(t.scheduled_at, '+8 hours')) AS effective_date, \
+        t.waiting_on_person_id";
 
 /// 桶边界。三个变体合在一起描述 4 个桶的 WHERE 拼装——避免 4 处拼 SQL 漂移。
 #[derive(Debug, Clone, Copy)]
@@ -669,6 +1065,23 @@ fn parse_due_date(value: Option<String>) -> Result<Option<String>> {
     match parse_sql_date(&text) {
         Some(date) => Ok(Some(to_sql_date(date))),
         None => Err(AppError::invalid("截止日格式不对,应形如 2026-09-10。")),
+    }
+}
+
+/// 筛选条件的可选日期校验（`list_tasks_filtered` 用）。
+///
+/// 与 [`parse_due_date`] 同语义但接受 `Option<&str>` 直接传 `args` 字
+/// 段、不强求 owned ——筛选条件不进库，只参与 WHERE 拼装，所以走借
+/// 用更轻量。字段名透传给中文错误,让科长知道是起 / 止哪一端坏了。
+fn parse_optional_filter_date(value: Option<&str>, label: &str) -> Result<Option<String>> {
+    let Some(text) = trim_to_option(value.map(|s| s.to_string())) else {
+        return Ok(None);
+    };
+    match parse_sql_date(&text) {
+        Some(date) => Ok(Some(to_sql_date(date))),
+        None => Err(AppError::invalid(format!(
+            "{label}格式不对,应形如 2026-09-10。"
+        ))),
     }
 }
 
