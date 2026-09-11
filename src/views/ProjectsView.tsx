@@ -32,6 +32,17 @@ const STATUS_STYLE: Record<TaskStatus, { label: string; className: string }> = {
   Cancelled: { label: "已取消", className: "bg-muted text-muted-foreground line-through" },
 };
 
+/**
+ * 项目状态（Active / Done / Cancelled）的色板——三色一一映射,与上面任务
+ * 6 状态色的"已完成 / 已取消"对齐。Active 用 blue-50 区分于任务的
+ * Open（muted），因为 Active 的语义更广（"还在飞"）而非单纯的"待开始"。
+ */
+const PROJECT_STATUS_STYLE: Record<ProjectStatus, { label: string; className: string }> = {
+  Active: { label: "在飞", className: "bg-blue-50 text-blue-600" },
+  Done: { label: "已完成", className: "bg-green-50 text-green-600" },
+  Cancelled: { label: "已取消", className: "bg-muted text-muted-foreground line-through" },
+};
+
 const STATUS_COLUMNS: TaskStatus[] = [
   "Open",
   "In-progress",
@@ -254,7 +265,7 @@ export function ProjectsView({ refreshToken }: { refreshToken: number }) {
               还没有项目。先在人员管理里建好子组与人员,再来这里挂项目。
             </p>
           ) : (
-            <ul className="flex flex-col gap-1.5">
+            <ul className="grid grid-cols-1 gap-1.5">
               {projects.map((project) => {
                 const selected = project.id === selectedProjectId;
                 return (
@@ -365,12 +376,7 @@ export function ProjectsView({ refreshToken }: { refreshToken: number }) {
 // ---------------------------------------------------------------------------
 
 function ProjectStatusBadge({ status }: { status: ProjectStatus }) {
-  const map: Record<ProjectStatus, { label: string; className: string }> = {
-    Active: { label: "在飞", className: "bg-blue-50 text-blue-600" },
-    Done: { label: "已完成", className: "bg-green-50 text-green-600" },
-    Cancelled: { label: "已取消", className: "bg-muted text-muted-foreground line-through" },
-  };
-  const entry = map[status];
+  const entry = PROJECT_STATUS_STYLE[status];
   return (
     <span
       className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${entry.className}`}

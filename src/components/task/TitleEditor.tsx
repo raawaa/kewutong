@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { AssigneeCandidate, ProjectCandidate } from "@/lib/ipc";
-import { findMentionTrigger } from "./mention";
+import { findInlineTrigger } from "./inlineTrigger";
 
 /**
  * 项目内联候选的展示形态：补上 `projectId` 让 pill 读得回来。
@@ -103,7 +103,7 @@ export function TitleEditor({
     const box = boxRef.current;
     if (!box) return;
     const before = textBeforeCaret(box);
-    const trigger = before == null ? null : findMentionTrigger(before);
+    const trigger = before == null ? null : findInlineTrigger(before);
     if (!trigger) {
       closeCandidates();
       return;
@@ -144,11 +144,15 @@ export function TitleEditor({
     const hasAssignee = assigneeCandidates.length > 0;
     const hasProject = projectCandidates.length > 0;
     if (hasAssignee || hasProject) {
+      // 任一下拉开着时,上下键就在当前**唯一**打开的下拉里循环；两个下拉
+      // 不会同时打开（`refreshCandidates` 互斥地清掉另一边）。
       switch (event.key) {
         case "ArrowDown":
           event.preventDefault();
           if (hasAssignee) {
             setActiveAssigneeIndex((index) => (index + 1) % assigneeCandidates.length);
+          } else {
+            setActiveProjectIndex((index) => (index + 1) % projectCandidates.length);
           }
           return;
         case "ArrowUp":
@@ -157,6 +161,10 @@ export function TitleEditor({
             setActiveAssigneeIndex(
               (index) => (index - 1 + assigneeCandidates.length) % assigneeCandidates.length,
             );
+          } else {
+            setActiveProjectIndex(
+              (index) => (index - 1 + projectCandidates.length) % projectCandidates.length,
+            );
           }
           return;
         case "Enter":
@@ -164,7 +172,7 @@ export function TitleEditor({
           event.preventDefault();
           if (hasAssignee) {
             selectAssignee(assigneeCandidates[activeAssigneeIndex]);
-          } else if (hasProject) {
+          } else {
             selectProject(projectCandidates[activeProjectIndex]);
           }
           return;
@@ -359,7 +367,7 @@ function readValue(box: HTMLElement): {
   return { title: title.replace(/\s+/g, " ").trim(), assignee, project };
 }
 
-/** 光标前的全部文本（含 pill 的文字，与 `findMentionTrigger` 的口径一致）。 */
+/** 光标前的全部文本（含 pill 的文字，与 `findInlineTrigger` 的口径一致）。 */
 function textBeforeCaret(box: HTMLElement): string | null {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0) return null;
@@ -412,7 +420,7 @@ function insertPillAndClearOthers(
   const before = document.createRange();
   before.selectNodeContents(box);
   before.setEnd(caret.endContainer, caret.endOffset);
-  const trigger = findMentionTrigger(before.toString());
+  const trigger = findInlineTrigger(before.toString());
   if (!trigger) return;
 
   // 注意顺序：`trigger.index` 是按「含旧 pill」的文本算的，所以先定位、

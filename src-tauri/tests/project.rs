@@ -25,7 +25,7 @@ use kewutong_lib::commands::project::{
 };
 use kewutong_lib::commands::task::{
     create_task, list_tasks, set_task_status, CreateTaskArgs, ListTasksArgs,
-    SetTaskStatusArgs, TaskStatus,
+    SetTaskStatusArgs, Task, TaskStatus,
 };
 use kewutong_lib::testing::{fresh_db, fresh_db_with_clock};
 use std::sync::Arc;
@@ -544,6 +544,146 @@ fn status_在飞_加_done_混合_仍派生为_active() {
 // ---------------------------------------------------------------------------
 // 列表过滤 + 项目看板查询
 // ---------------------------------------------------------------------------
+
+#[test]
+fn 看板查询_按项目_过滤后_任务按_状态_到期日_排序() {
+    // AC 末条：「集成测试覆盖……按项目 + 状态 + 到期日的看板查询」。
+    // 看板背后的查询路径是 `list_tasks({ project_id })` —— 既按项目过滤,
+    // 又按 (在飞优先, due_date, created_at, id) 排序,实现"按项目 + 状态 +
+    // 到期日"的看板分列投影。
+    let clock = Arc::new(FixedClock::at("2026-09-10 09:00:00"));
+    let (app, owner) = fresh_state_with_team_and_owner(clock);
+    let project = create_project(
+        app.state(),
+        CreateProjectArgs {
+            name: "看板".into(),
+            owner_person_id: owner.id,
+            sub_team_id: owner.sub_team_id,
+            start_date: None,
+            due_date: None,
+            notes: None,
+        },
+    )
+    .expect("建项目");
+
+    // 三个项目外的「噪音」任务,确保 `project_id` 过滤把别的项目 / 无项目
+    // 的任务排掉。
+    let _ = create_task(
+        app.state(),
+        CreateTaskArgs {
+            title: "noise-A".into(),
+            description: None,
+            owner_person_id: owner.id,
+            project_id: None,
+            due_date: None,
+        },
+    )
+    .expect("噪音");
+
+    // 项目内的任务:跨多个状态 + 多个到期日,用于覆盖"按到期日 + 在飞优先"。
+    let late = create_task(
+        app.state(),
+        CreateTaskArgs {
+            title: "晚做".into(),
+            description: None,
+            owner_person_id: owner.id,
+            project_id: Some(project.id),
+            due_date: Some("2026-12-31".into()),
+        },
+    )
+    .expect("建");
+    let early = create_task(
+        app.state(),
+        CreateTaskArgs {
+            title: "早做".into(),
+            description: None,
+            owner_person_id: owner.id,
+            project_id: Some(project.id),
+            due_date: Some("2026-09-15".into()),
+        },
+    )
+    .expect("建");
+    let in_flight_no_due = create_task(
+        app.state(),
+        CreateTaskArgs {
+            title: "在飞无期".into(),
+            description: None,
+            owner_person_id: owner.id,
+            project_id: Some(project.id),
+            due_date: None,
+        },
+    )
+    .expect("建");
+    let done = create_task(
+        app.state(),
+        CreateTaskArgs {
+            title: "完事".into(),
+            description: None,
+            owner_person_id: owner.id,
+            project_id: Some(project.id),
+            due_date: Some("2026-09-20".into()),
+        },
+    )
+    .expect("建");
+    set_task_status(
+        app.state(),
+        SetTaskStatusArgs {
+            task_id: done.id,
+            status: TaskStatus::Done,
+            blocked_reason: None,
+            waiting_on_person_id: None,
+        },
+    )
+    .expect("完");
+
+    // include_cancelled = true 保留 Done 行——看板需要看见「完事」列
+    let kanban = list_tasks(
+        app.state(),
+        ListTasksArgs {
+            include_cancelled: true,
+            owner_person_id: None,
+            project_id: Some(project.id),
+        },
+    )
+    .expect("看板查询");
+
+    // 1) 只返回本项目的任务,噪音被滤掉
+    let ids: Vec<i64> = kanban.iter().map(|t| t.id).collect();
+    assert_eq!(
+        ids,
+        vec![in_flight_no_due.id, early.id, late.id, done.id],
+        "在飞优先 + NULL due_date 排最前 + 按 due_date 升序，Done 排到末尾",
+    );
+
+    // 2) 每个任务都有 project_id = project.id —— 没有悬空
+    assert!(kanban.iter().all(|t| t.project_id == Some(project.id)));
+
+    // 3) 「按状态 + 到期日」的看板投影:按状态分桶模拟 6 列
+    let mut by_status: Vec<(TaskStatus, Vec<&Task>)> = Vec::new();
+    for task in &kanban {
+        let entry = by_status
+            .iter_mut()
+            .find(|(status, _)| *status == task.status);
+        match entry {
+            Some((_, list)) => list.push(task),
+            None => by_status.push((task.status, vec![task])),
+        }
+    }
+    let open = by_status
+        .iter()
+        .find(|(status, _)| *status == TaskStatus::Open)
+        .map(|(_, list)| list)
+        .expect("有 Open 列");
+    let open_titles: Vec<&str> = open.iter().map(|t| t.title.as_str()).collect();
+    assert_eq!(open_titles, vec!["在飞无期", "早做", "晚做"]);
+    let done_col = by_status
+        .iter()
+        .find(|(status, _)| *status == TaskStatus::Done)
+        .map(|(_, list)| list)
+        .expect("有 Done 列");
+    assert_eq!(done_col.len(), 1);
+    assert_eq!(done_col[0].title, "完事");
+}
 
 #[test]
 fn list_projects_默认排除_done_和_cancelled() {

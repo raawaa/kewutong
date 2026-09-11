@@ -34,6 +34,10 @@ const STATUS_STYLE: Record<TaskStatus, { label: string; className: string }> = {
  *
  * 「编辑即详情」：点一行就进编辑态，不开独立详情视图。这里只负责把任务
  * 摆出来并把点击转交给弹窗——排序、过滤都由命令层 `list_tasks` 决定。
+ *
+ * `projectId` 不在本视图的任务行上展示（那是项目看板的职责,ticket #20
+ * 验收点）；但打开已有任务进编辑态时,需要用项目名预填弹窗里的 `#` pill,
+ * 因此这里仍要 `listProjects` 一次。
  */
 export function TasksView({
   refreshToken,
@@ -153,12 +157,6 @@ export function TasksView({
                     {status.label}
                   </span>
                   <span className="flex-1 font-medium">{task.title}</span>
-                  {task.projectId != null && projectsById.has(task.projectId) && (
-                    <span className="text-emerald-700 flex items-center gap-1 rounded bg-emerald-50 px-2 py-0.5 text-xs">
-                      <span aria-hidden>#</span>
-                      {projectsById.get(task.projectId)?.name}
-                    </span>
-                  )}
                   <span className="text-muted-foreground flex items-center gap-1 text-xs">
                     <UserRound className="size-3" />
                     {peopleById.get(task.ownerPersonId)?.name ?? "?"}

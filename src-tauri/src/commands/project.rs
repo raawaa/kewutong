@@ -11,6 +11,9 @@
 //! 所有命令入参与返回都是稳定 DTO（camelCase），不透传行结构。
 
 use crate::clock::parse_sql_date;
+use crate::commands::validation::{
+    ensure_row_exists, escape_like, require_non_blank, trim_to_option,
+};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 use rusqlite::{params, OptionalExtension, Row};
@@ -117,6 +120,50 @@ pub struct ProjectCandidate {
 const PROJECT_CANDIDATE_LIMIT: usize = 6;
 
 // ---------------------------------------------------------------------------
+// 项目 status 派生 SQL
+// ---------------------------------------------------------------------------
+
+/// `project.status` 视图层聚合的 CASE 表达式。
+///
+/// 用作 [`derive_status_sql_fragment`] 拼装的子句——三处共用同一份逻辑
+/// （`list_projects` / `list_project_candidates` / `fetch_project`），避免
+/// 派生规则在多处漂移。`{project_alias}` 由调用方填入,默认 `p`。
+fn derive_status_sql_fragment(project_alias: &str) -> String {
+    let p = project_alias;
+    format!(
+        "CASE \
+            WHEN NOT EXISTS(SELECT 1 FROM task t WHERE t.project_id = {p}.id) THEN 'Active' \
+            WHEN NOT EXISTS(\
+              SELECT 1 FROM task t \
+               WHERE t.project_id = {p}.id \
+                 AND t.status NOT IN ('Cancelled')\
+            ) THEN 'Cancelled' \
+            WHEN NOT EXISTS(\
+              SELECT 1 FROM task t \
+               WHERE t.project_id = {p}.id \
+                 AND t.status NOT IN ('Done','Cancelled')\
+            ) THEN 'Done' \
+            ELSE 'Active' \
+          END"
+    )
+}
+
+/// 列表用 SELECT 列。给 `list_projects` / `list_project_candidates` 共用。
+fn project_select_columns(alias: &str, include_derived_status: bool) -> String {
+    let p = alias;
+    let mut cols = format!(
+        "{p}.id, {p}.name, {p}.owner_person_id, {p}.sub_team_id, \
+         {p}.start_date, {p}.due_date, {p}.notes, {p}.created_at",
+    );
+    if include_derived_status {
+        cols.push_str(", ");
+        cols.push_str(&derive_status_sql_fragment(alias));
+        cols.push_str(" AS derived_status");
+    }
+    cols
+}
+
+// ---------------------------------------------------------------------------
 // 命令
 // ---------------------------------------------------------------------------
 
@@ -131,38 +178,17 @@ pub fn list_projects(
 ) -> Result<Vec<Project>> {
     let conn = state.db()?;
 
-    // 项目 + 该项目下任务的 status 汇总——单条 SQL 把视图层派生跑完。
-    // 子查询用 `MIN(status)` 抓一条最具代表性的状态以便 `GROUP BY` 后
-    // 聚合得到 status 集合的判断；这里走更稳的两步：
-    //   1) 主表列出全部项目；
-    //   2) 每条项目再算 status 汇总。
-    // 单条查询用 `LEFT JOIN task` + 分组聚合更紧凑，但 `task.status` 不是
-    // 数值，SUM/MIN 没法直接套。下面用一条 GROUP BY + CASE 的查询一次性
-    // 算完，逻辑等价且只走一次表扫。
-    let sql = "\
-        SELECT p.id, p.name, p.owner_person_id, p.sub_team_id,
-               p.start_date, p.due_date, p.notes, p.created_at,
-               CASE
-                 WHEN NOT EXISTS(SELECT 1 FROM task t WHERE t.project_id = p.id) THEN 'Active'
-                 WHEN NOT EXISTS(
-                   SELECT 1 FROM task t
-                    WHERE t.project_id = p.id
-                      AND t.status NOT IN ('Cancelled')
-                 ) THEN 'Cancelled'
-                 WHEN NOT EXISTS(
-                   SELECT 1 FROM task t
-                    WHERE t.project_id = p.id
-                      AND t.status NOT IN ('Done','Cancelled')
-                 ) THEN 'Done'
-                 ELSE 'Active'
-               END AS derived_status
-          FROM project p
-         ORDER BY CASE WHEN p.due_date IS NULL THEN 1 ELSE 0 END ASC,
-                  p.due_date ASC,
-                  p.created_at ASC,
-                  p.id ASC";
+    let sql = format!(
+        "SELECT {cols} \
+           FROM project p \
+          ORDER BY CASE WHEN p.due_date IS NULL THEN 1 ELSE 0 END ASC, \
+                   p.due_date ASC, \
+                   p.created_at ASC, \
+                   p.id ASC",
+        cols = project_select_columns("p", true),
+    );
 
-    let mut stmt = conn.prepare(sql)?;
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], row_to_project_with_status)?;
     let mut projects: Vec<Project> = rows
         .collect::<rusqlite::Result<Vec<_>>>()
@@ -195,34 +221,22 @@ pub fn list_project_candidates(
         None => "%".to_string(),
     };
 
-    // 把派生 status 在子查询里算完后筛掉 Done / Cancelled——逻辑与
-    // `list_projects(include_done=false)` 一致，但不强制包含在飞全部。
-    let sql = "\
-        SELECT p.id, p.name, st.name
-          FROM project p
-          JOIN sub_team st ON st.id = p.sub_team_id
-         WHERE p.name LIKE ?1 ESCAPE '\\'
-           AND CASE
-                 WHEN NOT EXISTS(SELECT 1 FROM task t WHERE t.project_id = p.id) THEN 'Active'
-                 WHEN NOT EXISTS(
-                   SELECT 1 FROM task t
-                    WHERE t.project_id = p.id
-                      AND t.status NOT IN ('Cancelled')
-                 ) THEN 'Cancelled'
-                 WHEN NOT EXISTS(
-                   SELECT 1 FROM task t
-                    WHERE t.project_id = p.id
-                      AND t.status NOT IN ('Done','Cancelled')
-                 ) THEN 'Done'
-                 ELSE 'Active'
-               END NOT IN ('Done','Cancelled')
-         ORDER BY CASE WHEN p.due_date IS NULL THEN 1 ELSE 0 END ASC,
-                  p.due_date ASC,
-                  p.created_at ASC,
-                  p.id ASC
-         LIMIT ?2";
+    let derived = derive_status_sql_fragment("p");
+    let sql = format!(
+        "SELECT p.id, p.name, st.name \
+           FROM project p \
+           JOIN sub_team st ON st.id = p.sub_team_id \
+          WHERE p.name LIKE ?1 ESCAPE '\\' \
+            AND ({derived}) NOT IN ('Done','Cancelled') \
+          ORDER BY CASE WHEN p.due_date IS NULL THEN 1 ELSE 0 END ASC, \
+                   p.due_date ASC, \
+                   p.created_at ASC, \
+                   p.id ASC \
+          LIMIT ?2",
+        derived = derived,
+    );
 
-    let mut stmt = conn.prepare(sql)?;
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(
         params![pattern, PROJECT_CANDIDATE_LIMIT as i64],
         |row| {
@@ -324,14 +338,12 @@ pub fn delete_project(
     let conn = state.db()?;
     let tx = conn.unchecked_transaction()?;
 
-    // 把名下任务的 project_id 置 NULL——不管任务当前是 Open / Done / Cancelled，
+    // 把名下任务的 project_id 置 NULL——不管任务当前是 Open / Done / Cancelled,
     // 项目删了之后它们都属于「无项目」状态。owner_person_id 等其余字段不动。
-    let detached = tx.execute(
+    tx.execute(
         "UPDATE task SET project_id = NULL WHERE project_id = ?1",
         params![args.id],
     )?;
-    // detached 是被解绑的任务行数——保留观察但不影响逻辑
-    let _ = detached;
 
     let affected = tx.execute("DELETE FROM project WHERE id = ?1", params![args.id])?;
     if affected == 0 {
@@ -378,32 +390,17 @@ fn parse_project_status(text: &str) -> Option<ProjectStatus> {
 }
 
 fn fetch_project(conn: &rusqlite::Connection, id: i64) -> Result<Option<Project>> {
-    let sql = "\
-        SELECT p.id, p.name, p.owner_person_id, p.sub_team_id,
-               p.start_date, p.due_date, p.notes, p.created_at,
-               CASE
-                 WHEN NOT EXISTS(SELECT 1 FROM task t WHERE t.project_id = p.id) THEN 'Active'
-                 WHEN NOT EXISTS(
-                   SELECT 1 FROM task t
-                    WHERE t.project_id = p.id
-                      AND t.status NOT IN ('Cancelled')
-                 ) THEN 'Cancelled'
-                 WHEN NOT EXISTS(
-                   SELECT 1 FROM task t
-                    WHERE t.project_id = p.id
-                      AND t.status NOT IN ('Done','Cancelled')
-                 ) THEN 'Done'
-                 ELSE 'Active'
-               END AS derived_status
-          FROM project p
-         WHERE p.id = ?1";
-    conn.query_row(sql, params![id], row_to_project_with_status)
+    let sql = format!(
+        "SELECT {cols} FROM project p WHERE p.id = ?1",
+        cols = project_select_columns("p", true),
+    );
+    conn.query_row(&sql, params![id], row_to_project_with_status)
         .optional()
         .map_err(Into::into)
 }
 
 /// 把「可选日期字段」做 trim→None / 严格 YYYY-MM-DD 校验，与 task 的
-/// [`parse_due_date`](crate::commands::task::parse_due_date) 一致。
+/// 截止日路径一致。
 fn parse_optional_date(value: Option<String>, label: &str) -> Result<Option<String>> {
     let Some(text) = trim_to_option(value) else {
         return Ok(None);
@@ -416,58 +413,12 @@ fn parse_optional_date(value: Option<String>, label: &str) -> Result<Option<Stri
     }
 }
 
-fn require_non_blank(value: String, message: &str) -> Result<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::invalid(message));
-    }
-    Ok(trimmed.to_string())
-}
-
-fn trim_to_option(value: Option<String>) -> Option<String> {
-    value.and_then(|s| {
-        let trimmed = s.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
-}
-
-fn escape_like(raw: &str) -> String {
-    let mut escaped = String::with_capacity(raw.len());
-    for ch in raw.chars() {
-        if matches!(ch, '\\' | '%' | '_') {
-            escaped.push('\\');
-        }
-        escaped.push(ch);
-    }
-    escaped
-}
-
 fn ensure_person_exists(conn: &rusqlite::Connection, id: i64) -> Result<()> {
-    let exists: Option<i64> = conn
-        .query_row("SELECT id FROM person WHERE id = ?1", params![id], |row| {
-            row.get(0)
-        })
-        .optional()?;
-    if exists.is_none() {
-        return Err(AppError::invalid("项目负责人不存在,请先在人员管理里录入。"));
-    }
-    Ok(())
+    ensure_row_exists(conn, "person", id, "项目负责人不存在,请先在人员管理里录入。")
 }
 
 fn ensure_sub_team_exists(conn: &rusqlite::Connection, id: i64) -> Result<()> {
-    let exists: Option<i64> = conn
-        .query_row("SELECT id FROM sub_team WHERE id = ?1", params![id], |row| {
-            row.get(0)
-        })
-        .optional()?;
-    if exists.is_none() {
-        return Err(AppError::invalid("所属子组不存在。"));
-    }
-    Ok(())
+    ensure_row_exists(conn, "sub_team", id, "所属子组不存在。")
 }
 
 #[cfg(test)]
@@ -520,23 +471,12 @@ mod tests {
     }
 
     #[test]
-    fn require_non_blank_空白被拒() {
-        let err = require_non_blank("   ".into(), "项目名不能为空。")
-            .expect_err("空白应当被拒");
-        assert_eq!(err.code(), "INVALID_ARGUMENT");
-        assert!(err.message().contains("项目名"));
-    }
-
-    #[test]
-    fn require_non_blank_前后空白被裁掉() {
-        let trimmed = require_non_blank("  综合楼改造  ".into(), "项目名不能为空。")
-            .expect("前后空白应当被裁");
-        assert_eq!(trimmed, "综合楼改造");
-    }
-
-    #[test]
-    fn escape_like_把元字符转义() {
-        let escaped = escape_like("a%b_c\\d");
-        assert_eq!(escaped, "a\\%b\\_c\\\\d");
+    fn derive_status_sql_fragment_包含_四种边界判定() {
+        let fragment = derive_status_sql_fragment("p");
+        // 四条边界都必须出现——避免有人把派生规则"简化"掉一条
+        assert!(fragment.contains("NOT EXISTS"), "空项目判定");
+        assert!(fragment.contains("'Cancelled'"), "Cancelled 边界");
+        assert!(fragment.contains("'Done','Cancelled'"), "Done 边界");
+        assert!(fragment.contains("'Active'"), "Active 兜底");
     }
 }

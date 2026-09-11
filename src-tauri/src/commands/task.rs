@@ -14,6 +14,7 @@
 //! 时间戳统一用 UTC 入库格式 `"%Y-%m-%d %H:%M:%S"`，由 [`crate::clock`] 渲染。
 
 use crate::clock::{parse_sql_date, to_sql_date};
+use crate::commands::validation::{ensure_row_exists, require_non_blank, trim_to_option};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 use chrono::{Days, NaiveDate};
@@ -492,55 +493,14 @@ fn parse_status(text: &str) -> Option<TaskStatus> {
     }
 }
 
-/// `value` 经 `trim()` 后空串视为缺失,返回面向科长的中文 `AppError`。
-fn require_non_blank(value: String, message: &str) -> Result<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::invalid(message));
-    }
-    Ok(trimmed.to_string())
-}
-
-/// 字符串字段 trim 后空串折叠为 `None`,非空则保留 trim 后的值。
-fn trim_to_option(value: Option<String>) -> Option<String> {
-    value.and_then(|s| {
-        let trimmed = s.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
-}
-
 /// 预检查：人员存在；用于 `create_task` 的 FK 兜底。
 fn ensure_person_exists(conn: &rusqlite::Connection, id: i64) -> Result<()> {
     ensure_row_exists(conn, "person", id, "负责人不存在,请先在人员管理里录入。")
 }
 
-/// 预检查：项目存在；用于 `create_task` 的 FK 兜底。`project` 表是 #21 的
-/// 占位骨架,目前只能命中已建（罕见）的项目——多数情况下 FK 错误由 DB 兜。
+/// 预检查：项目存在；用于 `create_task` 的 FK 兜底。
 fn ensure_project_exists(conn: &rusqlite::Connection, id: i64) -> Result<()> {
     ensure_row_exists(conn, "project", id, "所属项目不存在。")
-}
-
-/// 通用「指定表里 id 存在否」预检查——把 `ensure_sub_team_exists`
-/// (personnel.rs) / `ensure_person_exists` / `ensure_project_exists` 三个
-/// 同形状助手合并成一处。表名走参数传入,SQL 仍按白名单写法写死,杜绝注入。
-fn ensure_row_exists(
-    conn: &rusqlite::Connection,
-    table: &'static str,
-    id: i64,
-    message: &'static str,
-) -> Result<()> {
-    let sql = format!("SELECT id FROM {table} WHERE id = ?1");
-    let exists: Option<i64> = conn
-        .query_row(&sql, params![id], |row| row.get(0))
-        .optional()?;
-    if exists.is_none() {
-        return Err(AppError::invalid(message));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

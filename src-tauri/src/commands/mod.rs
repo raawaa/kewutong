@@ -11,3 +11,4 @@ pub mod diagnostics;
 pub mod personnel;
 pub mod project;
 pub mod task;
+pub mod validation;
