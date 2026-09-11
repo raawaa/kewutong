@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -36,5 +37,14 @@ export default defineConfig(() => ({
       // 3. src-tauri 交给 cargo 监听，Vite 不管
       ignored: ["**/src-tauri/**"],
     },
+  },
+
+  // 前端只做少量组件级验证（spec #15 §前端与 E2E）：chip 行的选值、
+  // `@` autocomplete 的候选渲染。业务逻辑的测试缝在 Rust 命令层，不在这里。
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./src/test/setup.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
   },
 }));

@@ -21,6 +21,7 @@ npm run tauri build      # 出安装包
 
 npm run typecheck        # 前端类型检查
 npm run build            # 前端构建产物到 dist/
+npm test                 # 前端组件级测试（vitest + testing-library）
 
 cd src-tauri && cargo test    # Rust 全量测试
 cd src-tauri && cargo clippy --all-targets
@@ -38,7 +39,10 @@ cargo install tauri-cli --version "^2" --locked
 
 ```
 ├── src/                    前端（React + TypeScript + Tailwind v4 + shadcn/ui）
+│   ├── components/task/    新建 / 编辑任务弹窗及其零件
 │   ├── components/ui/      shadcn 组件
+│   ├── views/              各 tab 的界面
+│   ├── test/setup.ts       vitest 全局 setup
 │   └── lib/ipc.ts          调 Rust 命令的唯一入口（带类型）
 ├── src-tauri/
 │   ├── migrations/         refinery 的 .sql 迁移（forward-only，无 down）

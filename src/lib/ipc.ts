@@ -142,6 +142,103 @@ export function deletePerson(args: PersonIdArgs): Promise<void> {
   return invoke<void>("delete_person", { args });
 }
 
+// ---------------------------------------------------------------------------
+// 任务（tickets #18 / #19）
+// ---------------------------------------------------------------------------
+
+/** 任务的 6 个状态。状态变更的唯一入口是 `set_task_status`，不在本票范围。 */
+export type TaskStatus =
+  | "Open"
+  | "In-progress"
+  | "Blocked"
+  | "Waiting-on"
+  | "Done"
+  | "Cancelled";
+
+/** 任务 DTO（与 Rust `commands::task::Task` 一一对应）。 */
+export type Task = {
+  id: number;
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  ownerPersonId: number;
+  projectId: number | null;
+  dueDate: string | null;
+  createdAt: string;
+  updatedAt: string;
+  blockedAt: string | null;
+  blockedReason: string | null;
+  waitingOnPersonId: number | null;
+};
+
+/** 截止 chip 行的一格。`none` 那格的 `dueDate` 是 `null`。 */
+export type DueDateChip = "today" | "tomorrow" | "next-week" | "none";
+
+/**
+ * 截止 chip 连同它此刻代表的日期。
+ *
+ * `label` 与 `dueDate` 都由命令层给出——「今天」是哪一天由 Rust 的可注入
+ * 时钟说了算，前端不自己算日期。
+ */
+export type DueDateOption = {
+  chip: DueDateChip;
+  label: string;
+  dueDate: string | null;
+};
+
+/** `@` 下拉里的一条候选。 */
+export type AssigneeCandidate = {
+  personId: number;
+  name: string;
+  subTeamName: string;
+};
+
+/** `listAssigneeCandidates` 的入参：`query` 是 `@` 后面已经打出的部分。 */
+export type ListAssigneeCandidatesArgs = { query?: string | null };
+
+/** 新建任务的入参。 */
+export type CreateTaskArgs = {
+  title: string;
+  description?: string | null;
+  ownerPersonId: number;
+  projectId?: number | null;
+  dueDate?: string | null;
+};
+
+/** 编辑态保存的入参。字段集与新建一致，不含 status。 */
+export type UpdateTaskArgs = CreateTaskArgs & { id: number };
+
+/** `listTasks` 的入参。 */
+export type ListTasksArgs = {
+  includeCancelled: boolean;
+  ownerPersonId?: number | null;
+  projectId?: number | null;
+};
+
+export function listTasks(args: ListTasksArgs): Promise<Task[]> {
+  return invoke<Task[]>("list_tasks", { args });
+}
+
+export function createTask(args: CreateTaskArgs): Promise<Task> {
+  return invoke<Task>("create_task", { args });
+}
+
+export function updateTask(args: UpdateTaskArgs): Promise<Task> {
+  return invoke<Task>("update_task", { args });
+}
+
+/** 截止 chip 行此刻的取值——今天 / 明天 / 一周后 / 无。 */
+export function listDueDateOptions(): Promise<DueDateOption[]> {
+  return invoke<DueDateOption[]>("list_due_date_options");
+}
+
+/** `@` 内联选人的候选：已按输入过滤、已排除离岗人员、已封顶条数。 */
+export function listAssigneeCandidates(
+  args: ListAssigneeCandidatesArgs,
+): Promise<AssigneeCandidate[]> {
+  return invoke<AssigneeCandidate[]>("list_assignee_candidates", { args });
+}
+
 /** 命令抛出来的一律是 `AppError` 形状；非预期异常也收敛成同一形状。 */
 export function toAppError(thrown: unknown): AppError {
   if (
