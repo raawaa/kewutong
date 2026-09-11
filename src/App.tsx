@@ -6,12 +6,14 @@ import {
   type TaskDialogTarget,
 } from "@/components/task/TaskDialog";
 import { PersonnelView } from "@/views/PersonnelView";
+import { ProjectsView } from "@/views/ProjectsView";
 import { TasksView } from "@/views/TasksView";
 
-type Tab = "tasks" | "personnel";
+type Tab = "tasks" | "projects" | "personnel";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "tasks", label: "任务" },
+  { id: "projects", label: "项目" },
   { id: "personnel", label: "人员" },
 ];
 
@@ -79,10 +81,12 @@ export default function App() {
       {tab === "tasks" ? (
         <TasksView
           refreshToken={refreshToken}
-          onOpenTask={(task, assignee) =>
-            setDialog({ mode: "edit", task, assignee })
+          onOpenTask={(task, assignee, project) =>
+            setDialog({ mode: "edit", task, assignee, project })
           }
         />
+      ) : tab === "projects" ? (
+        <ProjectsView refreshToken={refreshToken} />
       ) : (
         <PersonnelView />
       )}

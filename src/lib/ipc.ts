@@ -227,6 +227,18 @@ export function updateTask(args: UpdateTaskArgs): Promise<Task> {
   return invoke<Task>("update_task", { args });
 }
 
+/** 状态变更入参（拖拽改状态、徽章菜单改状态都走这里——全 app 唯一入口）。 */
+export type SetTaskStatusArgs = {
+  taskId: number;
+  status: TaskStatus;
+  blockedReason?: string | null;
+  waitingOnPersonId?: number | null;
+};
+
+export function setTaskStatus(args: SetTaskStatusArgs): Promise<Task> {
+  return invoke<Task>("set_task_status", { args });
+}
+
 /** 截止 chip 行此刻的取值——今天 / 明天 / 一周后 / 无。 */
 export function listDueDateOptions(): Promise<DueDateOption[]> {
   return invoke<DueDateOption[]>("list_due_date_options");
@@ -237,6 +249,81 @@ export function listAssigneeCandidates(
   args: ListAssigneeCandidatesArgs,
 ): Promise<AssigneeCandidate[]> {
   return invoke<AssigneeCandidate[]>("list_assignee_candidates", { args });
+}
+
+// ---------------------------------------------------------------------------
+// 项目（ticket #20）
+// ---------------------------------------------------------------------------
+
+/** 项目状态——视图层由 task.status 聚合派生，不入库。 */
+export type ProjectStatus = "Active" | "Done" | "Cancelled";
+
+/** 项目 DTO（与 Rust `commands::project::Project` 一一对应）。 */
+export type Project = {
+  id: number;
+  name: string;
+  ownerPersonId: number;
+  subTeamId: number;
+  startDate: string | null;
+  dueDate: string | null;
+  notes: string | null;
+  createdAt: string;
+  status: ProjectStatus;
+};
+
+/** `#` 下拉里的一条候选。 */
+export type ProjectCandidate = {
+  projectId: number;
+  name: string;
+  subTeamName: string;
+};
+
+/** `listProjectCandidates` 的入参：`query` 是 `#` 后面已经打出的部分。 */
+export type ListProjectCandidatesArgs = { query?: string | null };
+
+/** `listProjects` 的入参。 */
+export type ListProjectsArgs = {
+  /** `true` = 含 Done / Cancelled 的项目；`false`（默认）= 只看在飞。 */
+  includeDone: boolean;
+};
+
+/** 新建项目的入参。 */
+export type CreateProjectArgs = {
+  name: string;
+  ownerPersonId: number;
+  subTeamId: number;
+  startDate?: string | null;
+  dueDate?: string | null;
+  notes?: string | null;
+};
+
+/** 编辑项目的入参。 */
+export type UpdateProjectArgs = CreateProjectArgs & { id: number };
+
+/** 删除项目的入参。 */
+export type DeleteProjectArgs = { id: number };
+
+export function listProjects(args: ListProjectsArgs): Promise<Project[]> {
+  return invoke<Project[]>("list_projects", { args });
+}
+
+export function createProject(args: CreateProjectArgs): Promise<Project> {
+  return invoke<Project>("create_project", { args });
+}
+
+export function updateProject(args: UpdateProjectArgs): Promise<Project> {
+  return invoke<Project>("update_project", { args });
+}
+
+export function deleteProject(args: DeleteProjectArgs): Promise<void> {
+  return invoke<void>("delete_project", { args });
+}
+
+/** `#` 内联选项目的候选：已排除 Done / Cancelled、已按 query 过滤、已封顶。 */
+export function listProjectCandidates(
+  args: ListProjectCandidatesArgs,
+): Promise<ProjectCandidate[]> {
+  return invoke<ProjectCandidate[]>("list_project_candidates", { args });
 }
 
 /** 命令抛出来的一律是 `AppError` 形状；非预期异常也收敛成同一形状。 */

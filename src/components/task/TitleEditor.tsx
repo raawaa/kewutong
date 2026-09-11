@@ -1,25 +1,36 @@
 import { useEffect, useRef, useState } from "react";
-import type { AssigneeCandidate } from "@/lib/ipc";
+import type { AssigneeCandidate, ProjectCandidate } from "@/lib/ipc";
 import { findMentionTrigger } from "./mention";
 
 /**
- * 任务标题输入（ticket #19）。
+ * 项目内联候选的展示形态：补上 `projectId` 让 pill 读得回来。
  *
- * 一个 contenteditable：直接打字写标题，打 `@` 内联挑人。选中的人以 pill 的
- * 形式留在标题里，同时就是这条任务的负责人——一句话录完一条任务。
+ * 命令层给的 [`ProjectCandidate`] 已经够用（`projectId` + `name` + `subTeamName`），
+ * 这里只是起一个**类型别名**让标题输入层的代码更短。
+ */
+type ProjectOption = ProjectCandidate;
+
+/**
+ * 任务标题输入（ticket #19 / #20）。
+ *
+ * 一个 contenteditable：直接打字写标题，打 `@` 内联挑负责人 / 打 `#` 内联挑
+ * 项目。选中的以 pill 形式留在标题里，同时就是这条任务的负责人 / 所属
+ * 项目——一句话录完一条任务。
  *
  * 职责边界：
- * - **候选是什么**由命令层说了算。本组件只把 `@` 后面打出的词交给
- *   `fetchCandidates`，再渲染返回的列表，不自己过滤、不自己排序，也不知道
- *   "离岗的人要排除"这条规则（ticket #19 验收点：前端不含业务逻辑）。
+ * - **候选是什么**由命令层说了算。本组件只把触发符后面打出的词交给
+ *   `fetchAssigneeCandidates` / `fetchProjectCandidates`，再渲染返回的列表，
+ *   不自己过滤、不自己排序，也不知道 "离岗的人要排除" 这条规则。
  * - **光标与 DOM** 归本组件自己管。contenteditable 的子节点交给浏览器，
  *   React 只在挂载时铺一次初值；换任务时由父组件用 `key` 重新挂载。
  */
 export function TitleEditor({
   initialTitle,
   initialAssignee,
+  initialProject,
   onChange,
-  fetchCandidates,
+  fetchAssigneeCandidates,
+  fetchProjectCandidates,
   onSubmit,
   disabled = false,
   autoFocus = false,
@@ -28,17 +39,27 @@ export function TitleEditor({
   initialTitle: string;
   /** 挂载时已选的负责人。 */
   initialAssignee: AssigneeCandidate | null;
-  onChange: (value: { title: string; assignee: AssigneeCandidate | null }) => void;
-  /** 取候选——权威在命令层的 `list_assignee_candidates`。 */
-  fetchCandidates: (query: string) => Promise<AssigneeCandidate[]>;
+  /** 挂载时已选的项目（编辑态用）。 */
+  initialProject: ProjectOption | null;
+  onChange: (value: {
+    title: string;
+    assignee: AssigneeCandidate | null;
+    project: ProjectOption | null;
+  }) => void;
+  /** 取 `@` 候选——权威在命令层的 `list_assignee_candidates`。 */
+  fetchAssigneeCandidates: (query: string) => Promise<AssigneeCandidate[]>;
+  /** 取 `#` 候选——权威在命令层的 `list_project_candidates`。 */
+  fetchProjectCandidates: (query: string) => Promise<ProjectOption[]>;
   /** 下拉关着时按回车触发。 */
   onSubmit?: () => void;
   disabled?: boolean;
   autoFocus?: boolean;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
-  const [candidates, setCandidates] = useState<AssigneeCandidate[]>([]);
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [assigneeCandidates, setAssigneeCandidates] = useState<AssigneeCandidate[]>([]);
+  const [projectCandidates, setProjectCandidates] = useState<ProjectOption[]>([]);
+  const [activeAssigneeIndex, setActiveAssigneeIndex] = useState(0);
+  const [activeProjectIndex, setActiveProjectIndex] = useState(0);
   // 输入快、命令慢时，晚发早归的响应不能盖掉新响应
   const requestSeq = useRef(0);
 
@@ -49,7 +70,10 @@ export function TitleEditor({
     if (!box) return;
     box.replaceChildren();
     if (initialAssignee) {
-      box.append(createPill(initialAssignee), document.createTextNode(" "));
+      box.append(createAssigneePill(initialAssignee), document.createTextNode(" "));
+    }
+    if (initialProject) {
+      box.append(createProjectPill(initialProject), document.createTextNode(" "));
     }
     if (initialTitle) {
       box.append(document.createTextNode(initialTitle));
@@ -64,8 +88,10 @@ export function TitleEditor({
   function closeCandidates() {
     // 让在途响应作废——否则 Esc 关掉的下拉会被慢一拍的响应重新拉起来
     requestSeq.current += 1;
-    setCandidates([]);
-    setActiveIndex(0);
+    setAssigneeCandidates([]);
+    setProjectCandidates([]);
+    setActiveAssigneeIndex(0);
+    setActiveProjectIndex(0);
   }
 
   function emitChange() {
@@ -83,37 +109,64 @@ export function TitleEditor({
       return;
     }
     const seq = (requestSeq.current += 1);
-    const results = await fetchCandidates(trigger.query);
-    if (seq !== requestSeq.current) return;
-    setCandidates(results);
-    setActiveIndex(0);
+    if (trigger.char === "@") {
+      const results = await fetchAssigneeCandidates(trigger.query);
+      if (seq !== requestSeq.current) return;
+      setAssigneeCandidates(results);
+      setProjectCandidates([]);
+      setActiveAssigneeIndex(0);
+    } else {
+      const results = await fetchProjectCandidates(trigger.query);
+      if (seq !== requestSeq.current) return;
+      setProjectCandidates(results);
+      setAssigneeCandidates([]);
+      setActiveProjectIndex(0);
+    }
   }
 
-  function selectCandidate(candidate: AssigneeCandidate) {
+  function selectAssignee(candidate: AssigneeCandidate) {
     const box = boxRef.current;
     if (!box) return;
-    insertMention(box, candidate);
+    insertAssignee(box, candidate);
+    closeCandidates();
+    emitChange();
+  }
+
+  function selectProject(candidate: ProjectOption) {
+    const box = boxRef.current;
+    if (!box) return;
+    insertProject(box, candidate);
     closeCandidates();
     emitChange();
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    if (candidates.length > 0) {
+    const hasAssignee = assigneeCandidates.length > 0;
+    const hasProject = projectCandidates.length > 0;
+    if (hasAssignee || hasProject) {
       switch (event.key) {
         case "ArrowDown":
           event.preventDefault();
-          setActiveIndex((index) => (index + 1) % candidates.length);
+          if (hasAssignee) {
+            setActiveAssigneeIndex((index) => (index + 1) % assigneeCandidates.length);
+          }
           return;
         case "ArrowUp":
           event.preventDefault();
-          setActiveIndex(
-            (index) => (index - 1 + candidates.length) % candidates.length,
-          );
+          if (hasAssignee) {
+            setActiveAssigneeIndex(
+              (index) => (index - 1 + assigneeCandidates.length) % assigneeCandidates.length,
+            );
+          }
           return;
         case "Enter":
         case "Tab":
           event.preventDefault();
-          selectCandidate(candidates[activeIndex]);
+          if (hasAssignee) {
+            selectAssignee(assigneeCandidates[activeAssigneeIndex]);
+          } else if (hasProject) {
+            selectProject(projectCandidates[activeProjectIndex]);
+          }
           return;
         case "Escape":
           event.preventDefault();
@@ -138,10 +191,10 @@ export function TitleEditor({
         aria-label="任务标题"
         aria-multiline="false"
         aria-autocomplete="list"
-        aria-expanded={candidates.length > 0}
+        aria-expanded={assigneeCandidates.length > 0 || projectCandidates.length > 0}
         contentEditable={!disabled}
         suppressContentEditableWarning
-        data-placeholder="任务标题，输入 @ 选人员…"
+        data-placeholder="任务标题，输入 @ 选人员，# 选项目…"
         onInput={() => {
           emitChange();
           void refreshCandidates();
@@ -159,29 +212,61 @@ export function TitleEditor({
         className="border-input bg-background focus:border-primary min-h-11 w-full rounded-md border px-3 py-2 text-base leading-relaxed break-words whitespace-pre-wrap focus:outline-none empty:before:text-muted-foreground empty:before:content-[attr(data-placeholder)]"
       />
 
-      {candidates.length > 0 && (
+      {assigneeCandidates.length > 0 && (
         <ul
           role="listbox"
           aria-label="人员候选"
           className="bg-popover absolute top-[calc(100%+4px)] left-0 z-10 max-h-60 min-w-70 overflow-y-auto rounded-lg border p-1 shadow-lg"
         >
-          {candidates.map((candidate, index) => (
+          {assigneeCandidates.map((candidate, index) => (
             <li
               key={candidate.personId}
               role="option"
-              aria-selected={index === activeIndex}
+              aria-selected={index === activeAssigneeIndex}
               onMouseDown={(event) => {
                 // 别让点击把光标从 contenteditable 上抢走——插 pill 还要用它
                 event.preventDefault();
-                selectCandidate(candidate);
+                selectAssignee(candidate);
               }}
-              onMouseEnter={() => setActiveIndex(index)}
+              onMouseEnter={() => setActiveAssigneeIndex(index)}
               className={`flex cursor-pointer items-center gap-2.5 rounded px-2.5 py-1.5 text-sm ${
-                index === activeIndex ? "bg-muted" : ""
+                index === activeAssigneeIndex ? "bg-muted" : ""
               }`}
             >
               <span className="flex-1">
                 <span className="text-muted-foreground">@</span>
+                {candidate.name}
+              </span>
+              <span className="text-muted-foreground text-xs">
+                {candidate.subTeamName}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {projectCandidates.length > 0 && (
+        <ul
+          role="listbox"
+          aria-label="项目候选"
+          className="bg-popover absolute top-[calc(100%+4px)] left-0 z-10 max-h-60 min-w-70 overflow-y-auto rounded-lg border p-1 shadow-lg"
+        >
+          {projectCandidates.map((candidate, index) => (
+            <li
+              key={candidate.projectId}
+              role="option"
+              aria-selected={index === activeProjectIndex}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                selectProject(candidate);
+              }}
+              onMouseEnter={() => setActiveProjectIndex(index)}
+              className={`flex cursor-pointer items-center gap-2.5 rounded px-2.5 py-1.5 text-sm ${
+                index === activeProjectIndex ? "bg-muted" : ""
+              }`}
+            >
+              <span className="flex-1">
+                <span className="text-muted-foreground">#</span>
                 {candidate.name}
               </span>
               <span className="text-muted-foreground text-xs">
@@ -199,10 +284,11 @@ export function TitleEditor({
 // contenteditable 的读写
 // ---------------------------------------------------------------------------
 
-/** pill 用 `data-person-id` 标记；读回负责人时就靠它认。 */
-const PILL_SELECTOR = "[data-person-id]";
+/** 负责人 pill 用 `data-person-id` 标记；项目 pill 用 `data-project-id`。 */
+const ASSIGNEE_PILL_SELECTOR = "[data-person-id]";
+const PROJECT_PILL_SELECTOR = "[data-project-id]";
 
-function createPill(candidate: AssigneeCandidate): HTMLSpanElement {
+function createAssigneePill(candidate: AssigneeCandidate): HTMLSpanElement {
   const pill = document.createElement("span");
   // 整体不可编辑：退格一下删掉整个 pill，而不是啃掉一个字变成半个名字
   pill.contentEditable = "false";
@@ -215,22 +301,44 @@ function createPill(candidate: AssigneeCandidate): HTMLSpanElement {
   return pill;
 }
 
+function createProjectPill(candidate: ProjectOption): HTMLSpanElement {
+  const pill = document.createElement("span");
+  pill.contentEditable = "false";
+  pill.dataset.projectId = String(candidate.projectId);
+  pill.dataset.projectName = candidate.name;
+  pill.dataset.subTeamName = candidate.subTeamName;
+  pill.textContent = `#${candidate.name}`;
+  pill.className =
+    "rounded bg-emerald-100 px-1 py-0.5 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200";
+  return pill;
+}
+
 /**
  * 从 DOM 读回当前值。
  *
- * 标题是**不含 pill** 的那部分文本——负责人已经单独存成 `owner_person_id`，
- * 再把 `@张三` 留在标题里只是噪声。
+ * 标题是**不含 pill** 的那部分文本——负责人 / 项目已经单独存成 ID，
+ * 再把 `@张三` / `#综合楼改造` 留在标题里只是噪声。
  */
 function readValue(box: HTMLElement): {
   title: string;
   assignee: AssigneeCandidate | null;
+  project: ProjectOption | null;
 } {
-  const pill = box.querySelector<HTMLElement>(PILL_SELECTOR);
-  const assignee: AssigneeCandidate | null = pill
+  const assigneePill = box.querySelector<HTMLElement>(ASSIGNEE_PILL_SELECTOR);
+  const assignee: AssigneeCandidate | null = assigneePill
     ? {
-        personId: Number(pill.dataset.personId),
-        name: pill.dataset.personName ?? "",
-        subTeamName: pill.dataset.subTeamName ?? "",
+        personId: Number(assigneePill.dataset.personId),
+        name: assigneePill.dataset.personName ?? "",
+        subTeamName: assigneePill.dataset.subTeamName ?? "",
+      }
+    : null;
+
+  const projectPill = box.querySelector<HTMLElement>(PROJECT_PILL_SELECTOR);
+  const project: ProjectOption | null = projectPill
+    ? {
+        projectId: Number(projectPill.dataset.projectId),
+        name: projectPill.dataset.projectName ?? "",
+        subTeamName: projectPill.dataset.subTeamName ?? "",
       }
     : null;
 
@@ -238,14 +346,17 @@ function readValue(box: HTMLElement): {
   const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
   let node = walker.nextNode();
   while (node) {
-    if (!node.parentElement?.closest(PILL_SELECTOR)) {
+    const parent = node.parentElement;
+    const inAssignee = parent?.closest(ASSIGNEE_PILL_SELECTOR);
+    const inProject = parent?.closest(PROJECT_PILL_SELECTOR);
+    if (!inAssignee && !inProject) {
       title += node.textContent ?? "";
     }
     node = walker.nextNode();
   }
 
   // 摘掉 pill 会在原地留下空档，顺手抹平
-  return { title: title.replace(/\s+/g, " ").trim(), assignee };
+  return { title: title.replace(/\s+/g, " ").trim(), assignee, project };
 }
 
 /** 光标前的全部文本（含 pill 的文字，与 `findMentionTrigger` 的口径一致）。 */
@@ -266,7 +377,33 @@ function textBeforeCaret(box: HTMLElement): string | null {
  * 一条任务只有一个负责人（`task.owner_person_id` 非空且单值），所以插新
  * pill 的同时把旧的摘掉——再选一个人 = 改派，而不是加一个人。
  */
-function insertMention(box: HTMLElement, candidate: AssigneeCandidate) {
+function insertAssignee(box: HTMLElement, candidate: AssigneeCandidate) {
+  insertPillAndClearOthers(
+    box,
+    createAssigneePill(candidate),
+    [ASSIGNEE_PILL_SELECTOR],
+  );
+}
+
+/** 与 [`insertAssignee`] 同构,但插的是项目 pill;摘掉的是另一个项目 pill。 */
+function insertProject(box: HTMLElement, candidate: ProjectOption) {
+  insertPillAndClearOthers(
+    box,
+    createProjectPill(candidate),
+    [PROJECT_PILL_SELECTOR],
+  );
+}
+
+/**
+ * 在「触发符到光标」这一段上把当前触发符词替换掉,插上新 pill,并把同
+ * 类型（assignee / project）的旧 pill 摘掉。不同类型的 pill（assignee vs
+ * project）保留——一个负责人加一个项目是合法的。
+ */
+function insertPillAndClearOthers(
+  box: HTMLElement,
+  pill: HTMLSpanElement,
+  clearSelectors: string[],
+) {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0) return;
   const caret = selection.getRangeAt(0);
@@ -288,14 +425,15 @@ function insertMention(box: HTMLElement, candidate: AssigneeCandidate) {
   replaced.setEnd(caret.endContainer, caret.endOffset);
   replaced.deleteContents();
 
-  const pill = createPill(candidate);
   const trailingSpace = document.createTextNode(" ");
-  // `insertNode` 插在 range 起点，因此后插的排在前面：先空格后 pill = pill 在前
+  // `insertNode` 插在 range 起点,因此后插的排在前面：先空格后 pill = pill 在前
   replaced.insertNode(trailingSpace);
   replaced.insertNode(pill);
 
-  for (const stale of box.querySelectorAll(PILL_SELECTOR)) {
-    if (stale !== pill) stale.remove();
+  for (const selector of clearSelectors) {
+    for (const stale of box.querySelectorAll(selector)) {
+      if (stale !== pill) stale.remove();
+    }
   }
 
   const after = document.createRange();

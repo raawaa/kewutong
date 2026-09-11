@@ -37,6 +37,12 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         commands::personnel::list_assignee_candidates,
         commands::task::list_due_date_options,
         commands::task::update_task,
+        // —— 项目看板（ticket #20）——
+        commands::project::list_projects,
+        commands::project::list_project_candidates,
+        commands::project::create_project,
+        commands::project::update_project,
+        commands::project::delete_project,
     ])
 }
 

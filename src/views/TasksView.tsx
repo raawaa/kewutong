@@ -2,12 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, CircleAlert, UserRound } from "lucide-react";
 import {
   listPeople,
+  listProjects,
   listSubTeams,
   listTasks,
   toAppError,
   type AppError,
   type AssigneeCandidate,
   type Person,
+  type Project,
+  type ProjectCandidate,
   type SubTeam,
   type Task,
   type TaskStatus,
@@ -38,11 +41,16 @@ export function TasksView({
 }: {
   /** 父层保存任务后 +1，触发重新拉取。 */
   refreshToken: number;
-  onOpenTask: (task: Task, assignee: AssigneeCandidate | null) => void;
+  onOpenTask: (
+    task: Task,
+    assignee: AssigneeCandidate | null,
+    project: ProjectCandidate | null,
+  ) => void;
 }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
   const [subTeams, setSubTeams] = useState<SubTeam[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<AppError | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -54,12 +62,14 @@ export function TasksView({
       // 花名册含离岗的人：历史任务的负责人可能已经离岗，名字仍要显示得出来
       listPeople({ includeDeactivated: true, subTeamId: null }),
       listSubTeams(),
+      listProjects({ includeDone: true }),
     ])
-      .then(([fetchedTasks, roster, teams]) => {
+      .then(([fetchedTasks, roster, teams, fetchedProjects]) => {
         if (cancelled) return;
         setTasks(fetchedTasks);
         setPeople(roster);
         setSubTeams(teams);
+        setProjects(fetchedProjects);
         setError(null);
       })
       .catch((thrown) => {
@@ -81,6 +91,10 @@ export function TasksView({
     () => new Map(subTeams.map((team) => [team.id, team.name])),
     [subTeams],
   );
+  const projectsById = useMemo(
+    () => new Map(projects.map((p) => [p.id, p])),
+    [projects],
+  );
 
   function assigneeOf(task: Task): AssigneeCandidate | null {
     const person = peopleById.get(task.ownerPersonId);
@@ -89,6 +103,17 @@ export function TasksView({
       personId: person.id,
       name: person.name,
       subTeamName: subTeamNameById.get(person.subTeamId) ?? "",
+    };
+  }
+
+  function projectOf(task: Task): ProjectCandidate | null {
+    if (task.projectId == null) return null;
+    const project = projectsById.get(task.projectId);
+    if (!project) return null;
+    return {
+      projectId: project.id,
+      name: project.name,
+      subTeamName: subTeamNameById.get(project.subTeamId) ?? "",
     };
   }
 
@@ -119,7 +144,7 @@ export function TasksView({
               <li key={task.id}>
                 <button
                   type="button"
-                  onClick={() => onOpenTask(task, assigneeOf(task))}
+                  onClick={() => onOpenTask(task, assigneeOf(task), projectOf(task))}
                   className="hover:bg-muted/60 flex w-full cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-left text-sm"
                 >
                   <span
@@ -128,6 +153,12 @@ export function TasksView({
                     {status.label}
                   </span>
                   <span className="flex-1 font-medium">{task.title}</span>
+                  {task.projectId != null && projectsById.has(task.projectId) && (
+                    <span className="text-emerald-700 flex items-center gap-1 rounded bg-emerald-50 px-2 py-0.5 text-xs">
+                      <span aria-hidden>#</span>
+                      {projectsById.get(task.projectId)?.name}
+                    </span>
+                  )}
                   <span className="text-muted-foreground flex items-center gap-1 text-xs">
                     <UserRound className="size-3" />
                     {peopleById.get(task.ownerPersonId)?.name ?? "?"}

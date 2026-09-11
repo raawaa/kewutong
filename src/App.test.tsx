@@ -12,6 +12,7 @@ import App from "./App";
 import {
   listDueDateOptions,
   listPeople,
+  listProjects,
   listSubTeams,
   listTasks,
 } from "@/lib/ipc";
@@ -23,6 +24,7 @@ vi.mock("@/lib/ipc", async (importOriginal) => ({
   listTasks: vi.fn(),
   listPeople: vi.fn(),
   listSubTeams: vi.fn(),
+  listProjects: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -34,6 +36,7 @@ beforeEach(() => {
   vi.mocked(listTasks).mockResolvedValue([]);
   vi.mocked(listPeople).mockResolvedValue([]);
   vi.mocked(listSubTeams).mockResolvedValue([]);
+  vi.mocked(listProjects).mockResolvedValue([]);
 });
 
 /** 弹窗开着的判据：新建任务的对话框在 DOM 里。 */

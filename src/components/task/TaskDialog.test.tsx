@@ -179,7 +179,7 @@ describe("TaskDialog · 新建", () => {
 
 describe("TaskDialog · 编辑即详情", () => {
   it("点开已有任务，字段与新建一致且已预填", async () => {
-    renderDialog({ mode: "edit", task: 已有任务, assignee: 张三 });
+    renderDialog({ mode: "edit", task: 已有任务, assignee: 张三, project: null });
 
     const box = await screen.findByRole("textbox", { name: "任务标题" });
     expect(box).toHaveTextContent("整理季度报表");
@@ -197,6 +197,7 @@ describe("TaskDialog · 编辑即详情", () => {
       mode: "edit",
       task: 已有任务,
       assignee: 张三,
+      project: null,
     });
     await screen.findByRole("button", { name: "一周后" });
 
@@ -215,6 +216,7 @@ describe("TaskDialog · 编辑即详情", () => {
       mode: "edit",
       task: 已有任务,
       assignee: 张三,
+      project: null,
     });
     await screen.findByRole("button", { name: "无" });
 
@@ -233,6 +235,7 @@ describe("TaskDialog · 编辑即详情", () => {
       mode: "edit",
       task: 已有任务,
       assignee: 张三,
+      project: null,
     });
     const box = await screen.findByRole("textbox", { name: "任务标题" });
 

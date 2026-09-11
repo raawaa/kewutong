@@ -6,11 +6,13 @@ import {
   createTask,
   listAssigneeCandidates,
   listDueDateOptions,
+  listProjectCandidates,
   toAppError,
   updateTask,
   type AppError,
   type AssigneeCandidate,
   type DueDateOption,
+  type ProjectCandidate,
   type Task,
 } from "@/lib/ipc";
 
@@ -22,13 +24,13 @@ import {
  */
 export type TaskDialogTarget =
   | { mode: "create" }
-  | { mode: "edit"; task: Task; assignee: AssigneeCandidate | null };
+  | { mode: "edit"; task: Task; assignee: AssigneeCandidate | null; project: ProjectCandidate | null };
 
 /**
- * 全局新建 / 编辑任务弹窗（ticket #19）。
+ * 全局新建 / 编辑任务弹窗（tickets #19 + #20）。
  *
- * 科长想到一件事就能立刻录进去：打字写标题、`@` 挑人、chip 点截止日，
- * 一句话录完一条任务。
+ * 科长想到一件事就能立刻录进去：打字写标题、`@` 挑人 / `#` 挑项目、chip 点
+ * 截止日，一句话录完一条任务。
  */
 export function TaskDialog({
   target,
@@ -45,6 +47,9 @@ export function TaskDialog({
   const [title, setTitle] = useState(editing?.title ?? "");
   const [assignee, setAssignee] = useState<AssigneeCandidate | null>(
     target.mode === "edit" ? target.assignee : null,
+  );
+  const [project, setProject] = useState<ProjectCandidate | null>(
+    target.mode === "edit" ? target.project : null,
   );
   // 新建时截止日**默认留空**——「今天是哪一天」由命令层定，但「默认要不要
   // 强行给一条任务加 deadline」是业务决定。让 科长主动选，而不是悄悄替他
@@ -74,8 +79,8 @@ export function TaskDialog({
     };
   }, []);
 
-  // 弹窗级 Esc：标题里的 `@` 下拉会先把自己的 Esc 吞掉（见 TitleEditor），
-  // 所以下拉开着时这一下不会误关弹窗。
+  // 弹窗级 Esc：标题里的 `@` / `#` 下拉会先把自己的 Esc 吞掉（见
+  // TitleEditor），所以下拉开着时这一下不会误关弹窗。
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -97,7 +102,7 @@ export function TaskDialog({
         title,
         description: description.trim() ? description.trim() : null,
         ownerPersonId: assignee.personId,
-        projectId: editing?.projectId ?? null,
+        projectId: project?.projectId ?? null,
         dueDate,
       };
       const saved = editing
@@ -143,13 +148,16 @@ export function TaskDialog({
           <TitleEditor
             initialTitle={editing?.title ?? ""}
             initialAssignee={target.mode === "edit" ? target.assignee : null}
+            initialProject={target.mode === "edit" ? target.project : null}
             autoFocus
             disabled={saving}
             onChange={(value) => {
               setTitle(value.title);
               setAssignee(value.assignee);
+              setProject(value.project);
             }}
-            fetchCandidates={(query) => listAssigneeCandidates({ query })}
+            fetchAssigneeCandidates={(query) => listAssigneeCandidates({ query })}
+            fetchProjectCandidates={(query) => listProjectCandidates({ query })}
             onSubmit={() => void save()}
           />
 
