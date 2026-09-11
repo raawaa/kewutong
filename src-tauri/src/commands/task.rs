@@ -650,7 +650,11 @@ pub fn search_tasks_blocking_for_tests(
 ///
 /// 两条路径共享同一份 `include_cancelled` / `include_deactivated_owners`
 /// 与排序、limit——搜索语义只有一处权威。
-fn search_tasks_blocking(
+///
+/// 同样服务于 ticket #28 的 `wayfinder_search`——命令面板的任务候选
+/// 走同一份 FTS5 / LIKE 兜底,不再写第二份 SQL。pub(crate) 暴露给同级
+/// 模块而非 `pub` 是为了不让同步体泄出 crate。
+pub(crate) fn search_tasks_blocking(
     state: &AppState,
     sanitized_query: &str,
     include_cancelled: bool,
@@ -898,7 +902,9 @@ const TASK_COLUMNS: &str = "id, title, description, status, owner_person_id, pro
 
 /// 带 `t.` 前缀的 `task` 列清单——`JOIN` 其它表时（`JOIN person p`
 /// 或 `JOIN task_fts`）避免 `id` 列歧义。
-const TASK_COLUMNS_WITH_T: &str = "t.id, t.title, t.description, t.status, t.owner_person_id, \
+/// 带 `t.` 前缀的 `task` 列清单——`JOIN` 其它表时（`JOIN person p`
+/// 或 `JOIN task_fts`）避免 `id` 列歧义。
+pub(crate) const TASK_COLUMNS_WITH_T: &str = "t.id, t.title, t.description, t.status, t.owner_person_id, \
         t.project_id, t.due_date, t.created_at, t.updated_at, t.blocked_at, t.blocked_reason, \
         t.recurring_template_id, t.scheduled_at, t.original_scheduled_at, t.rescheduled_from_id, \
         COALESCE(t.due_date, date(t.scheduled_at, '+8 hours')) AS effective_date, \
@@ -1129,7 +1135,7 @@ fn ensure_reason_length(reason: &str) -> Result<()> {
     Ok(())
 }
 
-fn row_to_task(row: &Row<'_>) -> rusqlite::Result<Task> {
+pub(crate) fn row_to_task(row: &Row<'_>) -> rusqlite::Result<Task> {
     let status_text: String = row.get(3)?;
     let status = parse_status(&status_text).ok_or_else(|| {
         rusqlite::Error::InvalidColumnType(

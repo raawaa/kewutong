@@ -592,3 +592,66 @@ export const byday = {
   SA: 1 << 5,
   SU: 1 << 6,
 } as const;
+
+// ---------------------------------------------------------------------------
+// ⌘K 全局命令面板（ticket #28）
+// ---------------------------------------------------------------------------
+
+/**
+ * `wayfinder_search` 入参。
+ *
+ * `query` 是命令面板输入框里的当前文本——空串 = "无搜索,给我默认候选"。
+ *
+ * `*Limit` 字段：候选封顶,**默认由命令层决定**(`people=6 / projects=6 /
+ * tasks=12`)。前端不传即用命令层默认;传了则尊重调用方的意图——单测
+ * 显式传小数字,UI 不传。
+ */
+export type WayfinderSearchArgs = {
+  query: string;
+  peopleLimit?: number | null;
+  projectsLimit?: number | null;
+  tasksLimit?: number | null;
+  includeCancelledTasks?: boolean;
+  includeDeactivatedPeople?: boolean;
+};
+
+/** 匹配落在名字 / 子组名 / 都中——前端据此决定高亮哪一行。 */
+export type WayfinderMatchKind = "name" | "sub-team" | "both";
+
+/** 人员候选。`subTeamName` 是右侧副行——跨组同名时不能只看名字。 */
+export type WayfinderPersonHit = {
+  personId: number;
+  name: string;
+  subTeamId: number;
+  subTeamName: string;
+  matchKind: WayfinderMatchKind;
+};
+
+/** 项目候选。`status` 是命令层派生的"在飞 / 已完成 / 已取消"三值字符串。 */
+export type WayfinderProjectHit = {
+  projectId: number;
+  name: string;
+  subTeamId: number;
+  subTeamName: string;
+  status: string;
+  matchKind: WayfinderMatchKind;
+};
+
+/** ⌘K 一次性返回的三类候选——已封顶、已过滤、已排序。 */
+export type WayfinderSearchResults = {
+  people: WayfinderPersonHit[];
+  projects: WayfinderProjectHit[];
+  tasks: Task[];
+};
+
+/**
+ * ⌘K 命令面板搜索——**所有匹配 / 排序 / 截断 / 过滤都发生在命令层**。
+ *
+ * 前端照搬返回的三个数组渲染；不要再 `slice` / `filter` / `sort`。
+ * ticket #28 验收点："候选查询走命令层,前端不含匹配逻辑"。
+ */
+export function wayfinderSearch(
+  args: WayfinderSearchArgs,
+): Promise<WayfinderSearchResults> {
+  return invoke<WayfinderSearchResults>("wayfinder_search", { args });
+}

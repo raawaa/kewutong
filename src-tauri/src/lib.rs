@@ -77,6 +77,8 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         commands::instance::override_instance_scheduled_at,
         commands::instance::update_recurring_template_zone,
         commands::instance::instance_reschedule_chain,
+        // —— ⌘K 全局命令面板（ticket #28）——
+        commands::wayfinder::wayfinder_search,
     ])
 }
 

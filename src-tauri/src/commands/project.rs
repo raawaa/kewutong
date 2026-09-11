@@ -128,7 +128,11 @@ const PROJECT_CANDIDATE_LIMIT: usize = 6;
 /// 用作 [`derive_status_sql_fragment`] 拼装的子句——三处共用同一份逻辑
 /// （`list_projects` / `list_project_candidates` / `fetch_project`），避免
 /// 派生规则在多处漂移。`{project_alias}` 由调用方填入,默认 `p`。
-fn derive_status_sql_fragment(project_alias: &str) -> String {
+/// 与 `row_to_task` 共享的设计：`derive_status_sql_fragment` 在 `list_projects`
+/// / `list_project_candidates` / `fetch_project` 三处共用,ticket #28 的
+/// `wayfinder_search` 也复用它——一处定义,四处共用,避免派生规则在多处
+/// 漂移。`pub(crate)` 而不是 `pub`,row mapper / SQL 片段不出 crate。
+pub(crate) fn derive_status_sql_fragment(project_alias: &str) -> String {
     let p = project_alias;
     format!(
         "CASE \

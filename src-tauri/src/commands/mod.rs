@@ -16,3 +16,4 @@ pub mod project;
 pub mod recurring_template;
 pub mod task;
 pub mod validation;
+pub mod wayfinder;

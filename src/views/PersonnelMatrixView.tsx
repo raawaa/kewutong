@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, CalendarOff } from "lucide-react";
 import { TaskStatusMenu } from "@/components/task/TaskStatusMenu";
 import {
@@ -43,6 +43,8 @@ const TASK_CARD_WIDTH_PX = 258;
 export function PersonnelMatrixView({
   refreshToken,
   onOpenTask,
+  pendingPersonId,
+  onPersonLocated,
 }: {
   /** 父层保存任务后 +1，触发重新拉取。 */
   refreshToken: number;
@@ -53,6 +55,13 @@ export function PersonnelMatrixView({
       project: ProjectCandidate | null;
     },
   ) => void;
+  /**
+   * 命令面板（ticket #28）选中一位人员时传过来——视图挂载后
+   * `scrollIntoView` 把该人员的卡片滚进视野,并通知父层清掉 pending。
+   * `null` = 无定位。
+   */
+  pendingPersonId?: number | null;
+  onPersonLocated?: () => void;
 }) {
   const [view, setView] = useState<PersonnelMatrixDto | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
@@ -207,8 +216,51 @@ export function PersonnelMatrixView({
           />
         ))
       )}
+
+      {/* 命令面板（ticket #28）选中人员时滚到对应卡片——按 ref 找 */}
+      <PersonLocator
+        pendingPersonId={pendingPersonId}
+        peopleById={peopleById}
+        onLocated={onPersonLocated}
+      />
     </div>
   );
+}
+
+/**
+ * 命令面板选中人员后,滚动到该人员卡片。`peopleById` 已经包含在岗 /
+ * 离岗全量——矩阵视图内部用 `includeDeactivated` 过滤掉离岗的,但仍
+ * 需要在父容器里也能找到该 id 对应的 DOM(矩阵卡片有 `data-person-id`)。
+ */
+function PersonLocator({
+  pendingPersonId,
+  peopleById,
+  onLocated,
+}: {
+  pendingPersonId?: number | null;
+  peopleById: Map<number, Person>;
+  onLocated?: () => void;
+}) {
+  const lastScrolledRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (pendingPersonId == null) return;
+    // 同一 id 已经滚过一次就不再滚——避免父层 onLocated 把 pending 清掉
+    // 又再次被同 id 触发时(例如刷新 matrix)再次滚动造成抖动。
+    if (lastScrolledRef.current === pendingPersonId) return;
+    if (!peopleById.has(pendingPersonId)) return;
+    const handle = window.setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(
+        `[data-person-id="${pendingPersonId}"]`,
+      );
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        lastScrolledRef.current = pendingPersonId;
+        onLocated?.();
+      }
+    }, 60);
+    return () => window.clearTimeout(handle);
+  }, [pendingPersonId, peopleById, onLocated]);
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +348,7 @@ function PersonCard({
 }) {
   return (
     <article
+      data-person-id={entry.person.id}
       className={`bg-background mb-3 inline-block w-full rounded-md border p-2.5 text-xs ${
         entry.blockedCount > 0 ? "border-orange-300/60" : ""
       }`}

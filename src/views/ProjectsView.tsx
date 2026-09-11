@@ -56,7 +56,20 @@ interface BlockedDropPrompt {
  * 拖拽语义唯一——只在项目看板出现，其它视图（任务列表 / 人员）没有拖拽。
  * Blocked / Waiting-on 落列时弹小表单收集 reason 与可选 waiting_on。
  */
-export function ProjectsView({ refreshToken }: { refreshToken: number }) {
+export function ProjectsView({
+  refreshToken,
+  pendingProjectId,
+  onProjectLocated,
+}: {
+  refreshToken: number;
+  /**
+   * 命令面板（ticket #28）选中一个项目时传过来——视图据此直接选中该项目
+   * 卡（覆盖默认选第一个）。`onProjectLocated` 在定位完成后被调用,父层
+   * 把这个 pending 状态清掉,避免下一次进视图时再次跳转。
+   */
+  pendingProjectId?: number | null;
+  onProjectLocated?: () => void;
+}) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [subTeams, setSubTeams] = useState<SubTeam[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -85,6 +98,17 @@ export function ProjectsView({ refreshToken }: { refreshToken: number }) {
       setSelectedProjectId(projects[0].id);
     }
   }, [projects, selectedProjectId]);
+
+  // 命令面板跳过来：覆盖默认,选中 pendingProjectId。注意要在 projects
+  // 拉到之后才生效——pendingProjectId 比 projects 早出现时这条 effect
+  // 第一次不会命中(列表空),projects 拉完后再 fire 一次。
+  useEffect(() => {
+    if (pendingProjectId == null) return;
+    if (projects.some((p) => p.id === pendingProjectId)) {
+      setSelectedProjectId(pendingProjectId);
+      onProjectLocated?.();
+    }
+  }, [pendingProjectId, projects, onProjectLocated]);
 
   async function refreshAll() {
     setBusy(true);
