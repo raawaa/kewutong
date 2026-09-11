@@ -244,6 +244,42 @@ export function listDueDateOptions(): Promise<DueDateOption[]> {
   return invoke<DueDateOption[]>("list_due_date_options");
 }
 
+// ---------------------------------------------------------------------------
+// 今日 / 本周视图（ticket #21）
+// ---------------------------------------------------------------------------
+
+/** 「今日 / 本周」计数瓦片（数字由命令层算出，全局范围）。 */
+export type TodayWeekCounts = {
+  /** 在岗人数：`person.deactivated_at IS NULL` 的行数。 */
+  activePeople: number;
+  /** 全局进行中任务数（不限截止日）。 */
+  inProgress: number;
+  /** 全局阻塞中等任务数（Blocked + Waiting-on，不限截止日）。 */
+  blocked: number;
+};
+
+/** 四列时间轴各自桶里的任务。 */
+export type TodayWeekBuckets = {
+  /** 已逾期：`due_date < today` 的在飞任务。 */
+  overdue: Task[];
+  /** 今天：`due_date == today` 的在飞任务。 */
+  today: Task[];
+  /** 明天：`due_date == today + 1` 的在飞任务。 */
+  tomorrow: Task[];
+  /** 本周剩余：`today + 2 <= due_date <= 本周日` 的在飞任务。 */
+  thisWeekRest: Task[];
+};
+
+/** 「今日 / 本周」视图的 DTO。 */
+export type TodayWeek = {
+  counts: TodayWeekCounts;
+  buckets: TodayWeekBuckets;
+};
+
+export function todayWeek(): Promise<TodayWeek> {
+  return invoke<TodayWeek>("today_week");
+}
+
 /** `@` 内联选人的候选：已按输入过滤、已排除离岗人员、已封顶条数。 */
 export function listAssigneeCandidates(
   args: ListAssigneeCandidatesArgs,

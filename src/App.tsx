@@ -7,12 +7,25 @@ import {
 } from "@/components/task/TaskDialog";
 import { PersonnelView } from "@/views/PersonnelView";
 import { ProjectsView } from "@/views/ProjectsView";
-import { TasksView } from "@/views/TasksView";
+import { TodayWeekView } from "@/views/TodayWeekView";
+import type {
+  AssigneeCandidate,
+  ProjectCandidate,
+  Task,
+} from "@/lib/ipc";
 
-type Tab = "tasks" | "projects" | "personnel";
+/**
+ * 顶层 tab——spec #15 user story 60-66：三个主视图平级。
+ *
+ * 「今日 / 本周」是默认落地页（ticket #21），另两个是「人员矩阵」与
+ * 「项目看板」。原本还有一个独立的"任务列表"tab,本周被并入今日/本周
+ * 视图（瓦片下钻 + 四列时间轴已覆盖高频查询,纯列表入口由后续 ticket
+ * 决定是否补回）。
+ */
+type Tab = "today" | "projects" | "personnel";
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "tasks", label: "任务" },
+  { id: "today", label: "今日 / 本周" },
   { id: "projects", label: "项目" },
   { id: "personnel", label: "人员" },
 ];
@@ -22,11 +35,14 @@ const TABS: { id: Tab; label: string }[] = [
  *
  * 新建任务的入口挂在这里而不是某个视图里——顶栏按钮与 ⌘N 得**在任意界面**
  * 都能唤起弹窗（ticket #19 验收点）。视图只管自己那摊数据。
+ *
+ * 编辑弹窗（编辑即详情）的候选人（assignee / project）由视图自己负责——本壳
+ * 只负责"打开 / 关闭 / 保存后刷新"。
  */
 export default function App() {
-  const [tab, setTab] = useState<Tab>("tasks");
+  const [tab, setTab] = useState<Tab>("today");
   const [dialog, setDialog] = useState<TaskDialogTarget | null>(null);
-  // 弹窗保存后 +1，让任务列表重新拉一次
+  // 弹窗保存后 +1，让当前视图重新拉一次
   const [refreshToken, setRefreshToken] = useState(0);
 
   const openCreate = useCallback(() => setDialog({ mode: "create" }), []);
@@ -47,6 +63,29 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [openCreate]);
+
+  /**
+  视图点开一条已有任务时调这里——App 负责把弹窗开起来。`assignee` /
+  `project` 候选由视图自己算（今日 / 本周视图已有花名册与项目缓存），
+  App 不重复打 IPC。
+  */
+  const openEditTask = useCallback(
+    (
+      task: Task,
+      extras: {
+        assignee: AssigneeCandidate | null;
+        project: ProjectCandidate | null;
+      },
+    ) => {
+      setDialog({
+        mode: "edit",
+        task,
+        assignee: extras.assignee,
+        project: extras.project,
+      });
+    },
+    [],
+  );
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 p-6">
@@ -78,12 +117,10 @@ export default function App() {
         </Button>
       </header>
 
-      {tab === "tasks" ? (
-        <TasksView
+      {tab === "today" ? (
+        <TodayWeekView
           refreshToken={refreshToken}
-          onOpenTask={(task, assignee, project) =>
-            setDialog({ mode: "edit", task, assignee, project })
-          }
+          onOpenTask={openEditTask}
         />
       ) : tab === "projects" ? (
         <ProjectsView refreshToken={refreshToken} />

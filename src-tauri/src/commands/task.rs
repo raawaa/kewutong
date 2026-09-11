@@ -1,6 +1,6 @@
-//! 任务命令层（ticket #18）。
+//! 任务命令层（tickets #18 / #19 / #21）。
 //!
-//! 覆盖一次性任务的创建、状态变更与列表查询。
+//! 覆盖一次性任务的创建、状态变更与列表查询,以及「今日 / 本周」视图查询。
 //!
 //! 约束（取自 ADR 0001 §3.5 + ADR 0003）：
 //! - `status` 6 值枚举：`Open`/`In-progress`/`Blocked`/`Waiting-on`/`Done`/`Cancelled`
@@ -17,7 +17,7 @@ use crate::clock::{parse_sql_date, to_sql_date};
 use crate::commands::validation::{ensure_row_exists, require_non_blank, trim_to_option};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
-use chrono::{Days, NaiveDate};
+use chrono::{Days, Datelike, NaiveDate};
 use rusqlite::{params, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -359,6 +359,221 @@ pub fn list_tasks(state: State<'_, AppState>, args: ListTasksArgs) -> Result<Vec
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
 }
 
+/// 「今日 / 本周」视图（ticket #21）的计数瓦片。
+///
+/// 三个数字都是**全库范围**的——不限于本周；瓦片要回答"全局是什么状态"，
+/// 四列才回答"这周到期的有哪些"。两类语义刻意分开。
+///
+/// `active_people`：花名册里 `deactivated_at IS NULL` 的行数。
+/// `in_progress`：状态 = 'In-progress' 的任务数（不限截止日）。
+/// `blocked`：状态 ∈ {Blocked, Waiting-on} 的任务数（不限截止日）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodayWeekCounts {
+    pub active_people: i64,
+    pub in_progress: i64,
+    pub blocked: i64,
+}
+
+/// 四列时间轴各自的桶（ticket #21）。
+///
+/// **只看在飞任务**：Done / Cancelled 不进任何桶（Cancelled 在 task 层
+/// 充当软删，Done 不需要"按紧迫度读"）。无 `due_date` 也不进桶——
+/// 视图是按截止日分桶的时间轴,没截止日的任务归「任务列表」等其它视图。
+///
+/// 排序：各桶内部 `due_date ASC, id ASC`，避免同日期内 UI 抖动。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodayWeekBuckets {
+    /// `due_date < today` 的在飞任务。
+    pub overdue: Vec<Task>,
+    /// `due_date == today` 的在飞任务。
+    pub today: Vec<Task>,
+    /// `due_date == today + 1` 的在飞任务。
+    pub tomorrow: Vec<Task>,
+    /// `today + 2 <= due_date <= 本周日` 的在飞任务。
+    ///
+    /// 末列止于**本周日**：周一到周六时为"今天 + 2 ~ 本周日"；
+    /// 周日当天时为空（再往后就是下周）。不外扩——跨度由 [`week_end`] 单点定。
+    pub this_week_rest: Vec<Task>,
+}
+
+/// 「今日 / 本周」视图的 DTO。
+///
+/// 瓦片数 + 四列桶，一次 RPC 拉完整张看板。命令层负责：
+/// - 从可注入 [`Clock`] 取「今天」（已带本地时区换算）
+/// - 算「本周日」边界
+/// - 按桶跑 4 次 SELECT,各自命中 `(due_date) WHERE due_date IS NOT NULL` 部分索引
+/// - 跑 3 次 COUNT 算瓦片数
+///
+/// 前端不自己算日期、不自己分桶——业务逻辑零在 TS 里。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodayWeek {
+    pub counts: TodayWeekCounts,
+    pub buckets: TodayWeekBuckets,
+}
+
+/// 「今日 / 本周」视图查询（ticket #21 默认落地页）。
+///
+/// 与「人员矩阵」「项目看板」平级为顶层 tab。本命令是该视图唯一的数据
+/// 入口,前端不再调 `list_tasks` 自己分桶。
+///
+/// 边界规则：
+/// - 桶的"今天"由 [`AppState::today`]（→ [`crate::clock::Clock::today`]）给出，
+///   已按科长本地时区换算,UTC 夜跨过来后桶跟着挪。
+/// - 「本周日」= 当前所在周（周一~周日）的周日；周日当天桶为空,
+///   周一当天桶跨到周日。详见 [`week_end`] 的单元测试。
+/// - 每个桶 SQL 形如：
+///   `WHERE due_date IS NOT NULL AND due_date < ?1 AND status NOT IN ('Done','Cancelled')`
+///   命中 `idx_task_due_date` partial index（验收 AC）。
+#[tauri::command]
+pub fn today_week(state: State<'_, AppState>) -> Result<TodayWeek> {
+    let conn = state.db()?;
+    let today = state.today();
+    let tomorrow = today
+        .checked_add_days(Days::new(1))
+        .ok_or_else(|| AppError::Internal("today+1 越界,日期不合理".into()))?;
+    let rest_start = tomorrow
+        .checked_add_days(Days::new(1))
+        .ok_or_else(|| AppError::Internal("today+2 越界,日期不合理".into()))?;
+    let week_end = week_end(today);
+
+    let active_people = count_active_people(&conn)?;
+    let in_progress = count_tasks_with_status(&conn, "In-progress")?;
+    let blocked = count_tasks_with_status_in(&conn, &["Blocked", "Waiting-on"])?;
+
+    let overdue = fetch_bucket(&conn, BucketBound::StrictlyBefore(today))?;
+    let today_bucket = fetch_bucket(&conn, BucketBound::OnDay(today))?;
+    let tomorrow_bucket = fetch_bucket(&conn, BucketBound::OnDay(tomorrow))?;
+    let this_week_rest = fetch_bucket(&conn, BucketBound::Between(rest_start, week_end))?;
+
+    Ok(TodayWeek {
+        counts: TodayWeekCounts {
+            active_people,
+            in_progress,
+            blocked,
+        },
+        buckets: TodayWeekBuckets {
+            overdue,
+            today: today_bucket,
+            tomorrow: tomorrow_bucket,
+            this_week_rest,
+        },
+    })
+}
+
+/// 桶边界。三个变体合在一起描述 4 个桶的 WHERE 拼装——避免 4 处拼 SQL 漂移。
+#[derive(Debug, Clone, Copy)]
+enum BucketBound {
+    /// `due_date < day`（已逾期）
+    StrictlyBefore(NaiveDate),
+    /// `due_date == day`（今天 / 明天复用）
+    OnDay(NaiveDate),
+    /// `lo <= due_date <= hi`，含两端——本周剩余。
+    ///
+    /// 调用方传 `lo = tomorrow`、`hi = week_end`；语义上"明天到本周日"。
+    Between(NaiveDate, NaiveDate),
+}
+
+impl BucketBound {
+    /// 写出这一桶的 WHERE 片段（不含公共的 `due_date IS NOT NULL` 与
+    /// `status NOT IN (...)`，由 [`fetch_bucket`] 一并拼上）。
+    fn to_sql(self) -> &'static str {
+        match self {
+            Self::StrictlyBefore(_) => "due_date < ?1",
+            Self::OnDay(_) => "due_date = ?1",
+            Self::Between(_, _) => "due_date >= ?1 AND due_date <= ?2",
+        }
+    }
+
+    /// 这一桶要 bind 几个参数,顺序与 SQL 中 `?` 一致。
+    fn bind_params(self) -> Vec<String> {
+        match self {
+            Self::StrictlyBefore(day) | Self::OnDay(day) => vec![to_sql_date(day)],
+            Self::Between(lo, hi) => vec![to_sql_date(lo), to_sql_date(hi)],
+        }
+    }
+}
+
+/// 取一桶的任务。
+///
+/// 共用 SELECT 列与排序,只在 WHERE 上按 [`BucketBound`] 区分。
+/// 命中 `idx_task_due_date` partial index——WHERE 起手就是
+/// `due_date IS NOT NULL AND due_date < / = / BETWEEN ...`,
+/// partial index 把 `due_date IS NOT NULL` 那部分预筛掉。
+fn fetch_bucket(
+    conn: &rusqlite::Connection,
+    bound: BucketBound,
+) -> Result<Vec<Task>> {
+    let sql = format!(
+        "SELECT id, title, description, status, owner_person_id, project_id, due_date, \
+                created_at, updated_at, blocked_at, blocked_reason, waiting_on_person_id \
+           FROM task \
+          WHERE due_date IS NOT NULL \
+            AND status NOT IN ('Done','Cancelled') \
+            AND {bound_sql} \
+          ORDER BY due_date ASC, id ASC",
+        bound_sql = bound.to_sql(),
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params_iter = bound.bind_params();
+    let rows = stmt.query_map(rusqlite::params_from_iter(params_iter), row_to_task)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+}
+
+/// 在岗人数：`person.deactivated_at IS NULL` 的行数。
+///
+/// 不传子组过滤——"全局在岗人数"是瓦片的语义,不是"某子组在岗人数"。
+fn count_active_people(conn: &rusqlite::Connection) -> Result<i64> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM person WHERE deactivated_at IS NULL",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(n)
+}
+
+/// `status = ?` 的任务数（不限截止日、不限在飞——瓦片要"全局"语义）。
+fn count_tasks_with_status(conn: &rusqlite::Connection, status: &str) -> Result<i64> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM task WHERE status = ?1",
+        params![status],
+        |row| row.get(0),
+    )?;
+    Ok(n)
+}
+
+/// `status IN (...)` 的任务数。
+///
+/// 不让 `params_from_iter` 拼 IN 列表——`sqlite3_bind` 不支持动态列数；
+/// 数量很小（2 个），直接展开即可。
+fn count_tasks_with_status_in(conn: &rusqlite::Connection, statuses: &[&str]) -> Result<i64> {
+    let placeholders = vec!["?"; statuses.len()].join(",");
+    let sql = format!("SELECT COUNT(*) FROM task WHERE status IN ({placeholders})");
+    let mut stmt = conn.prepare(&sql)?;
+    let n: i64 = stmt.query_row(rusqlite::params_from_iter(statuses), |row| row.get(0))?;
+    Ok(n)
+}
+
+/// 「本周剩余」桶的右边界——本周日（周一~周日）。
+///
+/// 中国习惯周一到周日,所以"本周"=[周一, 周日]。
+/// - 周日当天 → `today`（再往后就是下周,本周已结束）
+/// - 周一~周六 → `today + (7 - weekday)` 天到周日
+///
+/// `chrono::Weekday::num_days_from_monday()` 已给周一=0,周日=6,正好对齐。
+fn week_end(today: NaiveDate) -> NaiveDate {
+    let offset = 7 - today.weekday().num_days_from_monday() - 1;
+    // offset ∈ [0, 6]：
+    // - 周日(weekday=6): offset = 7 - 6 - 1 = 0 → today
+    // - 周一(weekday=0): offset = 7 - 0 - 1 = 6 → today+6
+    // - 周六(weekday=5): offset = 7 - 5 - 1 = 1 → today+1
+    today
+        .checked_add_days(Days::new(offset as u64))
+        .expect("week_end 最多 +6 天,远未逼近 NaiveDate::MAX")
+}
+
 // ---------------------------------------------------------------------------
 // 内部辅助
 // ---------------------------------------------------------------------------
@@ -588,5 +803,53 @@ mod tests {
         assert_eq!(at, None);
         assert_eq!(reason, None);
         assert_eq!(waiting, None);
+    }
+
+    // ----- 「今日 / 本周」视图的边界算法 -----
+
+    /// 锁死「本周日」= 周一+6 / 周日+0 的边界。
+    #[test]
+    fn week_end_周一到周日分别是_6_到_0_天后() {
+        // 2026-09-07 = Mon,2026-09-13 = Sun——这两天的 day-of-week
+        // 已由 _check_dates 测试钉死,这里只钉算式。
+        for (date, expected) in [
+            ("2026-09-07", "2026-09-13"), // Mon → +6 → Sun
+            ("2026-09-08", "2026-09-13"), // Tue → +5 → Sun
+            ("2026-09-09", "2026-09-13"), // Wed → +4
+            ("2026-09-10", "2026-09-13"), // Thu → +3
+            ("2026-09-11", "2026-09-13"), // Fri → +2
+            ("2026-09-12", "2026-09-13"), // Sat → +1
+            ("2026-09-13", "2026-09-13"), // Sun → +0(再往后就是下周)
+        ] {
+            let today = NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap();
+            assert_eq!(
+                to_sql_date(week_end(today)),
+                expected,
+                "date={date}"
+            );
+        }
+    }
+
+    /// `BucketBound` 的 SQL 与 bind 数量必须一致——否则 `?` 与参数对不上,
+    /// 会越界 panic 或静默错位。
+    #[test]
+    fn bucket_bound_sql_与_bind_params_一一对应() {
+        use BucketBound::*;
+
+        let day = NaiveDate::parse_from_str("2026-09-10", "%Y-%m-%d").unwrap();
+        let day2 = NaiveDate::parse_from_str("2026-09-13", "%Y-%m-%d").unwrap();
+
+        for (bound, expected_sql, expected_params) in [
+            (StrictlyBefore(day), "due_date < ?1", vec!["2026-09-10"]),
+            (OnDay(day), "due_date = ?1", vec!["2026-09-10"]),
+            (
+                Between(day, day2),
+                "due_date >= ?1 AND due_date <= ?2",
+                vec!["2026-09-10", "2026-09-13"],
+            ),
+        ] {
+            assert_eq!(bound.to_sql(), expected_sql);
+            assert_eq!(bound.bind_params(), expected_params);
+        }
     }
 }

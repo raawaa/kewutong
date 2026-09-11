@@ -33,6 +33,8 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         commands::task::create_task,
         commands::task::set_task_status,
         commands::task::list_tasks,
+        // —— 今日 / 本周视图（ticket #21）——
+        commands::task::today_week,
         // —— 全局新建 / 编辑任务弹窗（ticket #19）——
         commands::personnel::list_assignee_candidates,
         commands::task::list_due_date_options,
