@@ -79,21 +79,12 @@ impl AppStateInner {
     }
 }
 
-/// `AppState = Arc<AppStateInner>` 的便利构造器（语义同 `new_app_state`）。
-pub fn make_state(db: Connection, clock: Arc<dyn Clock>) -> AppState {
-    new_app_state(db, clock)
-}
-
-/// 旧 `AppState::new` / `with_system_clock` 的兼容入口——保留是为了不
-/// 改 `testing.rs` 等已被引用的旧调用点。**新增代码请用 [`new_app_state`]。**
+/// 旧 `AppState::with_system_clock` 的兼容入口——保留是因为 [`crate::testing`]
+/// 的文件库 fixture 直接拿它构造而不绕道 `new_app_state`,删除会
+/// 让那条调用变成更长。**新增代码请用 [`new_app_state`]。**
 pub mod compat {
     use super::*;
     use crate::clock::SystemClock;
-
-    /// 与旧 `AppState::new(conn, clock)` 等价。新增代码请用 [`super::new_app_state`].
-    pub fn new_state(conn: Connection, clock: Arc<dyn Clock>) -> AppState {
-        new_app_state(conn, clock)
-    }
 
     /// 与旧 `AppState::with_system_clock(conn)` 等价。
     pub fn with_system_clock(conn: Connection) -> AppState {

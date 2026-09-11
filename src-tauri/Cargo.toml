@@ -53,6 +53,9 @@ tauri-plugin-single-instance = "2.4"
 # `test` feature 打开 tauri::test（mock_builder / get_ipc_response），只在测试构建里生效
 tauri = { version = "2.11", features = ["test"] }
 tempfile = "3"
+# ticket #25 验收：rrule crate 与自家「月末 = 0」编码的语义一致性——
+# 拿 rrule 当外部参考,跑同一 RRULE,比对展开结果。
+rrule = "0.14"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

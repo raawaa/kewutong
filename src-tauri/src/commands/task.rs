@@ -522,26 +522,17 @@ enum BucketBound {
 }
 
 impl BucketBound {
-    /// 写出这一桶的 WHERE 片段（不含公共的 `due_date IS NOT NULL` 与
-    /// `status NOT IN (...)`，由 [`fetch_bucket`] 一并拼上）。
-    fn to_sql(self) -> &'static str {
+    /// 写出这一桶在指定日期列上的 WHERE 片段——`column` 是 SQL 表达式
+    /// (一次性走 `due_date`,instance 走 `date(scheduled_at, '+8 hours')`,
+    /// Asia/Shanghai 固定 +8h)。`?` 索引在两段 SQL 间共用,所以参数
+    /// 直接复用 [`bind_params`](Self::bind_params)。
+    fn to_sql(self, column: &str) -> String {
         match self {
-            Self::StrictlyBefore(_) => "due_date < ?1",
-            Self::OnDay(_) => "due_date = ?1",
-            Self::Between(_, _) => "due_date >= ?1 AND due_date <= ?2",
-        }
-    }
-
-    /// 写出同一桶在 instance 列上的 WHERE 片段——把 `scheduled_at`
-    /// 转成本地日期 (`+8 hours`, Asia/Shanghai) 后再比较。
-    /// `?` 索引与 [`to_sql`](Self::to_sql) 共用（SQLite 的 `?1` 在
-    /// 同一查询里出现多次只算一个参数),所以参数也直接用
-    /// [`bind_params`](Self::bind_params) 即可。
-    fn to_sql_for_instance(self) -> &'static str {
-        match self {
-            Self::StrictlyBefore(_) => "date(scheduled_at, '+8 hours') < ?1",
-            Self::OnDay(_) => "date(scheduled_at, '+8 hours') = ?1",
-            Self::Between(_, _) => "date(scheduled_at, '+8 hours') >= ?1 AND date(scheduled_at, '+8 hours') <= ?2",
+            Self::StrictlyBefore(_) => format!("{column} < ?1"),
+            Self::OnDay(_) => format!("{column} = ?1"),
+            Self::Between(_, _) => {
+                format!("{column} >= ?1 AND {column} <= ?2")
+            }
         }
     }
 
@@ -579,8 +570,8 @@ fn fetch_bucket(
                  AND {bound_sql_inst}) \
             ) \
           ORDER BY effective_date ASC, id ASC",
-        bound_sql = bound.to_sql(),
-        bound_sql_inst = bound.to_sql_for_instance(),
+        bound_sql = bound.to_sql("due_date"),
+        bound_sql_inst = bound.to_sql("date(scheduled_at, '+8 hours')"),
     );
     let mut stmt = conn.prepare(&sql)?;
     let params_iter = bound.bind_params();
@@ -957,7 +948,7 @@ mod tests {
                 vec!["2026-09-10", "2026-09-13"],
             ),
         ] {
-            assert_eq!(bound.to_sql(), expected_sql);
+            assert_eq!(bound.to_sql("due_date"), expected_sql);
             assert_eq!(bound.bind_params(), expected_params);
         }
     }

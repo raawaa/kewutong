@@ -93,22 +93,22 @@ fn instance_title(template_name: &str, on: NaiveDate) -> String {
 /// 命中该规则的墙钟日（含起点与终点）。命中规则时**不**做节假日裁剪
 /// ——节假日行为由 [`apply_holiday_behavior`] 单独处理。
 ///
-/// `ends_after_n` 的「前 n 次」按**展开后的列表**前 n 项,不是按
-/// `range_start` 起的绝对次数——后者需要持久化「已生成次数」,代价过
-/// 大；v1 选择「窗口内最多 n 个」,且窗口的滚动会让跨窗的累积量自动
-/// 接续（前一窗口已生成 n/2,下一窗口再 n/2 后从窗口右侧继续）。
+/// `already_emitted` 仅对 `EndsSpec::After { n }` 有意义——表示模板
+/// 此前已物化出的非 Cancelled instance 数,本窗口只补到 N 为止。计数
+/// 由 [`materialize_template`] 在事务前 SELECT 出来,确保跨窗口累计
+/// 符合"到点即停"语义。`EndsSpec::On { date }` 忽略此参数。
 ///
 /// # 终止条件
-/// - `EndsSpec::On { date }`：展开结果中**所有日期 ≤ date**。UT-类边界
-///   「date 之后还有几次？」按上面"前 n 次"逻辑不算——我们只展开范围
-///   内的日期,然后再按 ends 截断。
-/// - `EndsSpec::After { n }`：结果集前 n 个,余下的丢弃。
+/// - `EndsSpec::On { date }`:展开结果中**所有日期 ≤ date**。
+/// - `EndsSpec::After { n }`:取 (n - already_emitted) 项,余下丢弃;若
+///   already_emitted >= n,返回空。
 ///
 /// 这两条都按"自然顺序"取（按日期升序）。
 pub fn expand_rule(
     rule: &StructuredRule,
     range_start: NaiveDate,
     range_end: NaiveDate,
+    already_emitted: i64,
 ) -> Result<Vec<NaiveDate>> {
     if range_start > range_end {
         return Ok(Vec::new());
@@ -119,7 +119,7 @@ pub fn expand_rule(
         crate::recurring::Freq::Monthly => expand_monthly(rule, range_start, range_end)?,
         crate::recurring::Freq::Yearly => expand_yearly(rule, range_start, range_end)?,
     };
-    Ok(apply_ends(&candidates, &rule.ends))
+    Ok(apply_ends(&candidates, &rule.ends, already_emitted))
 }
 
 fn expand_daily(start: NaiveDate, end: NaiveDate) -> Vec<NaiveDate> {
@@ -259,10 +259,26 @@ fn expand_yearly(
     Ok(out)
 }
 
-fn apply_ends(candidates: &[NaiveDate], ends: &EndsSpec) -> Vec<NaiveDate> {
+/// 按 `EndsSpec` 截断候选日期。
+///
+/// - `On { date }`：所有 `> date` 的丢弃。`date` 解析走 `parse_from_str` —
+///   V004 的 DB CHECK `CHECK (length(ends_on) = 10) + 业务层 StructuredRule`
+///   已经保证形如 `YYYY-MM-DD`,这里 `expect` 即可(不是 `unwrap_or(MAX)`)。
+/// - `After { n }`:取前 `n - already_emitted` 项,其中
+///   `already_emitted` = 模板历史已生成的非 Cancelled instance 数。**这是
+///   全局计数**(跨物化窗口累计),符合 ticket #25 验收「到点即停」——
+///   不是单窗口内的前 n 项,否则 daily + COUNT=84 + 12 周窗口会被截掉
+///   7 个。用户改 `ends_after_n` 后不会立刻生效:下次启动时取到新的 n
+///   即可(改大能继续生成,改小下一窗口才开始截断)。
+fn apply_ends(
+    candidates: &[NaiveDate],
+    ends: &EndsSpec,
+    already_emitted: i64,
+) -> Vec<NaiveDate> {
     match ends {
         EndsSpec::On { date } => {
-            let cutoff = NaiveDate::from_str(date).unwrap_or(NaiveDate::MAX);
+            let cutoff = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                .expect("V004 已保证 ends_on 是 YYYY-MM-DD");
             candidates
                 .iter()
                 .copied()
@@ -270,8 +286,8 @@ fn apply_ends(candidates: &[NaiveDate], ends: &EndsSpec) -> Vec<NaiveDate> {
                 .collect()
         }
         EndsSpec::After { n } => {
-            let n = (*n).max(0) as usize;
-            candidates.iter().copied().take(n).collect()
+            let remaining = (*n as i64).saturating_sub(already_emitted).max(0) as usize;
+            candidates.iter().copied().take(remaining).collect()
         }
     }
 }
@@ -470,7 +486,19 @@ pub fn materialize_template(
     let range_end = now
         .checked_add_signed(Duration::days(MATERIALIZATION_WINDOW_DAYS))
         .ok_or_else(|| AppError::Internal("now+12 周日期越界".into()))?;
-    let candidates = expand_rule(&template.rule, range_start, range_end)?;
+    // 模板已物化出的非 Cancelled instance 数(全局累计)——`EndsSpec::After
+    // { n }` 用它实现"到点即停":本窗口只补 (n - emitted) 个。
+    // 在事务外 SELECT,放大后再开事务,锁内只剩 INSERT。
+    let already_emitted: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM task \
+              WHERE recurring_template_id = ?1 \
+                AND status != 'Cancelled' \
+                AND scheduled_at IS NOT NULL",
+            params![template.id],
+            |row| row.get(0),
+        )?;
+    let candidates = expand_rule(&template.rule, range_start, range_end, already_emitted)?;
     let events = apply_holiday_behavior(candidates, calendar, template.rule.holiday_behavior);
 
     let mut counts = MaterializeCounts::default();
@@ -854,19 +882,25 @@ fn resolve_owner(
     })
 }
 
+/// 把 [`MaterializedEvent`] 中需要写入的行 INSERT 进 `task` 表。
+/// 共享 INSERT 体——`needs_id` 决定是否后续 SELECT 把新行 id 拿回。
+///
+/// 幂等性:唯一索引 `(recurring_template_id, scheduled_at) WHERE
+/// recurring_template_id IS NOT NULL` 让 `INSERT OR IGNORE` 在唯一
+/// 冲突时跳过,自然幂等。
 #[allow(clippy::too_many_arguments)]
-fn insert_instance(
+fn insert_instance_inner(
     tx: &rusqlite::Transaction<'_>,
     template: &TemplateMaterializeInput,
     scheduled_at_utc: &str,
-    _local_date: NaiveDate,
+    local_date: NaiveDate,
     original_scheduled_date: Option<NaiveDate>,
     rescheduled_from_id: Option<i64>,
     status: &str,
 ) -> Result<bool> {
     let original_scheduled_at = original_scheduled_date
         .map(|d| wall_clock_to_utc_sql(d, template.rule.byhour as u32, template.rule.byminute as u32));
-    let title = instance_title(&template.name, original_scheduled_date.unwrap_or(_local_date));
+    let title = instance_title(&template.name, original_scheduled_date.unwrap_or(local_date));
     let affected = tx.execute(
         "INSERT OR IGNORE INTO task
             (title, status, owner_person_id, project_id, sub_team_id,
@@ -889,35 +923,44 @@ fn insert_instance(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn insert_instance(
+    tx: &rusqlite::Transaction<'_>,
+    template: &TemplateMaterializeInput,
+    scheduled_at_utc: &str,
+    local_date: NaiveDate,
+    original_scheduled_date: Option<NaiveDate>,
+    rescheduled_from_id: Option<i64>,
+    status: &str,
+) -> Result<bool> {
+    insert_instance_inner(
+        tx,
+        template,
+        scheduled_at_utc,
+        local_date,
+        original_scheduled_date,
+        rescheduled_from_id,
+        status,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn insert_instance_returning_id(
     tx: &rusqlite::Transaction<'_>,
     template: &TemplateMaterializeInput,
     scheduled_at_utc: &str,
-    _local_date: NaiveDate,
+    local_date: NaiveDate,
     original_scheduled_date: Option<NaiveDate>,
     rescheduled_from_id: Option<i64>,
     status: &str,
 ) -> Result<Option<i64>> {
-    let original_scheduled_at = original_scheduled_date
-        .map(|d| wall_clock_to_utc_sql(d, template.rule.byhour as u32, template.rule.byminute as u32));
-    let title = instance_title(&template.name, original_scheduled_date.unwrap_or(_local_date));
-    tx.execute(
-        "INSERT OR IGNORE INTO task
-            (title, status, owner_person_id, project_id, sub_team_id,
-             recurring_template_id, scheduled_at, original_scheduled_at,
-             rescheduled_from_id, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'), datetime('now'))",
-        params![
-            title,
-            status,
-            template.owner_person_id,
-            template.project_id,
-            template.sub_team_id,
-            template.id,
-            scheduled_at_utc,
-            original_scheduled_at,
-            rescheduled_from_id,
-        ],
+    insert_instance_inner(
+        tx,
+        template,
+        scheduled_at_utc,
+        local_date,
+        original_scheduled_date,
+        rescheduled_from_id,
+        status,
     )?;
     let id: Option<i64> = tx
         .query_row(
@@ -1026,20 +1069,20 @@ mod tests {
     #[test]
     fn expand_weekly_mo_we_跨_7_天返回两个日期() {
         // 2026-09-07 = Mon, 2026-09-09 = Wed
-        let days = expand_rule(&weekly_mo_we(), date("2026-09-07"), date("2026-09-13")).unwrap();
+        let days = expand_rule(&weekly_mo_we(), date("2026-09-07"), date("2026-09-13"), 0).unwrap();
         assert_eq!(days, vec![date("2026-09-07"), date("2026-09-09")]);
     }
 
     #[test]
     fn expand_weekly_空范围返回空() {
-        let days = expand_rule(&weekly_mo_we(), date("2026-09-08"), date("2026-09-08")).unwrap();
+        let days = expand_rule(&weekly_mo_we(), date("2026-09-08"), date("2026-09-08"), 0).unwrap();
         // Tue 9/8 单独一天不在 mask 里
         assert!(days.is_empty());
     }
 
     #[test]
     fn expand_monthly_1_15_跨两个月_返回四条() {
-        let days = expand_rule(&monthly_1_15(), date("2026-09-01"), date("2026-10-31")).unwrap();
+        let days = expand_rule(&monthly_1_15(), date("2026-09-01"), date("2026-10-31"), 0).unwrap();
         assert_eq!(
             days,
             vec![
@@ -1054,7 +1097,7 @@ mod tests {
     #[test]
     fn expand_monthly_月末_0_在不同月份算实际最后一天() {
         // 9 月 30 天 → 9/30; 2 月 28 天(非闰年) → 2/28; 12 月 31 天 → 12/31
-        let days = expand_rule(&monthly_last_day(), date("2026-02-01"), date("2026-12-31")).unwrap();
+        let days = expand_rule(&monthly_last_day(), date("2026-02-01"), date("2026-12-31"), 0).unwrap();
         assert_eq!(
             days,
             vec![
@@ -1078,7 +1121,7 @@ mod tests {
         // 2028 是闰年,2 月 29 天。ends_on 用足够远的日期,免得被截断。
         let mut rule = monthly_last_day();
         rule.ends = EndsSpec::On { date: "2030-12-31".into() };
-        let days = expand_rule(&rule, date("2028-02-01"), date("2028-02-29")).unwrap();
+        let days = expand_rule(&rule, date("2028-02-01"), date("2028-02-29"), 0).unwrap();
         assert_eq!(days, vec![date("2028-02-29")]);
     }
 
@@ -1088,6 +1131,7 @@ mod tests {
             &yearly_q1_q2_q3_q4_day1(),
             date("2026-01-01"),
             date("2027-12-31"),
+            0,
         )
         .unwrap();
         assert_eq!(
@@ -1107,7 +1151,7 @@ mod tests {
 
     #[test]
     fn expand_daily_7_天_返回_7_条() {
-        let days = expand_rule(&daily(), date("2026-09-10"), date("2026-09-16")).unwrap();
+        let days = expand_rule(&daily(), date("2026-09-10"), date("2026-09-16"), 0).unwrap();
         assert_eq!(days.len(), 7);
         assert_eq!(days[0], date("2026-09-10"));
         assert_eq!(days[6], date("2026-09-16"));
@@ -1119,7 +1163,7 @@ mod tests {
     fn expand_ends_on_截断到_终止日() {
         let mut rule = weekly_mo_we();
         rule.ends = EndsSpec::On { date: "2026-09-09".into() };
-        let days = expand_rule(&rule, date("2026-09-07"), date("2026-09-30")).unwrap();
+        let days = expand_rule(&rule, date("2026-09-07"), date("2026-09-30"), 0).unwrap();
         // 9/14 已超出 9/9,被截断
         assert_eq!(days, vec![date("2026-09-07"), date("2026-09-09")]);
     }
@@ -1128,7 +1172,7 @@ mod tests {
     fn expand_ends_after_n_取前_n_个() {
         let mut rule = weekly_mo_we();
         rule.ends = EndsSpec::After { n: 3 };
-        let days = expand_rule(&rule, date("2026-09-07"), date("2026-12-31")).unwrap();
+        let days = expand_rule(&rule, date("2026-09-07"), date("2026-12-31"), 0).unwrap();
         // 9/7, 9/9, 9/14 → 3 个
         assert_eq!(days.len(), 3);
         assert_eq!(days[2], date("2026-09-14"));
@@ -1136,7 +1180,7 @@ mod tests {
 
     #[test]
     fn expand_范围反向返回空() {
-        let days = expand_rule(&weekly_mo_we(), date("2026-09-30"), date("2026-09-01")).unwrap();
+        let days = expand_rule(&weekly_mo_we(), date("2026-09-30"), date("2026-09-01"), 0).unwrap();
         assert!(days.is_empty());
     }
 

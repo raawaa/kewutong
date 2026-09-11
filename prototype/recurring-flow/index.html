@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<!--
+  一次性原型 —— 用完即弃。
+  v3（2026-09-10）：推翻 v1 全页向导 → v2 顶栏+主弹窗+侧抽屉 → v3 主弹窗里把人员/项目下拉换成内联 @ / # autocomplete（滴答清单风格）。
+  问题：全局新建任务的交互方式
+        · 任何页面触发（顶栏 / ⌘N / ⌘K）
+        · 标题输入框里 @ 选人员，# 选项目，输入即建议
+        · 截止：今天 / 明天 / 一周后 / 无
+        · 周期性：toggle 开启后直接跳侧抽屉，不展示内联摘要
+  参见 issue #9（map #2）。全 hardcode，无持久化。
+  规则语法遵循 ADR 0002。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>科务通 · 全局新建任务原型（v3 · 示例数据）</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root {
+    --bg:#fafafa; --card:#ffffff; --fg:#09090b; --muted:#f4f4f5; --muted-fg:#71717a;
+    --border:#e4e4e7; --primary:#18181b; --primary-fg:#fafafa;
+    --radius:8px; --shadow-sm:0 1px 2px 0 rgb(0 0 0 /.05);
+    --shadow-md:0 4px 6px -1px rgb(0 0 0 /.07), 0 2px 4px -2px rgb(0 0 0 /.05);
+    --shadow-lg:0 10px 15px -3px rgb(0 0 0 /.1), 0 4px 6px -4px rgb(0 0 0 /.1);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 4px; }
+
+  .btn { font: inherit; font-size: 13px; font-weight: 500; padding: 7px 14px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; transition: all .12s; display: inline-flex; align-items: center; gap: 6px; }
+  .btn-primary { background: var(--primary); color: var(--primary-fg); }
+  .btn-primary:hover { background: #27272a; }
+  .btn-ghost { background: transparent; color: var(--fg); }
+  .btn-ghost:hover { background: var(--muted); }
+  .btn-outline { background: var(--card); border-color: var(--border); color: var(--fg); }
+  .btn-outline:hover { background: var(--muted); }
+  .input { font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--fg); width: 100%; }
+  .input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgb(24 24 27 /.08); }
+  .label { display: block; font-size: 12px; font-weight: 500; color: var(--muted-fg); margin-bottom: 4px; }
+
+  /* ---------- 横幅 + 顶栏 ---------- */
+  .sample-banner { background: #fefce8; border-bottom: 1px solid #fde68a; color: #854d0e; font-size: 12px; padding: 6px 20px; display: flex; align-items: center; gap: 8px; }
+  .sample-banner .spacer { flex: 1; }
+  .appbar { height: 52px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; padding: 0 20px; background: var(--card); position: sticky; top: 0; z-index: 30; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+  .brand .logo { width: 24px; height: 24px; border-radius: 6px; background: var(--primary); color: var(--primary-fg); display: grid; place-items: center; font-size: 12px; }
+  .tabs { display: flex; gap: 2px; background: var(--muted); padding: 3px; border-radius: var(--radius); }
+  .tabs button { font: inherit; font-size: 13px; font-weight: 500; border: 0; background: transparent; color: var(--muted-fg); padding: 5px 14px; border-radius: 6px; cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--card); color: var(--fg); box-shadow: var(--shadow-sm); }
+  .appbar .spacer { flex: 1; }
+  .kbd { font-size: 11px; color: var(--muted-fg); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 1px 5px; background: var(--muted); font-family: -apple-system, sans-serif; }
+
+  /* ---------- 页面占位 ---------- */
+  .page { max-width: 960px; margin: 0 auto; padding: 32px; }
+  .page h1 { font-size: 22px; font-weight: 600; margin: 0 0 8px; }
+  .page .sub { color: var(--muted-fg); font-size: 13px; margin-bottom: 24px; }
+  .stub-card { background: var(--card); border: 1px dashed var(--border); border-radius: var(--radius); padding: 40px; text-align: center; color: var(--muted-fg); font-size: 13px; }
+
+  .shortcut-hint { position: fixed; bottom: 20px; left: 20px; font-size: 12px; color: var(--muted-fg); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; box-shadow: var(--shadow-sm); display: flex; align-items: center; gap: 6px; }
+
+  /* ---------- 主对话框 ---------- */
+  .dialog-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 /.4); z-index: 50; animation: fadeIn .12s; }
+  .dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 540px; max-height: calc(100vh - 80px); background: var(--card); border-radius: 12px; box-shadow: var(--shadow-lg); z-index: 51; display: flex; flex-direction: column; animation: slideUp .14s; }
+  .dialog header { padding: 14px 20px 10px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
+  .dialog header h2 { font-size: 15px; font-weight: 600; margin: 0; }
+  .dialog .close-x { background: transparent; border: 0; color: var(--muted-fg); font-size: 20px; cursor: pointer; padding: 0; width: 28px; height: 28px; border-radius: 6px; }
+  .dialog .close-x:hover { background: var(--muted); }
+  .dialog .body { padding: 14px 20px; overflow-y: auto; }
+  .dialog .footer { padding: 10px 20px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 8px; background: var(--muted); border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; }
+  .dialog .footer .left-hint { font-size: 12px; color: var(--muted-fg); }
+  .dialog .footer .right { display: flex; gap: 8px; }
+
+  /* 标题输入框（contenteditable） */
+  .title-wrap { position: relative; }
+  .title-input {
+    font-size: 16px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--card); min-height: 44px; max-height: 200px; overflow-y: auto;
+    white-space: pre-wrap; word-wrap: break-word; line-height: 1.5;
+  }
+  .title-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgb(24 24 27 /.08); }
+  .title-input:empty::before {
+    content: attr(data-placeholder); color: var(--muted-fg); pointer-events: none;
+  }
+  .title-input .token-person { background: #dbeafe; color: #1e40af; border-radius: 4px; padding: 1px 4px; user-select: all; display: inline-block; }
+  .title-input .token-project { background: #ede9fe; color: #5b21b6; border-radius: 4px; padding: 1px 4px; user-select: all; display: inline-block; }
+
+  /* autocomplete 浮层 */
+  .ac-popup {
+    position: absolute; top: calc(100% + 4px); left: 0; min-width: 280px; max-height: 240px; overflow-y: auto;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-lg);
+    z-index: 60; padding: 4px;
+  }
+  .ac-item { padding: 6px 10px; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 10px; border-radius: 4px; }
+  .ac-item:hover, .ac-item[data-active="true"] { background: var(--muted); }
+  .ac-item .ac-icon { width: 22px; height: 22px; display: grid; place-items: center; background: var(--muted); border-radius: 5px; font-size: 12px; }
+  .ac-item .ac-name { flex: 1; }
+  .ac-item .ac-name .ac-trigger { color: var(--muted-fg); margin-right: 1px; }
+  .ac-item .ac-desc { color: var(--muted-fg); font-size: 11px; }
+  .ac-item .ac-hint { font-size: 10px; color: var(--muted-fg); margin-left: 6px; }
+
+  /* 字段行（截止等） */
+  .field-row { display: grid; grid-template-columns: 70px 1fr; gap: 12px; align-items: center; margin-top: 14px; }
+  .field-row .label-cell { font-size: 12px; color: var(--muted-fg); }
+  .field-row .control { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .quick-chip { padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; background: var(--card); cursor: pointer; }
+  .quick-chip:hover { background: var(--muted); }
+  .quick-chip[data-checked="true"] { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+  .date-input { width: 140px; }
+
+  /* 周期性 toggle 行 */
+  .recurring-row { margin-top: 14px; padding: 10px 12px; background: var(--muted); border-radius: 6px; }
+  .recurring-row .rec-label { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .recurring-row input[type="checkbox"] { margin: 0; }
+  .recurring-row .rec-label span { font-size: 13px; font-weight: 500; }
+  .recurring-row .rec-edit { font-size: 12px; color: var(--blue, #2563eb); margin-top: 6px; display: none; }
+  .recurring-row[data-on="true"] .rec-edit { display: block; }
+
+  details.optional { margin-top: 14px; }
+  details.optional summary { font-size: 12px; color: var(--muted-fg); cursor: pointer; padding: 4px 0; user-select: none; }
+  details.optional summary:hover { color: var(--fg); }
+  details.optional textarea { margin-top: 8px; min-height: 60px; resize: vertical; font: inherit; font-size: 13px; }
+
+  /* ---------- ⌘K 命令面板 ---------- */
+  .cmdk-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 /.4); z-index: 60; animation: fadeIn .12s; }
+  .cmdk { position: fixed; top: 20%; left: 50%; transform: translateX(-50%); width: 560px; background: var(--card); border-radius: 12px; box-shadow: var(--shadow-lg); z-index: 61; overflow: hidden; animation: slideUp .14s; }
+  .cmdk input { width: 100%; border: 0; border-bottom: 1px solid var(--border); padding: 14px 18px; font-size: 15px; outline: none; }
+  .cmdk .list { max-height: 320px; overflow-y: auto; padding: 6px; }
+  .cmdk .item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .cmdk .item:hover, .cmdk .item[data-active="true"] { background: var(--muted); }
+  .cmdk .item .icon { width: 24px; height: 24px; display: grid; place-items: center; background: var(--muted); border-radius: 6px; font-size: 13px; }
+  .cmdk .item .desc { color: var(--muted-fg); font-size: 12px; margin-left: auto; }
+  .cmdk .footer { padding: 8px 14px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted-fg); display: flex; gap: 12px; }
+
+  /* ---------- 侧抽屉 ---------- */
+  .sheet-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 /.3); z-index: 70; animation: fadeIn .12s; }
+  .sheet { position: fixed; top: 0; right: 0; bottom: 0; width: 480px; max-width: 90vw; background: var(--card); box-shadow: var(--shadow-lg); z-index: 71; display: flex; flex-direction: column; animation: slideInRight .18s; }
+  .sheet header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .sheet header h3 { font-size: 14px; font-weight: 600; margin: 0; }
+  .sheet .body { flex: 1; overflow-y: auto; padding: 16px 18px; }
+  .sheet .footer { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+  .variant-tabs { display: flex; gap: 4px; padding: 4px; background: var(--muted); border-radius: 6px; margin-bottom: 14px; }
+  .variant-tabs button { flex: 1; font: inherit; font-size: 12px; font-weight: 500; padding: 5px 10px; border: 0; background: transparent; color: var(--muted-fg); border-radius: 4px; cursor: pointer; }
+  .variant-tabs button[aria-selected="true"] { background: var(--card); color: var(--fg); box-shadow: var(--shadow-sm); }
+
+  .section-title { font-size: 12px; font-weight: 600; margin: 0 0 8px; color: var(--fg); }
+  .section { margin-bottom: 14px; }
+  .freq-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 12px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--card); cursor: pointer; }
+  .freq-tile:hover { border-color: var(--muted-fg); }
+  .freq-tile[data-checked="true"] { border-color: var(--primary); background: #f4f4f5; }
+  .freq-tile .icon { font-size: 18px; margin-bottom: 2px; }
+  .freq-tile .name { font-size: 12px; font-weight: 500; }
+  .day-chip { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; cursor: pointer; background: var(--card); user-select: none; }
+  .day-chip:hover { background: var(--muted); }
+  .day-chip[data-checked="true"] { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+  .preview-box { background: var(--muted); border: 1px dashed var(--border); border-radius: 6px; padding: 10px 12px; margin-top: 14px; }
+  .preview-rule { font-size: 13px; font-weight: 600; }
+  .preview-meta { font-size: 11px; color: var(--muted-fg); margin-top: 2px; line-height: 1.5; }
+  .preview-meta code { font-size: 10px; background: var(--card); padding: 1px 4px; border-radius: 3px; border: 1px solid var(--border); }
+  .preset-card { padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); cursor: pointer; text-align: left; width: 100%; }
+  .preset-card:hover { border-color: var(--muted-fg); }
+  .preset-card[data-checked="true"] { border-color: var(--primary); background: #f4f4f5; }
+  .preset-card .preset-name { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+  .preset-card .preset-desc { font-size: 11px; color: var(--muted-fg); }
+
+  /* ---------- Toast ---------- */
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--primary); color: var(--primary-fg); padding: 10px 16px; border-radius: 8px; box-shadow: var(--shadow-lg); font-size: 13px; display: flex; align-items: center; gap: 12px; z-index: 90; animation: slideUp .18s; }
+  .toast .undo { color: #93c5fd; background: transparent; border: 0; cursor: pointer; font-size: 13px; font: inherit; }
+  .toast .undo:hover { text-decoration: underline; }
+
+  [hidden] { display: none !important; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes slideUp { from { opacity: 0; transform: translate(-50%, -45%); } to { opacity: 1; transform: translate(-50%, -50%); } }
+  @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
+</style>
+</head>
+<body>
+
+<!-- 示例数据横幅 -->
+<div class="sample-banner">
+  <span>⚠️</span>
+  <span>v3 原型：主弹窗的人员 / 项目下拉换成内联 <code style="font-family:monospace;background:#fffbeb;padding:1px 4px;border-radius:3px">@</code> / <code style="font-family:monospace;background:#fffbeb;padding:1px 4px;border-radius:3px">#</code> autocomplete（滴答清单风格）。周期 toggle 直接跳抽屉，不再展示内联摘要。</span>
+  <span class="spacer"></span>
+  <span>按 <span class="kbd">⌘N</span> / <span class="kbd">⌘K</span> 体验</span>
+</div>
+
+<!-- 顶栏（任意页面） -->
+<header class="appbar">
+  <div class="brand"><div class="logo">科</div><span>科务通</span></div>
+  <div class="tabs">
+    <button aria-selected="true">今日</button>
+    <button aria-selected="false">人员</button>
+    <button aria-selected="false">项目</button>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn btn-outline" onclick="openCmdK()" style="padding:5px 10px;font-size:12px;color:var(--muted-fg)">
+    🔍 <span style="margin:0 6px">搜索或新建…</span><span class="kbd">⌘K</span>
+  </button>
+  <button class="btn btn-primary" onclick="openCreate()">+ 新建任务</button>
+</header>
+
+<!-- 页面占位 -->
+<main class="page">
+  <h1>今日 · 2026-09-10</h1>
+  <p class="sub">这是「今日」tab 的占位内容。重点是右上角的「+ 新建任务」按钮在任何页面都能用。</p>
+  <div class="stub-card">（今日视图的真正内容会渲染在这里——逾期、今天、明天、本周剩余、周期性实例…）</div>
+</main>
+
+<div class="shortcut-hint">按 <span class="kbd">⌘N</span> 随时新建 · <span class="kbd">⌘K</span> 命令面板</div>
+
+<!-- ========== 主对话框 ========== -->
+<div class="dialog-backdrop" id="dialog-backdrop" hidden onclick="closeCreateIfBackdrop()"></div>
+<div class="dialog" id="create-dialog" hidden>
+  <header>
+    <h2>新建任务</h2>
+    <button class="close-x" onclick="closeCreate()" aria-label="关闭">×</button>
+  </header>
+  <div class="body">
+    <!-- 标题（含 autocomplete） -->
+    <div class="title-wrap">
+      <div class="title-input" contenteditable="true" id="task-title"
+           data-placeholder="任务标题，输入 @ 选人员，# 选项目…"
+           oninput="onTitleInput()" onkeydown="onTitleKeydown(event)"></div>
+      <div class="ac-popup" id="ac-popup" hidden>
+        <div id="ac-list"></div>
+      </div>
+    </div>
+
+    <!-- 截止 -->
+    <div class="field-row">
+      <span class="label-cell">截止</span>
+      <div class="control">
+        <button class="quick-chip" onclick="setDue('today', this)" data-checked="false">今天</button>
+        <button class="quick-chip" onclick="setDue('tomorrow', this)" data-checked="false">明天</button>
+        <button class="quick-chip" onclick="setDue('week', this)" data-checked="true">一周后</button>
+        <button class="quick-chip" onclick="setDue('none', this)" data-checked="false">无</button>
+        <input class="input date-input" type="date" id="due-date">
+      </div>
+    </div>
+
+    <!-- 周期性 -->
+    <div class="recurring-row" id="recurring-row" data-on="false">
+      <label class="rec-label">
+        <input type="checkbox" id="recurring-toggle" onchange="onRecurringToggle()">
+        <span>设为周期性任务</span>
+      </label>
+      <a class="rec-edit" href="#" onclick="event.preventDefault();openSheet()">重新编辑规则 →</a>
+    </div>
+
+    <!-- 描述（折叠） -->
+    <details class="optional">
+      <summary>添加描述（可选）</summary>
+      <textarea class="input" placeholder="任务的详细描述…"></textarea>
+    </details>
+  </div>
+  <div class="footer">
+    <span class="left-hint"><span class="kbd">Enter</span> 提交 · <span class="kbd">Esc</span> 取消</span>
+    <div class="right">
+      <button class="btn btn-ghost" onclick="closeCreate()">取消</button>
+      <button class="btn btn-primary" onclick="submitTask()">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== ⌘K 命令面板 ========== -->
+<div class="cmdk-backdrop" id="cmdk-backdrop" hidden onclick="closeCmdK()"></div>
+<div class="cmdk" id="cmdk" hidden>
+  <input placeholder="搜索任务、人员、项目或输入命令…" id="cmdk-input" autofocus>
+  <div class="list" id="cmdk-list">
+    <div class="item" data-active="true" onclick="closeCmdK();openCreate()">
+      <div class="icon">＋</div>
+      <span><strong>新建任务</strong></span>
+      <span class="desc">未指定标题</span>
+    </div>
+    <div class="item" onclick="closeCmdK();openCreate({recurring:true})">
+      <div class="icon">🔁</div>
+      <span>新建<strong>周期性</strong>任务</span>
+      <span class="desc">直接打开规则编辑器</span>
+    </div>
+    <div class="item"><div class="icon">🔍</div><span>搜索任务标题…</span><span class="desc">FTS5 全文</span></div>
+    <div class="item"><div class="icon">👤</div><span>跳转到「张三」</span><span class="desc">人员</span></div>
+    <div class="item"><div class="icon">📁</div><span>跳转到「Q4 业务汇报」</span><span class="desc">项目</span></div>
+  </div>
+  <div class="footer">
+    <span><span class="kbd">↑</span><span class="kbd">↓</span> 选择</span>
+    <span><span class="kbd">Enter</span> 打开</span>
+    <span><span class="kbd">Esc</span> 关闭</span>
+  </div>
+</div>
+
+<!-- ========== 侧抽屉（规则编辑器） ========== -->
+<div class="sheet-backdrop" id="sheet-backdrop" hidden onclick="closeSheet()"></div>
+<aside class="sheet" id="rule-sheet" hidden>
+  <header>
+    <h3>配置周期性规则</h3>
+    <button class="close-x" onclick="closeSheet()" aria-label="关闭" style="background:transparent;border:0;color:var(--muted-fg);font-size:20px;cursor:pointer;padding:0;width:28px;height:28px;border-radius:6px">×</button>
+  </header>
+  <div class="body">
+    <div class="variant-tabs">
+      <button aria-selected="true" onclick="setSheetVariant('A')" id="vt-A">A 频率向导</button>
+      <button aria-selected="false" onclick="setSheetVariant('B')" id="vt-B">B 全字段</button>
+      <button aria-selected="false" onclick="setSheetVariant('C')" id="vt-C">C 预设</button>
+    </div>
+
+    <!-- 变体 A：频率先行 -->
+    <div id="sheet-A">
+      <div class="section">
+        <div class="section-title">① 频率</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+          <button class="freq-tile" onclick="A_setFreq('DAILY')" data-checked="false" id="sA-f-DAILY"><div class="icon">📅</div><div class="name">每天</div></button>
+          <button class="freq-tile" onclick="A_setFreq('WEEKLY')" data-checked="true" id="sA-f-WEEKLY"><div class="icon">🗓️</div><div class="name">每周</div></button>
+          <button class="freq-tile" onclick="A_setFreq('MONTHLY')" data-checked="false" id="sA-f-MONTHLY"><div class="icon">📆</div><div class="name">每月</div></button>
+          <button class="freq-tile" onclick="A_setFreq('YEARLY')" data-checked="false" id="sA-f-YEARLY"><div class="icon">🎂</div><div class="name">每年</div></button>
+        </div>
+      </div>
+      <div class="section" id="sA-weekly">
+        <div class="section-title">② 哪几天</div>
+        <div style="display:flex;gap:4px;margin-bottom:6px">
+          <button class="day-chip" data-checked="true" onclick="A_toggleDay(0)">一</button>
+          <button class="day-chip" data-checked="false" onclick="A_toggleDay(1)">二</button>
+          <button class="day-chip" data-checked="true" onclick="A_toggleDay(2)">三</button>
+          <button class="day-chip" data-checked="false" onclick="A_toggleDay(3)">四</button>
+          <button class="day-chip" data-checked="false" onclick="A_toggleDay(4)">五</button>
+          <button class="day-chip" data-checked="false" onclick="A_toggleDay(5)">六</button>
+          <button class="day-chip" data-checked="false" onclick="A_toggleDay(6)">日</button>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title">③ 时间</div>
+        <input class="input" type="time" value="08:00" style="max-width:120px">
+      </div>
+      <div class="section">
+        <div class="section-title">④ 终止</div>
+        <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
+          <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="sA-ends" checked> 持续到 <input class="input" type="date" value="2026-12-31" style="max-width:150px;margin-left:4px"></label>
+          <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="sA-ends"> 共出现 <input class="input" type="number" value="12" min="1" style="max-width:70px;margin:0 4px"> 次</label>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title">⑤ 节假日</div>
+        <div style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+          <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="sA-h" checked> 跳过</label>
+          <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="sA-h"> 顺延到下一个工作日</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 变体 B：全字段 -->
+    <div id="sheet-B" hidden>
+      <div class="section"><div class="section-title">频率</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="quick-chip">每天</button><button class="quick-chip">每周</button><button class="quick-chip" data-checked="true">每月</button><button class="quick-chip">每年</button>
+        </div>
+      </div>
+      <div class="section"><div class="section-title">每月哪天</div>
+        <input class="input" value="1, 15" placeholder="例：1, 15；填 0 表示月末">
+      </div>
+      <div class="section"><div class="section-title">时间</div>
+        <input class="input" type="time" value="09:00" style="max-width:120px">
+      </div>
+      <div class="section"><div class="section-title">时区</div>
+        <select class="input"><option>本机时区 (Asia/Shanghai)</option></select>
+      </div>
+      <div class="section"><div class="section-title">终止条件</div>
+        <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
+          <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="sB-ends"> 持续到 <input class="input" type="date" style="max-width:150px;margin-left:4px"></label>
+          <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="sB-ends" checked> 共出现 <input class="input" type="number" value="24" style="max-width:70px;margin:0 4px"> 次</label>
+        </div>
+      </div>
+      <div class="section"><div class="section-title">节假日</div>
+        <div style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+          <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="sB-h" checked> 跳过</label>
+          <label style="display:flex;align-items:center;gap:6px"><input type="radio" name="sB-h"> 顺延到下一个工作日</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 变体 C：预设 -->
+    <div id="sheet-C" hidden>
+      <div class="section"><div class="section-title">常用预设</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+          <button class="preset-card" onclick="C_pick('WEEKDAYS')" id="sC-p-WEEKDAYS" data-checked="false">
+            <div class="preset-name">每个工作日</div><div class="preset-desc">周一~五 17:00</div>
+          </button>
+          <button class="preset-card" onclick="C_pick('WEEKLY-MON')" id="sC-p-WEEKLY-MON" data-checked="false">
+            <div class="preset-name">每周一早会</div><div class="preset-desc">周一 08:30</div>
+          </button>
+          <button class="preset-card" onclick="C_pick('MONTHLY-1-15')" id="sC-p-MONTHLY-1-15" data-checked="false">
+            <div class="preset-name">每月 1 / 15 号</div><div class="preset-desc">每月 1、15 日 09:00</div>
+          </button>
+          <button class="preset-card" onclick="C_pick('MONTHLY-LAST-FRI')" id="sC-p-MONTHLY-LAST-FRI" data-checked="false">
+            <div class="preset-name">月末周五</div><div class="preset-desc">每月最后一个周五 16:00</div>
+          </button>
+        </div>
+        <button class="preset-card" onclick="C_pick('CUSTOM')" id="sC-p-CUSTOM" data-checked="true" style="text-align:center">
+          <div class="preset-name">✏️ 自定义规则</div><div class="preset-desc">手填每个字段</div>
+        </button>
+      </div>
+    </div>
+
+    <div class="preview-box">
+      <div class="preview-rule">每周一、周三 08:00</div>
+      <div class="preview-meta">
+        持续到 2026-12-31 · 时区 Asia/Shanghai · 节假日跳过<br>
+        派生 RRULE：<code>FREQ=WEEKLY;BYDAY=MO,WE;BYHOUR=8;BYMINUTE=0</code>
+      </div>
+    </div>
+  </div>
+  <div class="footer">
+    <button class="btn btn-ghost" onclick="closeSheet()">取消</button>
+    <button class="btn btn-primary" onclick="confirmRule()">确认 →</button>
+  </div>
+</aside>
+
+<!-- Toast -->
+<div class="toast" id="toast" hidden>
+  <span id="toast-msg">已创建任务</span>
+  <button class="undo" onclick="dismissToast()">撤销</button>
+</div>
+
+<script>
+/* ===== 数据 ===== */
+const PEOPLE = [
+  { name: '张三', team: '业务一组' },
+  { name: '李四', team: '业务一组' },
+  { name: '王五', team: '业务二组' },
+  { name: '赵六', team: '业务二组' },
+  { name: '孙七', team: '行政' },
+  { name: '周八', team: '行政' },
+  { name: '钱九', team: '业务一组' },
+  { name: '吴十', team: '业务二组' },
+];
+const PROJECTS = [
+  { name: 'Q4 业务汇报', status: '进行中' },
+  { name: '年度合规审计', status: '进行中' },
+  { name: '客户回访', status: '进行中' },
+  { name: 'Q3 收尾', status: '收尾中' },
+  { name: '新人 onboarding', status: '进行中' },
+  { name: '制度修订', status: '启动' },
+];
+
+/* ===== 主对话框 ===== */
+function openCreate(opts) {
+  opts = opts || {};
+  document.getElementById('create-dialog').hidden = false;
+  document.getElementById('dialog-backdrop').hidden = false;
+  if (opts.recurring) {
+    document.getElementById('recurring-toggle').checked = true;
+    document.getElementById('recurring-row').dataset.on = 'true';
+    openSheet();
+  }
+  setTimeout(() => $title().focus(), 50);
+}
+function closeCreate() {
+  document.getElementById('create-dialog').hidden = true;
+  document.getElementById('dialog-backdrop').hidden = true;
+  $title().innerHTML = '';
+  document.getElementById('recurring-toggle').checked = false;
+  document.getElementById('recurring-row').dataset.on = 'false';
+  closeAC();
+}
+function closeCreateIfBackdrop() { closeCreate(); }
+
+function setDue(kind, el) {
+  document.querySelectorAll('.quick-chip').forEach(c => c.dataset.checked = 'false');
+  el.dataset.checked = 'true';
+  // 简化映射（实际按今天日期推算）
+  const today = new Date('2026-09-10');
+  const fmt = d => d.toISOString().slice(0, 10);
+  const add = d => { const r = new Date(d); r.setDate(r.getDate() + 1); return r; };
+  const add7 = d => { const r = new Date(d); r.setDate(r.getDate() + 7); return r; };
+  const map = {
+    today: fmt(today),
+    tomorrow: fmt(add(today)),
+    week: fmt(add7(today)),
+    none: '',
+  };
+  document.getElementById('due-date').value = map[kind] || '';
+}
+function onRecurringToggle() {
+  const on = document.getElementById('recurring-toggle').checked;
+  document.getElementById('recurring-row').dataset.on = on ? 'true' : 'false';
+  if (on) openSheet();
+}
+function submitTask() {
+  const titleHTML = $title().innerHTML.trim();
+  const titleText = $title().innerText.trim();
+  const people = collectTokens('person');
+  const projects = collectTokens('project');
+  const recurring = document.getElementById('recurring-toggle').checked;
+  if (!titleText && !people.length && !projects.length) {
+    showToast('标题不能为空');
+    return;
+  }
+  let msg = '已创建';
+  if (people.length) msg += `，分配给 ${people.join('、')}`;
+  if (projects.length) msg += `，属于 ${projects.join('、')}`;
+  if (recurring) msg += '，周期性';
+  showToast(msg);
+  closeCreate();
+}
+function collectTokens(kind) {
+  return Array.from($title().querySelectorAll(`.token-${kind}`)).map(s => s.dataset.name);
+}
+
+/* ===== ⌘K ===== */
+function openCmdK() {
+  document.getElementById('cmdk').hidden = false;
+  document.getElementById('cmdk-backdrop').hidden = false;
+  setTimeout(() => document.getElementById('cmdk-input').focus(), 50);
+}
+function closeCmdK() {
+  document.getElementById('cmdk').hidden = true;
+  document.getElementById('cmdk-backdrop').hidden = true;
+}
+
+/* ===== 侧抽屉 ===== */
+let sheetVariant = 'A';
+function openSheet() {
+  document.getElementById('rule-sheet').hidden = false;
+  document.getElementById('sheet-backdrop').hidden = false;
+  setSheetVariant(sheetVariant);
+}
+function closeSheet() {
+  document.getElementById('rule-sheet').hidden = true;
+  document.getElementById('sheet-backdrop').hidden = true;
+}
+function setSheetVariant(v) {
+  sheetVariant = v;
+  for (const k of ['A','B','C']) {
+    document.getElementById('sheet-' + k).hidden = (k !== v);
+    document.getElementById('vt-' + k).setAttribute('aria-selected', k === v);
+  }
+}
+function confirmRule() {
+  closeSheet();
+  showToast('已应用周期性规则');
+}
+function A_setFreq(f) {
+  ['DAILY','WEEKLY','MONTHLY','YEARLY'].forEach(k => document.getElementById('sA-f-' + k).dataset.checked = (k === f));
+  document.getElementById('sA-weekly').hidden = (f !== 'WEEKLY');
+}
+function A_toggleDay(d) {
+  const chip = document.querySelectorAll('#sheet-A .day-chip')[d];
+  chip.dataset.checked = chip.dataset.checked === 'true' ? 'false' : 'true';
+}
+function C_pick(p) {
+  ['WEEKDAYS','WEEKLY-MON','MONTHLY-1-15','MONTHLY-LAST-FRI','CUSTOM'].forEach(k => document.getElementById('sC-p-' + k).dataset.checked = (k === p));
+}
+
+/* ===== Toast ===== */
+let toastTimer;
+function showToast(msg) {
+  document.getElementById('toast-msg').textContent = msg;
+  document.getElementById('toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(dismissToast, 4000);
+}
+function dismissToast() {
+  document.getElementById('toast').hidden = true;
+}
+
+/* ===== 内联 @ / # autocomplete ===== */
+const $title = () => document.getElementById('task-title');
+const $popup = () => document.getElementById('ac-popup');
+const $list = () => document.getElementById('ac-list');
+let acOpen = false, acKind = null, acItems = [], acIdx = 0, acQuery = '';
+
+function getTextBeforeCursor() {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return '';
+  const range = sel.getRangeAt(0);
+  const editable = $title();
+  if (!editable.contains(range.endContainer) && range.endContainer !== editable) return '';
+  const before = document.createRange();
+  before.selectNodeContents(editable);
+  before.setEnd(range.endContainer, range.endOffset);
+  return before.toString();
+}
+
+function findTrigger(text) {
+  // 找到最后一个 @ 或 #，且其后没有空白
+  const matches = [...text.matchAll(/[@#]/g)];
+  for (let i = matches.length - 1; i >= 0; i--) {
+    const idx = matches[i].index;
+    const after = text.slice(idx + 1);
+    if (after.length > 20) continue;
+    if (/[\s\n]/.test(after)) continue;
+    return { kind: text[idx], idx, query: after };
+  }
+  return null;
+}
+
+function onTitleInput() {
+  const text = getTextBeforeCursor();
+  const trigger = findTrigger(text);
+  if (!trigger) { closeAC(); return; }
+  openAC(trigger.kind, trigger.query);
+}
+
+function openAC(kind, query) {
+  const source = kind === '@' ? PEOPLE : PROJECTS;
+  const items = source.filter(p => p.name.toLowerCase().includes(query.toLowerCase())).slice(0, 6);
+  if (!items.length) { closeAC(); return; }
+  acOpen = true; acKind = kind; acQuery = query; acItems = items; acIdx = 0;
+  renderAC();
+}
+
+function renderAC() {
+  const icon = acKind === '@' ? '👤' : '📁';
+  $list().innerHTML = acItems.map((item, i) => {
+    const desc = item.team || item.status;
+    return `<div class="ac-item" data-active="${i === acIdx}" data-idx="${i}" onmousedown="event.preventDefault();selectAC(${i})">
+      <span class="ac-icon">${icon}</span>
+      <span class="ac-name"><span class="ac-trigger">${acKind}</span>${item.name}</span>
+      <span class="ac-desc">${desc}</span>
+    </div>`;
+  }).join('');
+  $popup().hidden = false;
+  // 滚动到激活项
+  const active = $list().children[acIdx];
+  if (active) active.scrollIntoView({ block: 'nearest' });
+}
+
+function selectAC(idx) {
+  if (!acItems[idx]) return;
+  const item = acItems[idx];
+  insertToken(acKind, item);
+  closeAC();
+}
+
+function closeAC() {
+  acOpen = false;
+  $popup().hidden = true;
+}
+
+function insertToken(kind, item) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const range = sel.getRangeAt(0);
+  const editable = $title();
+  const before = document.createRange();
+  before.selectNodeContents(editable);
+  before.setEnd(range.endContainer, range.endOffset);
+  const beforeText = before.toString();
+  const triggerInfo = findTrigger(beforeText);
+  if (!triggerInfo) return;
+
+  // 找到 trigger char 在 DOM 中的位置
+  let charCount = 0;
+  let triggerNode = null, triggerOffset = -1;
+  const walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT, null, false);
+  let node;
+  while ((node = walker.nextNode())) {
+    const len = node.textContent.length;
+    if (charCount + len > triggerInfo.idx) {
+      triggerNode = node;
+      triggerOffset = triggerInfo.idx - charCount;
+      break;
+    }
+    charCount += len;
+  }
+  if (!triggerNode) return;
+
+  // 替换从 trigger 到 cursor 的内容
+  const replace = document.createRange();
+  replace.setStart(triggerNode, triggerOffset);
+  replace.setEnd(range.endContainer, range.endOffset);
+
+  const span = document.createElement('span');
+  span.className = kind === '@' ? 'token-person' : 'token-project';
+  span.contentEditable = 'false';
+  span.textContent = kind + item.name;
+  span.dataset.kind = kind;
+  span.dataset.name = item.name;
+
+  const space = document.createTextNode(' ');
+  replace.deleteContents();
+  replace.insertNode(space);
+  replace.insertNode(span);
+
+  // 移动光标到 space 之后
+  const newRange = document.createRange();
+  newRange.setStartAfter(space);
+  newRange.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(newRange);
+}
+
+function onTitleKeydown(e) {
+  if (acOpen) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault(); acIdx = (acIdx + 1) % acItems.length; renderAC();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault(); acIdx = (acIdx - 1 + acItems.length) % acItems.length; renderAC();
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault(); selectAC(acIdx);
+    } else if (e.key === 'Escape') {
+      e.preventDefault(); closeAC();
+    }
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    submitTask();
+  }
+}
+
+// 粘贴为纯文本
+$title().addEventListener('paste', (e) => {
+  e.preventDefault();
+  const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+  document.execCommand('insertText', false, text);
+});
+
+/* ===== 全局快捷键 ===== */
+document.addEventListener('keydown', (e) => {
+  const meta = e.metaKey || e.ctrlKey;
+  if (meta && e.key === 'n') { e.preventDefault(); openCreate(); }
+  if (meta && e.key === 'k') { e.preventDefault(); openCmdK(); }
+  if (e.key === 'Escape') {
+    if (!document.getElementById('rule-sheet').hidden) closeSheet();
+    else if (!document.getElementById('cmdk').hidden) closeCmdK();
+    else if (!document.getElementById('create-dialog').hidden) closeCreate();
+  }
+});
+
+/* ===== 初始化 ===== */
+setDue('week', document.querySelectorAll('.quick-chip')[2]); // 默认选中「一周后」
+</script>
+
+</body>
+</html>

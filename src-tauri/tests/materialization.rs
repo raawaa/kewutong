@@ -143,6 +143,20 @@ fn monthly_day1_rule(behavior: HolidayBehavior) -> StructuredRule {
     }
 }
 
+fn quarterly_rule_struct() -> StructuredRule {
+    StructuredRule {
+        freq: Freq::Yearly,
+        byday_mask: 0,
+        bymonthday: Some(vec![1]),
+        bymonth: Some(vec![1, 4, 7, 10]),
+        byhour: 10,
+        byminute: 0,
+        iana_zone: "Asia/Shanghai".into(),
+        ends: EndsSpec::On { date: "2030-01-01".into() },
+        holiday_behavior: HolidayBehavior::Skip,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 纯函数侧：rrule / 边界
 // ---------------------------------------------------------------------------
@@ -151,7 +165,7 @@ fn monthly_day1_rule(behavior: HolidayBehavior) -> StructuredRule {
 /// 已知日期集合,钉死 expand_rule 的结果。
 #[test]
 fn expand_weekly_与_手算一致() {
-    let days = expand_rule(&weekly_rule(), date("2026-09-07"), date("2026-09-30")).unwrap();
+    let days = expand_rule(&weekly_rule(), date("2026-09-07"), date("2026-09-30"), 0).unwrap();
     // 9/7 (Mon) 起的周一:9/7, 9/14, 9/21, 9/28
     assert_eq!(
         days,
@@ -170,13 +184,77 @@ fn expand_monthly_月末_0_与_rrule_bymonthday_负_1_一致() {
     let mut rule = monthly_day1_rule(HolidayBehavior::Skip);
     rule.bymonthday = Some(vec![0]);
     rule.ends = EndsSpec::On { date: "2027-12-31".into() };
-    let days = expand_rule(&rule, date("2026-01-01"), date("2026-12-31")).unwrap();
+    let days = expand_rule(&rule, date("2026-01-01"), date("2026-12-31"), 0).unwrap();
     // 12 个月每月最后一天
     assert_eq!(days.len(), 12);
     assert_eq!(days[0], date("2026-01-31"));
     assert_eq!(days[1], date("2026-02-28")); // 非闰年
     assert_eq!(days[3], date("2026-04-30"));
     assert_eq!(days[11], date("2026-12-31"));
+}
+
+/// 验收点（外部参考）:用 `rrule` crate 展开同一 RRULE,确认自家
+/// `expand_rule` 与 RFC 5545 一致——`0 → -1` 的翻译正确。
+#[test]
+fn expand_与_外部_rrule_crate_对照_语义一致() {
+    use rrule::RRuleSet;
+
+    /// 跑 rrule 库,返回 [start, end] 内的本地日期列表。
+    fn run_rrule(rrule_text: &str, start: NaiveDate, end: NaiveDate) -> Vec<NaiveDate> {
+        let dt_start = start.and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let rrule_text = format!(
+            "DTSTART:{}\nRRULE:{}",
+            dt_start.format("%Y%m%dT%H%M%SZ"),
+            rrule_text
+        );
+        let set: RRuleSet = rrule_text.parse().expect("rrule 解析");
+        // rrule 0.14 限制:每次 all() 拿到的最大条数(同一年内大量展开
+        // 时,需要抬高这个)。3000 够所有用例。
+        let result = set.all(3000);
+        result
+            .dates
+            .into_iter()
+            .map(|d| d.with_timezone(&chrono::Utc).date_naive())
+            .filter(|d| *d >= start && *d <= end)
+            .collect()
+    }
+
+    // weekly MO
+    {
+        let rrule_text = "FREQ=WEEKLY;BYDAY=MO;BYHOUR=8;BYMINUTE=0;UNTIL=20261231T235959Z";
+        let ours = expand_rule(&weekly_rule(), date("2026-09-07"), date("2026-09-30"), 0).unwrap();
+        let theirs = run_rrule(rrule_text, date("2026-09-07"), date("2026-09-30"));
+        assert_eq!(ours, theirs, "weekly MO 9月与 rrule 不一致");
+    }
+
+    // monthly 1
+    {
+        let rrule_text = "FREQ=MONTHLY;BYMONTHDAY=1;BYHOUR=9;BYMINUTE=0;UNTIL=20261231T235959Z";
+        let ours = expand_rule(&monthly_day1_rule(HolidayBehavior::Skip), date("2026-09-01"), date("2026-12-31"), 0).unwrap();
+        let theirs = run_rrule(rrule_text, date("2026-09-01"), date("2026-12-31"));
+        assert_eq!(ours, theirs, "monthly 1 与 rrule 不一致");
+    }
+
+    // monthly 月末 (BYMONTHDAY=-1) —— 验证 0 → -1 的翻译
+    {
+        let rrule_text = "FREQ=MONTHLY;BYMONTHDAY=-1;BYHOUR=16;BYMINUTE=30;UNTIL=20270630T235959Z";
+        let mut rule = monthly_day1_rule(HolidayBehavior::Skip);
+        rule.bymonthday = Some(vec![0]);
+        rule.ends = EndsSpec::On { date: "2027-06-30".into() };
+        let ours = expand_rule(&rule, date("2026-09-01"), date("2027-06-30"), 0).unwrap();
+        let theirs = run_rrule(rrule_text, date("2026-09-01"), date("2027-06-30"));
+        assert_eq!(ours, theirs, "monthly 月末(0/-1)与 rrule 不一致");
+    }
+
+    // yearly 1/4/7/10 月 1 号
+    {
+        let rrule_text = "FREQ=YEARLY;BYMONTHDAY=1;BYMONTH=1,4,7,10;BYHOUR=10;BYMINUTE=0;UNTIL=20300101T235959Z";
+        let mut rule = quarterly_rule_struct();
+        rule.ends = EndsSpec::On { date: "2030-01-01".into() };
+        let ours = expand_rule(&rule, date("2026-01-01"), date("2027-12-31"), 0).unwrap();
+        let theirs = run_rrule(rrule_text, date("2026-01-01"), date("2027-12-31"));
+        assert_eq!(ours, theirs, "yearly 1/4/7/10 与 rrule 不一致");
+    }
 }
 
 /// 跨日边界：墙钟 08:00 Asia/Shanghai = UTC 00:00 同日,物化后
@@ -432,6 +510,60 @@ fn materialize_ends_after_n_到次即停() {
     let counts = materialize_from_state(fx.app.state::<kewutong_lib::state::AppState>().inner()).expect("物化");
     // 9/14, 9/21, 9/28 → 3 个
     assert_eq!(counts.kept, 3);
+}
+
+/// 验收点(对应 Spec 反馈):`ends_after_n` 是**全局计数**,跨物化窗
+/// 口累计。第一窗口物化 3 个后,第二窗口不会再生成。
+#[test]
+fn materialize_ends_after_n_跨窗口_累计_到点即停() {
+    let clock = Arc::new(kewutong_lib::clock::FixedClock::at("2026-09-10 09:00:00"));
+    let fx = fresh_state_with_team_owner(clock.clone());
+    let mut rule = weekly_rule();
+    rule.ends = EndsSpec::After { n: 5 };
+    upsert_recurring_template(
+        fx.app.state(),
+        UpsertRecurringTemplateArgs {
+            id: None,
+            name: "五次截止".into(),
+            rule,
+            project_id: None,
+            sub_team_id: Some(fx.sub_team_id),
+            notes: None,
+        },
+    )
+    .expect("建");
+
+    // 第一窗口 9/10-12/3:5 个 Monday 落在 ends_after_n=5 上限内。
+    // 9/14, 9/21, 9/28, 10/5, 10/12 都被取到;但 10/5 在国庆 (10/1-10/7
+    // seed holiday) → SKIP 不生成。最终 4 Keep + 1 Skip,合计 5 个
+    // occurrence,占满 n=5。
+    let c1 = materialize_from_state(fx.app.state::<kewutong_lib::state::AppState>().inner()).expect("首次");
+    assert_eq!(c1.kept, 4, "首窗 4 Keep(10/5 SKIP)");
+    assert_eq!(c1.skipped, 1, "10/5 在国庆被 SKIP");
+
+    // 5 周后跨周再触发:emitted=4 仍 < 5,新窗口 11/30 之后的 Monday
+    // 进来——但窗口起点 10/15 之前已经生成的 (9/14, 9/21, 9/28, 10/12)
+    // 算 emitted,新窗口起点 10/15 起的 Monday 中,只剩 10/19 一个能
+    // 物化(5 - 4 = 1 个剩余)。
+    clock.advance(chrono::TimeDelta::days(35));
+    let c2 = materialize_from_state(fx.app.state::<kewutong_lib::state::AppState>().inner()).expect("跨周");
+    assert_eq!(c2.kept, 1, "全局已物化 4,本窗口补 1 个 = n");
+    assert_eq!(c2.kept + c1.kept, 5, "全局累计 = ends_after_n");
+
+    // 再触发一次:emitted=5 == n,完全停止
+    let c3 = materialize_from_state(fx.app.state::<kewutong_lib::state::AppState>().inner()).expect("再触发");
+    assert_eq!(c3.kept, 0, "已到 n=5 上限,停止");
+
+    let state = fx.app.state::<kewutong_lib::state::AppState>();
+    let conn = state.db().expect("conn");
+    let total: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM task WHERE recurring_template_id IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count");
+    assert_eq!(total, 5, "全局累计严格 ≤ n");
 }
 
 // ---------------------------------------------------------------------------
