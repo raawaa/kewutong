@@ -18,7 +18,7 @@
 //! - 1 = 参数错误 / 网络失败 / 解析失败 / 写入失败
 
 use chrono::{Datelike, NaiveDate};
-use kewutong_lib::holiday::{main_festival_name, merge_into_ranges, HolidayFile};
+use kewutong_lib::holiday::{main_festival_name, merge_into_ranges, HolidayEntry, HolidayFile};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fs;
@@ -239,6 +239,13 @@ fn map_holiday_cn_to_file(year: i32, parsed: HolidayCnFile) -> HolidayFile {
 }
 
 fn map_nager_at_to_file(year: i32, holidays: Vec<NagerAtHoliday>) -> HolidayFile {
+    // date.nager.at 仅给「法定假首日」，无调休、无节日名——ADR 0003 §数据源
+    // 备 + §响应映射 point 6。备源条目 `name: None`，由 `HolidayCalendar` 查询
+    // 接口对 `None` 友好（get_holiday_name → None）。workdays 为空。
+    //
+    // 绝不按月份猜节日名:猜错就把伪造的名字写进 CONTEXT.md 称为「权威」的
+    // 种子 JSON,污染主源 holiday-cn 真实数据。当年文件应主源覆盖,此路径
+    // 仅供 2028+ 真无 holiday-cn 时兜底。
     let mut dates: Vec<NaiveDate> = holidays
         .into_iter()
         .filter_map(|h| NaiveDate::parse_from_str(&h.date, "%Y-%m-%d").ok())
@@ -247,38 +254,34 @@ fn map_nager_at_to_file(year: i32, holidays: Vec<NagerAtHoliday>) -> HolidayFile
     dates.sort();
     dates.dedup();
 
-    // date.nager.at 仅给「法定假首日」，无调休、无节日名——workdays 为空。
     let mut holidays = Vec::new();
-    let mut by_name: BTreeMap<String, Vec<NaiveDate>> = BTreeMap::new();
-    // 备源无 name 字段；按月份粗分（1=元旦,4=清明,5=劳动,6=端午,9=中秋,10=国庆）
-    // ——仅为调试可读;实际合并只看日期,不依赖 name。
-    for date in &dates {
-        let guess = guess_nager_at_name(*date);
-        by_name.entry(guess).or_default().push(*date);
+    let mut range_start = dates.first().copied().unwrap_or_else(|| unreachable!());
+    let mut range_end = range_start;
+    for &day in &dates[1..] {
+        if day == range_end.succ_opt().unwrap_or(day) {
+            range_end = day;
+        } else {
+            holidays.push(HolidayEntry {
+                start: range_start,
+                end: range_end,
+                name: None,
+            });
+            range_start = day;
+            range_end = day;
+        }
     }
-    for (name, days) in &mut by_name {
-        days.sort();
-        days.dedup();
-        holidays.extend(merge_into_ranges(days, name));
+    if !dates.is_empty() {
+        holidays.push(HolidayEntry {
+            start: range_start,
+            end: range_end,
+            name: None,
+        });
     }
     holidays.sort_by_key(|entry| entry.start);
 
     HolidayFile {
         holidays,
         workdays: Vec::new(),
-    }
-}
-
-fn guess_nager_at_name(date: NaiveDate) -> String {
-    match (date.month(), date.day()) {
-        (1, 1) => "元旦".into(),
-        (_, d) if date.month() == 4 && (d == 4 || d == 5 || d == 6) => "清明节".into(),
-        (5, _) => "劳动节".into(),
-        (_, _) if date.month() == 6 => "端午节".into(),
-        (_, _) if date.month() == 9 && date.day() >= 15 && date.day() <= 21 => "中秋节".into(),
-        (10, _) => "国庆节".into(),
-        (2, _) => "春节".into(),
-        _ => format!("{}-{}", date.format("%m-%d"), date.year()),
     }
 }
 
@@ -518,6 +521,11 @@ mod tests {
         assert!(file.workdays.is_empty());
         // 至少两条 holiday（元旦、劳动节）
         assert!(file.holidays.len() >= 2);
+        // 备源 ADR §数据源 备 + §响应映射 point 6:无 name 字段,条目
+        // `name: None`——不按月份猜节日名,伪造名字会污染种子 JSON。
+        for entry in &file.holidays {
+            assert!(entry.name.is_none(), "备源条目不应有 name,实际: {:?}", entry.name);
+        }
     }
 
     #[test]

@@ -7,7 +7,7 @@
 ## 文件位置与打包
 
 - 路径：`holidays/cn-<year>.json`，仓库根
-- Tauri 配置：`src-tauri/tauri.conf.json` `bundle.resources: ["holidays/*"]`（glob 覆盖所有年份文件）
+- Tauri 配置：`src-tauri/tauri.conf.json` `bundle.resources: ["../holidays/*"]`（相对 `tauri.conf.json` 的所在目录 `src-tauri/` 上跳一级到仓库根;glob 覆盖所有年份文件;单 crate 布局下"裸 `holidays/*`"会解析到 `src-tauri/holidays/`,写错）
 - 文件随 App 版本一起打包到二进制；JSON 改动随发版走
 - `.gitignore` 不排除 `holidays/`——它们是 git-tracked 数据，每年一次 commit
 
@@ -94,7 +94,10 @@ pub struct HolidayFile {
 
 - 纯 `serde` derive；`#[serde(deny_unknown_fields)]` 拒绝未知字段
 - 日期解析用 `chrono::NaiveDate` + 自定义 `serde` visitor
-- 不引入 JSON Schema 校验、不写手写一致性检查（start <= end、无重叠）
+- 不引入 JSON Schema 校验、不写手写一致性检查（无重叠）
+- **唯一例外**：`expand_days` 对 `start > end` 静默退化为空——畸形输入会让
+  区间展开死循环,这个点非查不可;其余 (start <= end、无重叠) 仍交给
+  git diff review
 - 文件读取失败 → 启动错误（具体策略由 App main 决定；建议 panic-on-init 或显式 Result）
 - 解析层零容错，垃圾进 = 垃圾出：trust 抓取脚本 + 人工 git diff review
 
@@ -143,7 +146,10 @@ pub struct HolidayFile {
 
 - 频率：每年一次
 - 时机：12 月初（State Council 公告通常 11 月底；+7 天缓冲）
-- 执行者：手动跑 `cargo xtask fetch-holidays <year>`（xtask 二进制，路径 `tools/fetch-holidays/`）
+- 执行者：手动跑 `cargo xtask fetch-holidays <year>`（xtask 二进制,当前位于
+  `src-tauri/src/bin/xtask.rs`——单 crate 布局下没拆 workspace;ADR 早
+  期写 `tools/fetch-holidays/` 是预期 workspace 化后的路径,留待后续
+  迁回）
 - 流程：
   1. xtask 抓取 → 生成 `holidays/cn-<year>.json` 到 git working tree
   2. 维护者 `git diff` 人工 review
@@ -178,7 +184,9 @@ pub struct HolidayFile {
 
 ### 代码层
 
-- `tools/fetch-holidays/`：xtask 二进制，依赖 `ureq` + `serde_json` + `chrono`（无 async runtime；同步拉取 + JSON 解析）
+- `tools/fetch-holidays/`（→ 实际暂居 `src-tauri/src/bin/xtask.rs`）：xtask
+  二进制,依赖 `ureq`（含 `tls` + `gzip` 默认 feature）+ `serde_json` +
+  `chrono`（无 async runtime；同步拉取 + JSON 解析）
 - `holidays/cn-<year>.json`：git-tracked，每年 commit 一次
 - App 启动加载：枚举 `holidays/cn-*.json`，挑出当前年 + 下一年，构造内存 `BTreeMap<NaiveDate, DayKind>` 或等价结构
 - 物化层集成：ADR 0002 的 SKIP/SHIFT 行为查这张内存表
@@ -194,7 +202,7 @@ pub struct HolidayFile {
 
 - 上游：[ADR 0002](./0002-recurring-time-rule.md) § 节假日（SKIP/SHIFT 语义）
 - 上游：[ADR 0001](./0001-sqlite-schema.md) § 后果（#12 输入约束）
-- 下游：实现阶段 `tools/fetch-holidays/`（xtask 二进制）
+- 下游：实现阶段 `tools/fetch-holidays/`（xtask 二进制,实际位于 `src-tauri/src/bin/xtask.rs`）
 - 下游：实现阶段 App 启动加载逻辑 + 物化层查询接口
 
 ## ADR 衔接链

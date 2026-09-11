@@ -50,7 +50,9 @@ impl AppState {
             .map_err(|_| AppError::Internal("数据库连接锁已被污染".into()))
     }
 
-    /// 借出节假日日历的可变引用。覆盖写后命令原地更新,读命令 clone 出 Arc。
+    /// 借出节假日日历的独占锁（`MutexGuard`）。覆盖写命令原地更新,
+    /// 读命令拿到 guard 后即持锁——单写者本机场景下不存在并发读,
+    /// 不需要 clone Arc。
     pub fn calendar(&self) -> Result<MutexGuard<'_, HolidayCalendar>> {
         self.calendar
             .lock()
