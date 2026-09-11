@@ -16,6 +16,7 @@
 use crate::clock::{parse_sql_date, to_sql_date};
 use crate::commands::validation::{ensure_row_exists, require_non_blank, trim_to_option};
 use crate::error::{AppError, Result};
+use crate::materialization::MATERIALIZATION_WINDOW_DAYS;
 use crate::state::AppState;
 use chrono::{Days, Datelike, NaiveDate};
 use rusqlite::{params, OptionalExtension, Row};
@@ -55,6 +56,18 @@ impl TaskStatus {
 }
 
 /// 任务 DTO。`blocked_*` 与 `waiting_on_person_id` 在非阻塞态均为 `None`。
+///
+/// 一次性 task 与周期性 instance 走同一 DTO:
+/// - 一次性:`recurring_template_id` / `scheduled_at` / `effective_date`
+///   都为 `None` / `due_date`;`is_recurring` 恒为 `false`。
+/// - instance:`recurring_template_id` 与 `scheduled_at` 有值,
+///   `effective_date = scheduled_at` 转成本地日期(Asia/Shanghai
+///   `+8h`);`is_recurring` 恒为 `true`,UI 据此在标题前拼 ↻ 标记。
+///   `original_scheduled_at` 在 SHIFT 路径上指向"原定日",用于回溯。
+///   一次性 task 该列为 `None`。
+///
+/// `due_date` 与 `scheduled_at` 在 DTO 里共存是为了前端不需在两侧
+/// 各自展开——一个字段按角色走默认值就行。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
@@ -65,6 +78,17 @@ pub struct Task {
     pub owner_person_id: i64,
     pub project_id: Option<i64>,
     pub due_date: Option<String>,
+    pub recurring_template_id: Option<i64>,
+    pub scheduled_at: Option<String>,
+    pub original_scheduled_at: Option<String>,
+    pub rescheduled_from_id: Option<i64>,
+    /// `true` = instance（带 ↻ 标记）。前端按这个布尔决定标题前缀,
+    /// 不必自己判断 `recurring_template_id IS NOT NULL`。
+    pub is_recurring: bool,
+    /// 视图按本地日历日分桶的「有效日期」（`YYYY-MM-DD`）。一次性走
+    /// `due_date`;instance 走 `date(scheduled_at, '+8 hours')`。
+    /// UI 永远按这个字段排序,无需关心源列是 due 还是 scheduled。
+    pub effective_date: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub blocked_at: Option<String>,
@@ -313,8 +337,11 @@ pub fn list_tasks(state: State<'_, AppState>, args: ListTasksArgs) -> Result<Vec
     let conn = state.db()?;
 
     let mut sql = String::from(
-        "SELECT id, title, description, status, owner_person_id, project_id, due_date,
-                created_at, updated_at, blocked_at, blocked_reason, waiting_on_person_id
+        "SELECT id, title, description, status, owner_person_id, project_id, due_date, \
+                created_at, updated_at, blocked_at, blocked_reason, \
+                recurring_template_id, scheduled_at, original_scheduled_at, rescheduled_from_id, \
+                COALESCE(due_date, date(scheduled_at, '+8 hours')) AS effective_date, \
+                waiting_on_person_id \
            FROM task",
     );
     let mut where_clauses: Vec<&str> = Vec::new();
@@ -400,11 +427,13 @@ pub struct TodayWeekBuckets {
 
 /// 「今日 / 本周」视图的 DTO。
 ///
-/// 瓦片数 + 四列桶，一次 RPC 拉完整张看板。命令层负责：
+/// 瓦片数 + 四列桶 + 物化窗口元信息,一次 RPC 拉完整张看板。命令层负责：
 /// - 从可注入 [`Clock`] 取「今天」（已带本地时区换算）
 /// - 算「本周日」边界
 /// - 按桶跑 4 次 SELECT,各自命中 `(due_date) WHERE due_date IS NOT NULL` 部分索引
 /// - 跑 3 次 COUNT 算瓦片数
+/// - 算 `materialization_window_end` = 今天 + 12 周,告诉前端"超出
+///   那天之后没物化",UI 给「未物化」提示
 ///
 /// 前端不自己算日期、不自己分桶——业务逻辑零在 TS 里。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -412,6 +441,9 @@ pub struct TodayWeekBuckets {
 pub struct TodayWeek {
     pub counts: TodayWeekCounts,
     pub buckets: TodayWeekBuckets,
+    /// 物化窗口右端（今天 + 12 周）。UI 在此日期之后的「下周/下下周」
+    /// 等视图给"未物化,可能没安排"提示,而不是空白或错误。
+    pub materialization_window_end: String,
 }
 
 /// 「今日 / 本周」视图查询（ticket #21 默认落地页）。
@@ -460,8 +492,21 @@ pub fn today_week(state: State<'_, AppState>) -> Result<TodayWeek> {
             tomorrow: tomorrow_bucket,
             this_week_rest,
         },
+        materialization_window_end: to_sql_date(
+            today
+                .checked_add_days(Days::new(MATERIALIZATION_WINDOW_DAYS as u64))
+                .ok_or_else(|| AppError::Internal("today+12 周越界".into()))?,
+        ),
     })
 }
+
+/// `Task` 行的 SELECT 列清单——单点改：所有读 `task` 的命令都从这里
+/// 拼 SQL,新增/删列只改一处。
+const TASK_COLUMNS: &str = "id, title, description, status, owner_person_id, project_id, due_date, \
+        created_at, updated_at, blocked_at, blocked_reason, \
+        recurring_template_id, scheduled_at, original_scheduled_at, rescheduled_from_id, \
+        COALESCE(due_date, date(scheduled_at, '+8 hours')) AS effective_date, \
+        waiting_on_person_id";
 
 /// 桶边界。三个变体合在一起描述 4 个桶的 WHERE 拼装——避免 4 处拼 SQL 漂移。
 #[derive(Debug, Clone, Copy)]
@@ -487,7 +532,21 @@ impl BucketBound {
         }
     }
 
-    /// 这一桶要 bind 几个参数,顺序与 SQL 中 `?` 一致。
+    /// 写出同一桶在 instance 列上的 WHERE 片段——把 `scheduled_at`
+    /// 转成本地日期 (`+8 hours`, Asia/Shanghai) 后再比较。
+    /// `?` 索引与 [`to_sql`](Self::to_sql) 共用（SQLite 的 `?1` 在
+    /// 同一查询里出现多次只算一个参数),所以参数也直接用
+    /// [`bind_params`](Self::bind_params) 即可。
+    fn to_sql_for_instance(self) -> &'static str {
+        match self {
+            Self::StrictlyBefore(_) => "date(scheduled_at, '+8 hours') < ?1",
+            Self::OnDay(_) => "date(scheduled_at, '+8 hours') = ?1",
+            Self::Between(_, _) => "date(scheduled_at, '+8 hours') >= ?1 AND date(scheduled_at, '+8 hours') <= ?2",
+        }
+    }
+
+    /// 这一桶要 bind 几个参数,顺序与 SQL 中 `?` 一致。`to_sql` 与
+    /// `to_sql_for_instance` 共用 `?1` / `?2` 索引,故一份参数即可。
     fn bind_params(self) -> Vec<String> {
         match self {
             Self::StrictlyBefore(day) | Self::OnDay(day) => vec![to_sql_date(day)],
@@ -502,19 +561,26 @@ impl BucketBound {
 /// 命中 `idx_task_due_date` partial index——WHERE 起手就是
 /// `due_date IS NOT NULL AND due_date < / = / BETWEEN ...`,
 /// partial index 把 `due_date IS NOT NULL` 那部分预筛掉。
+///
+/// instance 通过 `date(scheduled_at, '+8 hours')`（Asia/Shanghai
+/// 本地化）参与分桶,与 `due_date` 在 SQL 端 union-all 后分桶。
 fn fetch_bucket(
     conn: &rusqlite::Connection,
     bound: BucketBound,
 ) -> Result<Vec<Task>> {
     let sql = format!(
-        "SELECT id, title, description, status, owner_person_id, project_id, due_date, \
-                created_at, updated_at, blocked_at, blocked_reason, waiting_on_person_id \
+        "SELECT {TASK_COLUMNS} \
            FROM task \
-          WHERE due_date IS NOT NULL \
-            AND status NOT IN ('Done','Cancelled') \
-            AND {bound_sql} \
-          ORDER BY due_date ASC, id ASC",
+          WHERE status NOT IN ('Done','Cancelled') \
+            AND ( \
+                (due_date IS NOT NULL AND {bound_sql}) \
+             OR (recurring_template_id IS NOT NULL \
+                 AND scheduled_at IS NOT NULL \
+                 AND {bound_sql_inst}) \
+            ) \
+          ORDER BY effective_date ASC, id ASC",
         bound_sql = bound.to_sql(),
+        bound_sql_inst = bound.to_sql_for_instance(),
     );
     let mut stmt = conn.prepare(&sql)?;
     let params_iter = bound.bind_params();
@@ -668,6 +734,16 @@ fn row_to_task(row: &Row<'_>) -> rusqlite::Result<Task> {
             rusqlite::types::Type::Text,
         )
     })?;
+    let due_date: Option<String> = row.get(6)?;
+    let recurring_template_id: Option<i64> = row.get(11)?;
+    let scheduled_at: Option<String> = row.get(12)?;
+    let original_scheduled_at: Option<String> = row.get(13)?;
+    let rescheduled_from_id: Option<i64> = row.get(14)?;
+    let is_recurring = recurring_template_id.is_some();
+    // effective_date: 一次性走 due_date;instance 走
+    // `date(scheduled_at, '+8 hours')`——已在 SQL 端用 `effective_date`
+    // 表达式算好(row 索引 15)。
+    let effective_date: Option<String> = row.get(15)?;
     Ok(Task {
         id: row.get(0)?,
         title: row.get(1)?,
@@ -675,25 +751,26 @@ fn row_to_task(row: &Row<'_>) -> rusqlite::Result<Task> {
         status,
         owner_person_id: row.get(4)?,
         project_id: row.get(5)?,
-        due_date: row.get(6)?,
+        due_date,
+        recurring_template_id,
+        scheduled_at,
+        original_scheduled_at,
+        rescheduled_from_id,
+        is_recurring,
+        effective_date,
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
         blocked_at: row.get(9)?,
         blocked_reason: row.get(10)?,
-        waiting_on_person_id: row.get(11)?,
+        waiting_on_person_id: row.get(16)?,
     })
 }
 
 fn fetch_task(conn: &rusqlite::Connection, id: i64) -> Result<Option<Task>> {
-    conn.query_row(
-        "SELECT id, title, description, status, owner_person_id, project_id, due_date,
-                created_at, updated_at, blocked_at, blocked_reason, waiting_on_person_id
-           FROM task WHERE id = ?1",
-        params![id],
-        row_to_task,
-    )
-    .optional()
-    .map_err(Into::into)
+    let sql = format!("SELECT {TASK_COLUMNS} FROM task WHERE id = ?1");
+    conn.query_row(&sql, params![id], row_to_task)
+        .optional()
+        .map_err(Into::into)
 }
 
 /// 取一名人员的**在飞**任务列表（ticket #22 · 人员矩阵）。
@@ -709,9 +786,8 @@ pub fn fetch_in_flight_tasks_for_person(
     conn: &rusqlite::Connection,
     owner_person_id: i64,
 ) -> Result<Vec<Task>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, title, description, status, owner_person_id, project_id, due_date, \
-                created_at, updated_at, blocked_at, blocked_reason, waiting_on_person_id \
+    let sql = format!(
+        "SELECT {TASK_COLUMNS} \
            FROM task \
           WHERE owner_person_id = ?1 \
             AND status IN ('Open','In-progress','Blocked','Waiting-on') \
@@ -721,10 +797,10 @@ pub fn fetch_in_flight_tasks_for_person(
                      WHEN 'Blocked'     THEN 2 \
                      WHEN 'Waiting-on'  THEN 3 \
                    END ASC, \
-                   CASE WHEN due_date IS NULL THEN 1 ELSE 0 END ASC, \
-                   due_date ASC, \
-                   id ASC",
-    )?;
+                   effective_date ASC, \
+                   id ASC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![owner_person_id], row_to_task)?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
 }

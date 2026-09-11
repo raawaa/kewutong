@@ -814,4 +814,342 @@ fn 空库_四列都为空_计数都为_0() {
     assert!(view.buckets.today.is_empty());
     assert!(view.buckets.tomorrow.is_empty());
     assert!(view.buckets.this_week_rest.is_empty());
+    // 物化窗口右端 = today + 12 周 = 2026-12-03
+    assert_eq!(view.materialization_window_end, "2026-12-03");
+}
+
+// ---------------------------------------------------------------------------
+// 周期性 instance 混排进今日/本周桶（ticket #25）
+// ---------------------------------------------------------------------------
+
+use kewutong_lib::commands::recurring_template::{
+    upsert_recurring_template, UpsertRecurringTemplateArgs,
+};
+use kewutong_lib::holiday::HolidayCalendar;
+use kewutong_lib::materialization::{materialize_from_state, wall_clock_to_utc_sql};
+use kewutong_lib::recurring::{byday, EndsSpec, Freq, HolidayBehavior, StructuredRule};
+use chrono::NaiveDate;
+
+/// 直接 INSERT 一条 instance(走物化等价路径),绕开完整模板物化。
+/// 测试用——快速把 instance 行塞进去,验证 today_week 的桶逻辑。
+fn seed_instance(
+    app: &tauri::App<tauri::test::MockRuntime>,
+    template_id: i64,
+    owner_id: i64,
+    sub_team_id: i64,
+    local_date: NaiveDate,
+    hour: u32,
+    minute: u32,
+    status: &str,
+) -> i64 {
+    let state = app.state::<kewutong_lib::state::AppState>();
+    let conn = state.db().expect("conn");
+    let utc = wall_clock_to_utc_sql(local_date, hour, minute);
+    let title = format!("instance@{local_date}");
+    conn.execute(
+        "INSERT INTO task (title, status, owner_person_id, sub_team_id,
+                            recurring_template_id, scheduled_at, original_scheduled_at,
+                            rescheduled_from_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, NULL, datetime('now'), datetime('now'))",
+        rusqlite::params![title, status, owner_id, sub_team_id, template_id, utc],
+    )
+    .expect("insert instance");
+    conn.last_insert_rowid()
+}
+
+fn weekly_rule() -> StructuredRule {
+    StructuredRule {
+        freq: Freq::Weekly,
+        byday_mask: byday::MO,
+        bymonthday: None,
+        bymonth: None,
+        byhour: 8,
+        byminute: 0,
+        iana_zone: "Asia/Shanghai".into(),
+        ends: EndsSpec::On { date: "2026-12-31".into() },
+        holiday_behavior: HolidayBehavior::Skip,
+    }
+}
+
+fn fresh_app_with_calendar(clock: Arc<FixedClock>) -> (tauri::App<tauri::test::MockRuntime>, i64, i64) {
+    let (dir, seed_dir) = write_seed_pair();
+    let conn = kewutong_lib::db::open_in_memory().expect("内存库");
+    let cal = HolidayCalendar::load(&seed_dir, 2026, &conn).expect("加载");
+    let state = fresh_db_with_clock(clock);
+    state.install_calendar(cal);
+    let app = mock_app(state);
+    let team = create_sub_team(
+        app.state(),
+        CreateSubTeamArgs { name: "暖通".into(), description: None },
+    )
+    .expect("建组");
+    let owner = create_person(
+        app.state(),
+        CreatePersonArgs {
+            name: "张三".into(),
+            sub_team_id: team.id,
+            contact: "示例".into(),
+        },
+    )
+    .expect("录人");
+    let _ = (dir, seed_dir); // 持有 TempDir
+    (app, owner.id, team.id)
+}
+
+fn write_seed_pair() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let path = dir.path().to_path_buf();
+    std::fs::write(
+        path.join("cn-2026.json"),
+        r#"{ "holidays": [], "workdays": [] }"#,
+    )
+    .expect("写 2026");
+    std::fs::write(path.join("cn-2027.json"), r#"{ "holidays": [], "workdays": [] }"#)
+        .expect("写 2027");
+    (dir, path)
+}
+
+#[test]
+fn 今日_instance_混排进_今天_列_且带_is_recurring_标记() {
+    let clock = Arc::new(FixedClock::at("2026-09-10 09:00:00")); // Thu
+    let (app, owner, sub_team) = fresh_app_with_calendar(clock);
+    let template = upsert_recurring_template(
+        app.state(),
+        UpsertRecurringTemplateArgs {
+            id: None,
+            name: "周一例会".into(),
+            rule: weekly_rule(),
+            project_id: None,
+            sub_team_id: Some(sub_team),
+            notes: None,
+        },
+    )
+    .expect("建模板");
+
+    // 手动塞一条 scheduled_at = 2026-09-14 00:00 UTC (= 09-14 08:00 Asia/Shanghai)
+    // 的 instance。9/14 是 Mon,本地日期与 UTC 日期相同。
+    let id = seed_instance(
+        &app,
+        template.id,
+        owner,
+        sub_team,
+        NaiveDate::from_ymd_opt(2026, 9, 14).unwrap(),
+        8,
+        0,
+        "Open",
+    );
+    assert!(id > 0);
+
+    let _ = id; // 第一次 query 仅为驱动 `id` 落库,真正断言在第二次 query 上
+    let id2 = seed_instance(
+        &app,
+        template.id,
+        owner,
+        sub_team,
+        NaiveDate::from_ymd_opt(2026, 9, 10).unwrap(),
+        8,
+        0,
+        "Open",
+    );
+    let view: TodayWeek = today_week(app.state()).expect("view");
+    let today_instance = view
+        .buckets
+        .today
+        .iter()
+        .find(|t| t.id == id2)
+        .expect("9/10 instance 落在 today 桶");
+    assert!(today_instance.is_recurring, "instance 应带 is_recurring=true");
+    assert_eq!(today_instance.recurring_template_id, Some(template.id));
+    assert_eq!(today_instance.effective_date.as_deref(), Some("2026-09-10"));
+    assert!(today_instance.due_date.is_none());
+}
+
+#[test]
+fn 今日_instance_跨日_utc_前一日但本地是_今天_仍进_今天_桶() {
+    // scheduled_at = 2026-09-09 16:00:00 UTC = 2026-09-10 00:00 Asia/Shanghai
+    // 本地日期是 9/10,但 UTC 日期是 9/9。
+    // today_week 用 `date(scheduled_at, '+8 hours')` 转本地日期,应正确归到 9/10。
+    let clock = Arc::new(FixedClock::at("2026-09-10 09:00:00"));
+    let (app, owner, sub_team) = fresh_app_with_calendar(clock);
+    let template = upsert_recurring_template(
+        app.state(),
+        UpsertRecurringTemplateArgs {
+            id: None,
+            name: "早班".into(),
+            rule: weekly_rule(),
+            project_id: None,
+            sub_team_id: Some(sub_team),
+            notes: None,
+        },
+    )
+    .expect("建模板");
+
+    // 0:00 Asia/Shanghai 的 instance → UTC 是前一日 16:00
+    let id = seed_instance(
+        &app,
+        template.id,
+        owner,
+        sub_team,
+        NaiveDate::from_ymd_opt(2026, 9, 10).unwrap(),
+        0,
+        0,
+        "Open",
+    );
+
+    let view: TodayWeek = today_week(app.state()).expect("view");
+    let inst = view.buckets.today.iter().find(|t| t.id == id).expect("9/10 instance");
+    assert_eq!(inst.effective_date.as_deref(), Some("2026-09-10"));
+    assert!(inst.is_recurring);
+}
+
+#[test]
+fn 今日_instance_跨日_utc_同日但本地是_明天_不误进_今天_桶() {
+    // scheduled_at = 2026-09-10 18:00:00 UTC = 2026-09-11 02:00 Asia/Shanghai
+    // 本地日期是 9/11(明天),UTC 日期是 9/10(今天)。应进 tomorrow 桶,
+    // 不进 today 桶。
+    let clock = Arc::new(FixedClock::at("2026-09-10 09:00:00"));
+    let (app, owner, sub_team) = fresh_app_with_calendar(clock);
+    let template = upsert_recurring_template(
+        app.state(),
+        UpsertRecurringTemplateArgs {
+            id: None,
+            name: "夜班".into(),
+            rule: weekly_rule(),
+            project_id: None,
+            sub_team_id: Some(sub_team),
+            notes: None,
+        },
+    )
+    .expect("建模板");
+
+    let id = seed_instance(
+        &app,
+        template.id,
+        owner,
+        sub_team,
+        NaiveDate::from_ymd_opt(2026, 9, 11).unwrap(),
+        2,
+        0,
+        "Open",
+    );
+
+    let view: TodayWeek = today_week(app.state()).expect("view");
+    assert!(
+        view.buckets.today.iter().all(|t| t.id != id),
+        "9/11 02:00 local instance 不应进 today"
+    );
+    assert!(
+        view.buckets.tomorrow.iter().any(|t| t.id == id),
+        "9/11 02:00 local instance 应进 tomorrow"
+    );
+}
+
+#[test]
+fn 今日_instance_与_一次性_task_混排_且实例带_回旋标记() {
+    // 验收点:实例与一次性同构混排进同一桶,UI 按 is_recurring 决定 ↻ 标记
+    let clock = Arc::new(FixedClock::at("2026-09-10 09:00:00"));
+    let (app, owner, sub_team) = fresh_app_with_calendar(clock);
+    let template = upsert_recurring_template(
+        app.state(),
+        UpsertRecurringTemplateArgs {
+            id: None,
+            name: "周一例会".into(),
+            rule: weekly_rule(),
+            project_id: None,
+            sub_team_id: Some(sub_team),
+            notes: None,
+        },
+    )
+    .expect("建模板");
+
+    // 一次性 task 落在 9/10
+    let one_off = create_task(
+        app.state(),
+        CreateTaskArgs {
+            title: "一次性今天".into(),
+            description: None,
+            owner_person_id: owner,
+            project_id: None,
+            due_date: Some("2026-09-10".into()),
+        },
+    )
+    .expect("建一次性");
+    // instance 落在 9/10
+    let inst = seed_instance(
+        &app,
+        template.id,
+        owner,
+        sub_team,
+        NaiveDate::from_ymd_opt(2026, 9, 10).unwrap(),
+        8,
+        0,
+        "Open",
+    );
+
+    let view: TodayWeek = today_week(app.state()).expect("view");
+    assert_eq!(view.buckets.today.len(), 2);
+    let one_off_in = view.buckets.today.iter().find(|t| t.id == one_off.id).unwrap();
+    let inst_in = view.buckets.today.iter().find(|t| t.id == inst).unwrap();
+    assert!(!one_off_in.is_recurring, "一次性 is_recurring=false");
+    assert!(inst_in.is_recurring, "instance is_recurring=true");
+    assert!(one_off_in.recurring_template_id.is_none());
+    assert_eq!(inst_in.recurring_template_id, Some(template.id));
+}
+
+#[test]
+fn materialize_后_今日_视图_能_查_到_新生成_instance() {
+    // 端到端:建模板 → 物化 → today_week 应能在 today/tomorrow 桶里
+    // 看到 instance。
+    let clock = Arc::new(FixedClock::at("2026-09-10 09:00:00")); // Thu
+    let (app, _owner, sub_team) = fresh_app_with_calendar(clock);
+    let template = upsert_recurring_template(
+        app.state(),
+        UpsertRecurringTemplateArgs {
+            id: None,
+            name: "周一例会".into(),
+            rule: weekly_rule(),
+            project_id: None,
+            sub_team_id: Some(sub_team),
+            notes: None,
+        },
+    )
+    .expect("建模板");
+
+    let counts = materialize_from_state(
+        app.state::<kewutong_lib::state::AppState>().inner(),
+    )
+    .expect("物化");
+    assert!(counts.kept > 0, "应当物化出至少一个 instance");
+
+    let view: TodayWeek = today_week(app.state()).expect("view");
+    // 9/10 Thu 没有 Monday,instance 都落在后续的 Mon。
+    // 第一周剩余桶(9/12 Sat ~ 9/13 Sun)也没有 Mon。
+    // 实例会落在「下周一」= 9/14,不在四列里。
+    // 但其它 instance 9/21, 9/28 等同样不在四列里——所以四列里
+    // 可能没有 instance。改测:让 today = Mon。
+    let _ = (template, view);
+    let clock = Arc::new(FixedClock::at("2026-09-14 09:00:00")); // Mon
+    let (app, _owner, sub_team) = fresh_app_with_calendar(clock);
+    upsert_recurring_template(
+        app.state(),
+        UpsertRecurringTemplateArgs {
+            id: None,
+            name: "周一例会".into(),
+            rule: weekly_rule(),
+            project_id: None,
+            sub_team_id: Some(sub_team),
+            notes: None,
+        },
+    )
+    .expect("建模板");
+    let counts = materialize_from_state(
+        app.state::<kewutong_lib::state::AppState>().inner(),
+    )
+    .expect("物化");
+    assert!(counts.kept > 0);
+
+    let view: TodayWeek = today_week(app.state()).expect("view");
+    // 9/14 是 Mon,today 桶应当含至少一个 instance
+    let any_instance_today = view.buckets.today.iter().any(|t| t.is_recurring);
+    assert!(any_instance_today, "9/14 (Mon) 启动时 today 桶应见 instance");
 }

@@ -5,7 +5,7 @@
 
 use crate::clock::{Clock, SystemClock};
 use crate::db;
-use crate::state::AppState;
+use crate::state::{self, AppState};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -17,7 +17,7 @@ pub fn fresh_db() -> AppState {
 /// 同 [`fresh_db`]，另把「现在」交给调用方控制。
 pub fn fresh_db_with_clock(clock: Arc<dyn Clock>) -> AppState {
     let conn = db::open_in_memory().expect("内存库应当能建起来");
-    AppState::new(conn, clock)
+    state::new_app_state(conn, clock)
 }
 
 /// 文件库版本：断言 WAL 这类只在真实文件上成立的行为时用。
@@ -25,5 +25,5 @@ pub fn fresh_db_with_clock(clock: Arc<dyn Clock>) -> AppState {
 /// # Panics
 /// 建库失败时 panic——fixture 起不来就该当场炸，而不是把 `Result` 摊给每个测试。
 pub fn fresh_db_file(path: &Path) -> AppState {
-    AppState::with_system_clock(db::open(path).expect("文件库应当能建起来"))
+    state::compat::with_system_clock(db::open(path).expect("文件库应当能建起来"))
 }

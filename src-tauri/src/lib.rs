@@ -5,16 +5,24 @@ pub mod commands;
 pub mod db;
 pub mod error;
 pub mod holiday;
+pub mod materialization;
 pub mod recurring;
 pub mod state;
 pub mod testing;
 
 use chrono::Datelike;
 use state::AppState;
+use std::sync::Arc;
+use std::time::Duration;
 use tauri::Manager;
 
 /// 数据库文件名；落在系统的 app data 目录下，由 Syncthing 做文件夹级同步。
 const DB_FILE_NAME: &str = "kewutong.db";
+
+/// 后台 tick 周期：每小时跑一次 `materialize_if_new_week`。跨入新
+/// ISO 周时物化,其余时间 noop。1 小时粒度够用——科长不会在跨入新一周
+/// 后 1 小时内还看不到 instance。
+const MATERIALIZE_TICK_INTERVAL: Duration = Duration::from_secs(3600);
 
 /// 登记全部命令。正式入口与测试脚手架共用这一处，两边的命令清单不会漂移。
 pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
@@ -58,6 +66,9 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         commands::recurring_template::upsert_recurring_template,
         commands::recurring_template::list_recurring_templates,
         commands::recurring_template::set_recurring_template_enabled,
+        // —— 物化引擎（ticket #25）——
+        commands::materialization::materialize_now,
+        commands::materialization::materialize_if_new_week,
     ])
 }
 
@@ -82,9 +93,16 @@ pub fn run() {
     register_commands(builder)
         .setup(|app| {
             let db_path = app.path().app_data_dir()?.join(DB_FILE_NAME);
-            let state = AppState::with_system_clock(db::open(&db_path)?);
+            let state = state::compat::with_system_clock(db::open(&db_path)?);
             install_holiday_calendar(app.handle(), &state)?;
+            // 启动时立即跑一次物化——保证应用一打开就能看到未来 12 周
+            // 的 instance。失败不阻塞启动,物化是后台能力。
+            if let Err(err) = materialization::materialize_from_state(&state) {
+                eprintln!("[kewutong] 启动物化失败：{err}");
+            }
+            let state_for_tick = Arc::clone(&state);
             app.manage(state);
+            spawn_materialize_tick(state_for_tick);
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -108,6 +126,27 @@ fn install_holiday_calendar<R: tauri::Runtime>(
         .map_err(app_error_to_tauri)?;
     state.install_calendar(calendar);
     Ok(())
+}
+
+/// 后台 tick：每小时调一次 `materialize_if_new_week`。跨入新 ISO 周
+/// 时跑物化,其余时间 noop。
+///
+/// 用 `tauri::async_runtime::spawn` 走 Tauri 自带的 tokio runtime,避
+/// 免引额外 runtime 依赖。tick 的 panic 由 Tauri runtime 兜底,不
+/// 影响主进程。
+fn spawn_materialize_tick(state: AppState) {
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(MATERIALIZE_TICK_INTERVAL);
+        // 第一次 tick 立即触发——配合启动那次,即使启动时今天没跨入新
+        // 周,1 小时内还会再校一次。
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if let Err(err) = commands::materialization::materialize_if_new_week_via_state(&state) {
+                eprintln!("[kewutong] tick 物化失败：{err}");
+            }
+        }
+    });
 }
 
 /// `AppError` → `tauri::Error`：Tauri 没有给 `AppError` 实现 `From`,在

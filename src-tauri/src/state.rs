@@ -1,7 +1,7 @@
 //! 注入给 `tauri::State` 的应用状态：一个 SQLite 连接 + 一个时钟 +
 //! 一张合并后的节假日日历视图。
 
-use crate::clock::{Clock, SystemClock};
+use crate::clock::Clock;
 use crate::error::{AppError, Result};
 use crate::holiday::HolidayCalendar;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -13,21 +13,30 @@ use std::sync::{Arc, Mutex, MutexGuard};
 /// `calendar` 启动时从打包 `holidays/cn-<year>.json` + SQLite 的
 /// `holiday_override` 合并加载,运行时随 override 写更新——物化层和日历
 /// 视图通过 [`AppState::holiday_calendar`] 取只读视图。
-pub struct AppState {
-    db: Mutex<Connection>,
-    clock: Arc<dyn Clock>,
-    calendar: Mutex<HolidayCalendar>,
+///
+/// 整体包在 `Arc` 里是为了把 clone 出去给后台 tick 用
+/// （[`crate::spawn_materialize_tick`]）—每个字段单独 `Arc` 也可以,
+/// 但 `Arc<AppState>` 的写法更直接,测试侧也更容易共享同一份状态。
+pub struct AppStateInner {
+    pub db: Mutex<Connection>,
+    pub clock: Arc<dyn Clock>,
+    pub calendar: Mutex<HolidayCalendar>,
 }
 
-impl AppState {
-    pub fn new(db: Connection, clock: Arc<dyn Clock>) -> Self {
-        Self {
-            db: Mutex::new(db),
-            clock,
-            calendar: Mutex::new(HolidayCalendar::default()),
-        }
-    }
+/// `AppState = Arc<AppStateInner>`：所有借出走 `state.inner()` 解 Arc;
+/// 后台 tick 直接 clone 整个 `Arc`,与主进程共享同一份 db / calendar。
+pub type AppState = Arc<AppStateInner>;
 
+/// 构造一个新的 `AppState` (内部 = `Arc<AppStateInner>`)。
+pub fn new_app_state(conn: Connection, clock: Arc<dyn Clock>) -> AppState {
+    Arc::new(AppStateInner {
+        db: Mutex::new(conn),
+        clock,
+        calendar: Mutex::new(HolidayCalendar::default()),
+    })
+}
+
+impl AppStateInner {
     /// 装入合并后的节假日日历。`setup` 钩子里调一次；之后 override 写命
     /// 令走 [`crate::holiday::reload_overrides_from_db`] 在原对象上原地
     /// 刷新,不必再走这条。
@@ -36,11 +45,6 @@ impl AppState {
             .calendar
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = calendar;
-    }
-
-    /// 生产环境入口：真实时钟 + 空日历（`setup` 钩子里再装）。
-    pub fn with_system_clock(db: Connection) -> Self {
-        Self::new(db, Arc::new(SystemClock))
     }
 
     /// 借出连接。锁被污染说明上一个持有者 panic 在事务中间，此时宁可报错也不要接着写。
@@ -72,5 +76,27 @@ impl AppState {
     /// 不要自己拿 [`AppState::now`] 做时区换算。
     pub fn today(&self) -> NaiveDate {
         self.clock.today()
+    }
+}
+
+/// `AppState = Arc<AppStateInner>` 的便利构造器（语义同 `new_app_state`）。
+pub fn make_state(db: Connection, clock: Arc<dyn Clock>) -> AppState {
+    new_app_state(db, clock)
+}
+
+/// 旧 `AppState::new` / `with_system_clock` 的兼容入口——保留是为了不
+/// 改 `testing.rs` 等已被引用的旧调用点。**新增代码请用 [`new_app_state`]。**
+pub mod compat {
+    use super::*;
+    use crate::clock::SystemClock;
+
+    /// 与旧 `AppState::new(conn, clock)` 等价。新增代码请用 [`super::new_app_state`].
+    pub fn new_state(conn: Connection, clock: Arc<dyn Clock>) -> AppState {
+        new_app_state(conn, clock)
+    }
+
+    /// 与旧 `AppState::with_system_clock(conn)` 等价。
+    pub fn with_system_clock(conn: Connection) -> AppState {
+        new_app_state(conn, Arc::new(SystemClock))
     }
 }

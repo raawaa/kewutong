@@ -9,6 +9,7 @@
 
 pub mod diagnostics;
 pub mod holiday;
+pub mod materialization;
 pub mod personnel;
 pub mod project;
 pub mod recurring_template;
