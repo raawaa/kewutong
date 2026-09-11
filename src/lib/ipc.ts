@@ -419,3 +419,102 @@ export function toAppError(thrown: unknown): AppError {
     detail: String(thrown),
   };
 }
+
+// ---------------------------------------------------------------------------
+// 周期性模板（ticket #24）
+// ---------------------------------------------------------------------------
+
+/** 模板频率四值。 */
+export type RecurringFreq = "daily" | "weekly" | "monthly" | "yearly";
+
+/** 节假日行为二值。 */
+export type RecurringHolidayBehavior = "skip" | "shift";
+
+/** 终止条件二选一。 */
+export type RecurringEnds =
+  | { kind: "on"; date: string }
+  | { kind: "after"; n: number };
+
+/** 结构化规则字段（与 Rust `recurring::StructuredRule` 一一对应）。 */
+export type StructuredRule = {
+  freq: RecurringFreq;
+  bydayMask: number;
+  bymonthday: number[] | null;
+  bymonth: number[] | null;
+  byhour: number;
+  byminute: number;
+  ianaZone: string;
+  ends: RecurringEnds;
+  holidayBehavior: RecurringHolidayBehavior;
+};
+
+/** 周期性模板 DTO（与 Rust `commands::recurring_template::RecurringTemplate` 一一对应）。 */
+export type RecurringTemplate = {
+  id: number;
+  name: string;
+  freq: RecurringFreq;
+  bydayMask: number;
+  bymonthday: number[] | null;
+  bymonth: number[] | null;
+  byhour: number;
+  byminute: number;
+  ianaZone: string;
+  ends: RecurringEnds;
+  holidayBehavior: RecurringHolidayBehavior;
+  rruleText: string;
+  projectId: number | null;
+  subTeamId: number | null;
+  enabled: boolean;
+  notes: string | null;
+  createdAt: string;
+};
+
+/** `upsertRecurringTemplate` 入参。`id = null` 新建；非空 = 编辑。 */
+export type UpsertRecurringTemplateArgs = {
+  id: number | null;
+  name: string;
+  rule: StructuredRule;
+  projectId: number | null;
+  subTeamId: number | null;
+  notes: string | null;
+};
+
+/** `listRecurringTemplates` 入参。 */
+export type ListRecurringTemplatesArgs = {
+  includeDisabled: boolean;
+};
+
+/** `setRecurringTemplateEnabled` 入参。 */
+export type SetRecurringTemplateEnabledArgs = {
+  id: number;
+  enabled: boolean;
+};
+
+export function upsertRecurringTemplate(
+  args: UpsertRecurringTemplateArgs,
+): Promise<RecurringTemplate> {
+  return invoke<RecurringTemplate>("upsert_recurring_template", { args });
+}
+
+export function listRecurringTemplates(
+  args: ListRecurringTemplatesArgs,
+): Promise<RecurringTemplate[]> {
+  return invoke<RecurringTemplate[]>("list_recurring_templates", { args });
+}
+
+export function setRecurringTemplateEnabled(
+  args: SetRecurringTemplateEnabledArgs,
+): Promise<RecurringTemplate> {
+  return invoke<RecurringTemplate>("set_recurring_template_enabled", { args });
+}
+
+// byday_mask bit 常量（与 Rust 端 `recurring::byday` 一一对应）
+export const byday = {
+  MO: 1 << 0,
+  TU: 1 << 1,
+  WE: 1 << 2,
+  TH: 1 << 3,
+  FR: 1 << 4,
+  SA: 1 << 5,
+  SU: 1 << 6,
+} as const;

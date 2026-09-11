@@ -5,6 +5,7 @@ pub mod commands;
 pub mod db;
 pub mod error;
 pub mod holiday;
+pub mod recurring;
 pub mod state;
 pub mod testing;
 
@@ -53,6 +54,10 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         commands::holiday::holiday_calendar,
         commands::holiday::set_holiday_override,
         commands::holiday::clear_holiday_override,
+        // —— 周期性模板与规则编辑器（ticket #24）——
+        commands::recurring_template::upsert_recurring_template,
+        commands::recurring_template::list_recurring_templates,
+        commands::recurring_template::set_recurring_template_enabled,
     ])
 }
 

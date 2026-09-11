@@ -11,5 +11,6 @@ pub mod diagnostics;
 pub mod holiday;
 pub mod personnel;
 pub mod project;
+pub mod recurring_template;
 pub mod task;
 pub mod validation;

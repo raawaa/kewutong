@@ -6,7 +6,7 @@
  * 这里把 `@/lib/ipc` 整个换掉，只看前端交出去了什么。
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TaskDialog } from "./TaskDialog";
 import type { AssigneeCandidate, DueDateOption, Task } from "@/lib/ipc";
@@ -15,6 +15,7 @@ import {
   listAssigneeCandidates,
   listDueDateOptions,
   updateTask,
+  upsertRecurringTemplate,
 } from "@/lib/ipc";
 
 vi.mock("@/lib/ipc", async (importOriginal) => ({
@@ -23,6 +24,10 @@ vi.mock("@/lib/ipc", async (importOriginal) => ({
   listAssigneeCandidates: vi.fn(),
   createTask: vi.fn(),
   updateTask: vi.fn(),
+  upsertRecurringTemplate: vi.fn(),
+  listProjectCandidates: vi.fn(async () => [
+    { projectId: 11, name: "Q4 业务汇报", subTeamName: "业务一组" },
+  ]),
 }));
 
 /** 命令层在 2026-09-10 这天算出来的 chip 行。 */
@@ -65,6 +70,25 @@ beforeEach(() => {
     ...已有任务,
     ...args,
   }));
+  vi.mocked(upsertRecurringTemplate).mockResolvedValue({
+    id: 1,
+    name: "",
+    freq: "weekly",
+    bydayMask: 0,
+    bymonthday: null,
+    bymonth: null,
+    byhour: 9,
+    byminute: 0,
+    ianaZone: "Asia/Shanghai",
+    ends: { kind: "on", date: "2026-12-31" },
+    holidayBehavior: "skip",
+    rruleText: "FREQ=WEEKLY;BYDAY=MO,WE;BYHOUR=8;BYMINUTE=0;UNTIL=20261231T235959Z",
+    projectId: 11,
+    subTeamId: null,
+    enabled: true,
+    notes: null,
+    createdAt: "2026-09-10 09:00:00",
+  });
 });
 
 function renderDialog(target: Parameters<typeof TaskDialog>[0]["target"]) {
@@ -276,5 +300,95 @@ describe("TaskDialog · 关闭", () => {
       expect(screen.queryByRole("listbox")).not.toBeInTheDocument(),
     );
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("TaskDialog · 周期性", () => {
+  it("勾上 toggle → 立刻打开侧抽屉,无内联摘要", async () => {
+    const { user } = renderDialog({ mode: "create" });
+    await screen.findByRole("button", { name: "今天" });
+
+    await user.click(screen.getByTestId("recurring-toggle"));
+
+    expect(await screen.findByRole("dialog", { name: "配置周期性规则" }))
+      .toBeInTheDocument();
+    // 抽屉里没把规则拍到主弹窗上去——主弹窗仍只看见 toggle 行
+    expect(screen.queryByText("派生 RRULE")).not.toBeInTheDocument();
+  });
+
+  it("抽屉里点取消 → 不算周期性,toggle 也不亮", async () => {
+    const { user } = renderDialog({ mode: "create" });
+    await screen.findByRole("button", { name: "今天" });
+
+    await user.click(screen.getByTestId("recurring-toggle"));
+    const sheet = await screen.findByRole("dialog", { name: "配置周期性规则" });
+    await user.click(within(sheet).getByRole("button", { name: "取消" }));
+
+    expect(screen.queryByRole("dialog", { name: "配置周期性规则" }))
+      .not.toBeInTheDocument();
+    // 关闭后,rule 没被确认,periodic 视为关
+    const toggle = screen.getByTestId("recurring-toggle") as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+  });
+
+  it("抽屉里点确认 → 写入 task + 调用 upsert_recurring_template", async () => {
+    const { user } = renderDialog({ mode: "create" });
+    await screen.findByRole("button", { name: "今天" });
+
+    // 标题 + 选人 + 选项目
+    const box = screen.getByRole("textbox", { name: "任务标题" });
+    await user.click(box);
+    await user.type(box, "周一三早会 @张");
+    await user.click(await screen.findByRole("option", { name: /张三/ }));
+    await user.type(box, " #Q4");
+    await user.click(await screen.findByRole("option", { name: /Q4/ }));
+
+    // 打开抽屉 → 选 周一 + 周三 → 确认
+    await user.click(screen.getByTestId("recurring-toggle"));
+    const sheet = await screen.findByRole("dialog", { name: "配置周期性规则" });
+    await user.click(within(sheet).getByRole("button", { name: "一" }));
+    await user.click(within(sheet).getByRole("button", { name: "三" }));
+    await user.click(within(sheet).getByRole("button", { name: "确认 →" }));
+
+    // 创建按钮可点 → 点
+    await user.click(screen.getByRole("button", { name: "创建" }));
+
+    await waitFor(() =>
+      expect(createTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "周一三早会",
+          projectId: 11,
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(upsertRecurringTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: null,
+          projectId: 11,
+          rule: expect.objectContaining({ freq: "weekly" }),
+        }),
+      ),
+    );
+  });
+
+  it("周期开但没选项目 → 创建按钮被锁,提示挂项目", async () => {
+    const { user } = renderDialog({ mode: "create" });
+    await screen.findByRole("button", { name: "今天" });
+
+    // 标题 + 选人(不选项目)
+    const box = screen.getByRole("textbox", { name: "任务标题" });
+    await user.click(box);
+    await user.type(box, "周一例会 @张");
+    await user.click(await screen.findByRole("option", { name: /张三/ }));
+
+    // 开周期 → 选周一 → 确认
+    await user.click(screen.getByTestId("recurring-toggle"));
+    const sheet = await screen.findByRole("dialog", { name: "配置周期性规则" });
+    await user.click(within(sheet).getByRole("button", { name: "一" }));
+    await user.click(within(sheet).getByRole("button", { name: "确认 →" }));
+
+    expect(screen.getByRole("button", { name: "创建" })).toBeDisabled();
+    expect(screen.getByText(/周期性任务需要挂一个项目/)).toBeInTheDocument();
   });
 });

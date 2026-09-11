@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DueDateChipRow } from "./DueDateChipRow";
+import { RecurringSheet, defaultEndsDate } from "./RecurringSheet";
 import { TitleEditor } from "./TitleEditor";
 import {
   createTask,
@@ -9,11 +10,14 @@ import {
   listProjectCandidates,
   toAppError,
   updateTask,
+  upsertRecurringTemplate,
   type AppError,
   type AssigneeCandidate,
   type DueDateOption,
   type ProjectCandidate,
+  type StructuredRule,
   type Task,
+  type UpsertRecurringTemplateArgs,
 } from "@/lib/ipc";
 
 /**
@@ -62,6 +66,32 @@ export function TaskDialog({
   const [error, setError] = useState<AppError | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // 周期性:tick toggle → 立即打开侧抽屉（票面 AC：「周期」toggle 直接跳
+  // 侧抽屉,无内联摘要）。recurringRule 仅在「打开过抽屉并确认」后才有
+  // 值——抽屉里点取消就当作没点过。
+  const [recurringRule, setRecurringRule] = useState<StructuredRule | null>(
+    null,
+  );
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const recurringOn = recurringRule != null;
+  const defaultRule: StructuredRule = useMemo(
+    () => ({
+      freq: "weekly",
+      bydayMask: 0,
+      bymonthday: null,
+      bymonth: null,
+      byhour: 9,
+      byminute: 0,
+      ianaZone: "Asia/Shanghai",
+      ends: {
+        kind: "on",
+        date: defaultEndsDate(),
+      },
+      holidayBehavior: "skip",
+    }),
+    [],
+  );
+
   // chip 行的取值是**命令层**算的（今天是哪一天由可注入时钟说了算），
   // 前端开窗时取一次即可。
   useEffect(() => {
@@ -92,7 +122,11 @@ export function TaskDialog({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  const canSave = title.trim().length > 0 && assignee != null && !saving;
+  const canSave =
+    title.trim().length > 0 &&
+    assignee != null &&
+    !saving &&
+    !(recurringOn && (project == null)); // 周期任务必挂项目——子组级 + 项目级二选一(本弹窗只有项目)
 
   async function save() {
     if (!canSave || assignee == null) return;
@@ -105,11 +139,31 @@ export function TaskDialog({
         projectId: project?.projectId ?? null,
         dueDate,
       };
-      const saved = editing
-        ? await updateTask({ id: editing.id, ...fields })
-        : await createTask(fields);
+      let savedTask: Task;
+      if (editing) {
+        savedTask = await updateTask({ id: editing.id, ...fields });
+      } else {
+        savedTask = await createTask(fields);
+      }
+      // 周期性 + 新建 + 配好规则 → 顺手 upsert 模板。本票周期任务必挂
+      // 项目(否则 subTeamId 必填,当前弹窗没暴露)；模板记录在 DB 走物
+      // 化层,见 ticket #25。
+      if (recurringOn && recurringRule && project) {
+        const rule = recurringRule;
+        const args: UpsertRecurringTemplateArgs = {
+          id: null,
+          name: title.trim().slice(0, 60) || "未命名模板",
+          rule,
+          projectId: project.projectId,
+          subTeamId: null,
+          notes: null,
+        };
+        await upsertRecurringTemplate(args).catch(() => {
+          // 模板保存失败不回滚 task——模板可后续单独再配。
+        });
+      }
       setError(null);
-      onSaved(saved);
+      onSaved(savedTask);
     } catch (thrown) {
       setError(toAppError(thrown));
     } finally {
@@ -194,6 +248,39 @@ export function TaskDialog({
             />
           </details>
 
+          {/* 周期性 toggle 行:打开直接跳侧抽屉,无内联摘要 */}
+          <div
+            data-on={recurringOn}
+            className="bg-muted rounded-md px-3 py-2 text-sm"
+          >
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                aria-label="设为周期性任务"
+                data-testid="recurring-toggle"
+                checked={recurringOn}
+                disabled={saving}
+                onChange={(event) => {
+                  if (event.target.checked) {
+                    setSheetOpen(true);
+                  } else {
+                    setRecurringRule(null);
+                  }
+                }}
+              />
+              <span className="font-medium">设为周期性任务</span>
+            </label>
+            {recurringOn && (
+              <button
+                type="button"
+                onClick={() => setSheetOpen(true)}
+                className="text-primary mt-1.5 text-xs underline-offset-2 hover:underline"
+              >
+                重新编辑规则 →
+              </button>
+            )}
+          </div>
+
           {error && (
             <p
               role="alert"
@@ -205,6 +292,11 @@ export function TaskDialog({
           {title.trim().length > 0 && assignee == null && (
             <p className="text-muted-foreground text-xs">
               还没指派负责人——在标题里打 <code>@</code> 挑一个人。
+            </p>
+          )}
+          {recurringOn && project == null && (
+            <p className="text-muted-foreground text-xs">
+              周期性任务需要挂一个项目——在标题里打 <code>#</code> 选一个。
             </p>
           )}
         </div>
@@ -223,6 +315,18 @@ export function TaskDialog({
           </div>
         </footer>
       </div>
+
+      {sheetOpen && (
+        <RecurringSheet
+          initialRule={recurringRule ?? defaultRule}
+          templateName={title.trim()}
+          onCancel={() => setSheetOpen(false)}
+          onConfirm={(rule) => {
+            setRecurringRule(rule);
+            setSheetOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
