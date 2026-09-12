@@ -416,4 +416,41 @@ describe("CommandPalette (⌘K 全局命令面板)", () => {
     });
     expect(screen.getByText(/没有命中任何人员/)).toBeInTheDocument();
   });
+
+  // ticket #28 评审遗留：之前的 `Highlight` 只在 `match === "both"` 时加粗,
+  // 但调用点用三元把 `"both"` 改写成 `"name"`,结果两段都没加粗——`"both"`
+  // 分支是死代码。这条断言确认 `matchKind === "both"` 时 name 与 sub-team
+  // 两段都加粗。
+  it("match_kind_both_时_name_与_sub_team_两段_都_加粗", async () => {
+    vi.mocked(wayfinderSearch).mockResolvedValue({
+      people: [
+        makePersonHit({
+          personId: 5,
+          name: "暖通甲",
+          subTeamName: "暖通",
+          matchKind: "both",
+        }),
+      ],
+      projects: [],
+      tasks: [],
+    });
+    render(
+      <CommandPalette
+        open
+        catalog={EMPTY_CATALOG}
+        onClose={() => {}}
+        onPick={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(wayfinderSearch).toHaveBeenCalled();
+    });
+    // 扁平列表顺序：index 0 是 "新建任务" 占位条目,index 1 才是人员。
+    const personOption = screen.getAllByRole("option")[1];
+    // name 与 subTeamName 都应被 <strong> 包裹
+    const strongs = personOption.querySelectorAll("strong");
+    expect(strongs.length).toBe(2);
+    expect(strongs[0].textContent).toBe("暖通甲");
+    expect(strongs[1].textContent).toBe("暖通");
+  });
 });

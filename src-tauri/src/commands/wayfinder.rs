@@ -304,13 +304,18 @@ fn search_tasks(
 }
 
 /// 空 query 时拉默认排序前 N 条——命令面板打开后第一眼不是空的。
+///
+/// 排序走 [`crate::commands::task::in_flight_task_order_by`] 共用片段,
+/// 不重复"在飞优先 + due_date + created_at + id"这一份 SQL——ticket
+/// #28 评审时这里与 `list_tasks` / `list_tasks_filtered` 是第三份复制,
+/// 抽到 `task.rs` 之后只剩一处权威。
 fn fetch_top_tasks(
     state: &AppState,
     limit: usize,
     include_cancelled: bool,
     include_deactivated_owners: bool,
 ) -> Result<Vec<Task>> {
-    use crate::commands::task::TASK_COLUMNS_WITH_T;
+    use crate::commands::task::{in_flight_task_order_by, TASK_COLUMNS_WITH_T};
     let conn = state.db()?;
 
     let mut where_clauses: Vec<String> = Vec::new();
@@ -329,11 +334,9 @@ fn fetch_top_tasks(
         sql.push_str(" WHERE ");
         sql.push_str(&where_clauses.join(" AND "));
     }
-    sql.push_str(
-        " ORDER BY CASE WHEN t.status IN ('Open','In-progress','Blocked','Waiting-on') \
-                  THEN 0 ELSE 1 END ASC, t.due_date ASC, t.created_at ASC, t.id ASC \
-          LIMIT ?1",
-    );
+    sql.push_str(" ORDER BY ");
+    sql.push_str(&in_flight_task_order_by("t."));
+    sql.push_str(" LIMIT ?1");
 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![limit as i64], crate::commands::task::row_to_task)?;

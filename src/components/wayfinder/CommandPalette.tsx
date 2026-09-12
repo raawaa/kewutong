@@ -384,12 +384,14 @@ function PaletteRow({
           <span className="flex-1 truncate">
             <Highlight
               text={entry.hit.name}
-              match={entry.hit.matchKind === "sub-team" ? "sub-team" : "name"}
+              match={entry.hit.matchKind}
+              target="name"
             />
             <span className="text-muted-foreground ml-2 text-xs">
               <Highlight
                 text={entry.hit.subTeamName}
-                match={entry.hit.matchKind === "name" ? "sub-team" : "name"}
+                match={entry.hit.matchKind}
+                target="sub-team"
               />
             </span>
           </span>
@@ -403,12 +405,14 @@ function PaletteRow({
           <span className="flex-1 truncate">
             <Highlight
               text={entry.hit.name}
-              match={entry.hit.matchKind === "sub-team" ? "sub-team" : "name"}
+              match={entry.hit.matchKind}
+              target="name"
             />
             <span className="text-muted-foreground ml-2 text-xs">
               <Highlight
                 text={entry.hit.subTeamName}
-                match={entry.hit.matchKind === "name" ? "sub-team" : "name"}
+                match={entry.hit.matchKind}
+                target="sub-team"
               />
             </span>
           </span>
@@ -441,11 +445,31 @@ function KindBadge({
   );
 }
 
-function Highlight({ text, match }: { text: string; match: WayfinderMatchKind }) {
-  // match === "both" 表示人名 + 子组名都中——整行加粗,但字符级不高亮
-  // (子串索引在客户端算一遍意义不大——命令层已经按子串召回,前端
-  // 把命中区间视觉上突出就行,粒度不追求字符级)。
-  if (match === "both") {
+/**
+ * 命中片段的高亮——`target` 是这段文本本身对应哪个字段(`"name"` /
+ * `"sub-team"`)。加粗规则:
+ * - `match === target`: 命中本字段,加粗。
+ * - `match === "both"`: 命中两个字段,本字段也加粗——视觉上两段都
+ *   突出,前端不靠字符级索引去把命中区间逐字染底(命令层已经按子
+ *   串召回,粒度不追求字符级)。
+ * - 否则:无样式,按上下文默认渲染。
+ *
+ * 注意:之前直接传 `matchKind`,且对 `name` / `sub-team` 两个字段做
+ * 了一次三元交换——结果两边都把 `"both"` 改写成 `"name"`,`Highlight`
+ * 里 `match === "both"` 的分支永远不命中,`"both"` 成了死代码。
+ * 这版把 `target` 显式传进来,加粗规则自己决定,与字段解耦。
+ */
+function Highlight({
+  text,
+  match,
+  target,
+}: {
+  text: string;
+  match: WayfinderMatchKind;
+  target: "name" | "sub-team";
+}) {
+  const bold = match === target || match === "both";
+  if (bold) {
     return <strong className="font-semibold">{text}</strong>;
   }
   return <>{text}</>;

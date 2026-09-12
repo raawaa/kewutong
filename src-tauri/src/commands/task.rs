@@ -418,18 +418,8 @@ pub fn list_tasks(state: State<'_, AppState>, args: ListTasksArgs) -> Result<Vec
     }
     // 在飞优先；非在飞（Cancelled 已被前面滤掉,只剩 Done）置后；
     // 各自内部按到期日 / 创建时间兜底避免抖动。
-    sql.push_str(" ORDER BY CASE WHEN status IN (");
-    let in_flight: Vec<String> = [
-        TaskStatus::Open,
-        TaskStatus::InProgress,
-        TaskStatus::Blocked,
-        TaskStatus::WaitingOn,
-    ]
-    .iter()
-    .map(|s| format!("'{}'", s.as_str()))
-    .collect();
-    sql.push_str(&in_flight.join(","));
-    sql.push_str(") THEN 0 ELSE 1 END ASC, due_date ASC, created_at ASC, id ASC");
+    sql.push_str(" ORDER BY ");
+    sql.push_str(&in_flight_task_order_by(""));
 
     let mut stmt = conn.prepare(&sql)?;
     // 把两个可选 FK 串成一个 0–2 元素的 `Option<i64>` 迭代器,与 SQL 中
@@ -518,20 +508,10 @@ pub fn list_tasks_filtered(
         sql.push_str(&where_clauses.join(" AND "));
     }
     // 与 [`list_tasks`] 同序——在飞优先 + due_date + created_at + id 兜底。
-    // 同样的语义不该在两处各写一遍,这里显式重复一份是因为 SQL 形式不同
-    // （多了 `t.` 前缀与 JOIN），单点改时各自走自己的 review 路径。
-    sql.push_str(" ORDER BY CASE WHEN t.status IN (");
-    let in_flight: Vec<String> = [
-        TaskStatus::Open,
-        TaskStatus::InProgress,
-        TaskStatus::Blocked,
-        TaskStatus::WaitingOn,
-    ]
-    .iter()
-    .map(|s| format!("'{}'", s.as_str()))
-    .collect();
-    sql.push_str(&in_flight.join(","));
-    sql.push_str(") THEN 0 ELSE 1 END ASC, t.due_date ASC, t.created_at ASC, t.id ASC");
+    // 排序片段走 [`in_flight_task_order_by`] 共用一份,SQL 别名 `t.` 由
+    // 参数传入——单点改不会两处漂移。
+    sql.push_str(" ORDER BY ");
+    sql.push_str(&in_flight_task_order_by("t."));
 
     let mut stmt = conn.prepare(&sql)?;
 
@@ -890,6 +870,23 @@ pub fn today_week(state: State<'_, AppState>) -> Result<TodayWeek> {
                 .ok_or_else(|| AppError::Internal("today+12 周越界".into()))?,
         ),
     })
+}
+
+/// 「在飞任务优先 + due_date + created_at + id」排序的 SQL 片段。
+///
+/// 在飞四态(`Open` / `In-progress` / `Blocked` / `Waiting-on`)排前,
+/// `Done` / `Cancelled` 排后,各自内部按到期日 / 创建时间 / id 兜底避免
+/// 抖动。这是 [`list_tasks`] / [`list_tasks_filtered`] / ticket #28
+/// `wayfinder::fetch_top_tasks` 共用的"任务在飞列表怎么排序"约定——
+/// 单点改,避免三处漂移。`column_prefix` 是 SQL 别名(`""` 或 `"t."`),
+/// `column_prefix` 后的列名按所在 SQL 上下文确定。
+pub(crate) fn in_flight_task_order_by(column_prefix: &str) -> String {
+    let p = column_prefix;
+    format!(
+        "CASE WHEN {p}status IN ('Open','In-progress','Blocked','Waiting-on') \
+            THEN 0 ELSE 1 END ASC, \
+            {p}due_date ASC, {p}created_at ASC, {p}id ASC"
+    )
 }
 
 /// `Task` 行的 SELECT 列清单——单点改：所有读 `task` 的命令都从这里

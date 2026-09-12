@@ -241,11 +241,16 @@ function PersonLocator({
   peopleById: Map<number, Person>;
   onLocated?: () => void;
 }) {
+  // 缓存"最近滚到过的 id"——同一 id 在同一次"打开面板 → 选人 → 关闭"
+  // 周期里不重复滚(避免矩阵内其它原因触发同 pendingPersonId 时抖一次)。
+  // 关键:`pendingPersonId` 回到 `null` 时立刻清缓存,这样下一轮
+  // ⌘K → 选同一人 还能再滚——bug 是之前的实现把 ref 永久锁住了。
   const lastScrolledRef = useRef<number | null>(null);
   useEffect(() => {
-    if (pendingPersonId == null) return;
-    // 同一 id 已经滚过一次就不再滚——避免父层 onLocated 把 pending 清掉
-    // 又再次被同 id 触发时(例如刷新 matrix)再次滚动造成抖动。
+    if (pendingPersonId == null) {
+      lastScrolledRef.current = null;
+      return;
+    }
     if (lastScrolledRef.current === pendingPersonId) return;
     if (!peopleById.has(pendingPersonId)) return;
     const handle = window.setTimeout(() => {
