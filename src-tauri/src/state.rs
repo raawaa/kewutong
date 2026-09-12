@@ -21,6 +21,33 @@ pub struct AppStateInner {
     pub db: Mutex<Connection>,
     pub clock: Arc<dyn Clock>,
     pub calendar: Mutex<HolidayCalendar>,
+    /// 托盘可达性（ticket #29）。`Mutex` 是为了让安装失败时能从另一条线
+    /// 程立刻翻成 `Unavailable { reason }`,前端 banner 跟着更新——单写者
+    /// 场景下用 Mutex 而不是 `RwLock`,没必要承担读锁开销。
+    pub tray_status: Mutex<TrayStatus>,
+}
+
+/// 托盘可达性。
+///
+/// 启动时走 `Available`（托盘图标建起来了）或 `Unavailable { reason }`
+/// （建失败,前端据此展示 banner）。`reason` 是面向科长的中文,与
+/// `AppError::message()` 同口径。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrayStatus {
+    /// 托盘图标已建好,菜单可用。
+    Available,
+    /// 托盘不可用——`reason` 是给科长看的中文短句。
+    Unavailable { reason: String },
+}
+
+impl Default for TrayStatus {
+    fn default() -> Self {
+        // 默认不可用:启动 hook 还没跑过。如果应用跑着跑着托盘挂了,后续
+        // 也可以再 set 一次,前端再开 banner。
+        Self::Unavailable {
+            reason: "托盘尚未初始化".into(),
+        }
+    }
 }
 
 /// `AppState = Arc<AppStateInner>`：所有借出走 `state.inner()` 解 Arc;
@@ -33,6 +60,7 @@ pub fn new_app_state(conn: Connection, clock: Arc<dyn Clock>) -> AppState {
         db: Mutex::new(conn),
         clock,
         calendar: Mutex::new(HolidayCalendar::default()),
+        tray_status: Mutex::new(TrayStatus::default()),
     })
 }
 
@@ -76,6 +104,23 @@ impl AppStateInner {
     /// 不要自己拿 [`AppState::now`] 做时区换算。
     pub fn today(&self) -> NaiveDate {
         self.clock.today()
+    }
+
+    /// 当前托盘可达性快照。前端 banner 与测试都从这里取。
+    pub fn tray_status(&self) -> TrayStatus {
+        self.tray_status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// 设置托盘可达性。安装成功时传 `Available`,失败时传
+    /// `Unavailable { reason }`——`reason` 是面向科长的中文短句。
+    pub fn set_tray_status(&self, status: TrayStatus) {
+        *self
+            .tray_status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = status;
     }
 }
 

@@ -48,6 +48,11 @@ path = "src/bin/xtask.rs"
 # single-instance 只在桌面端存在
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.4"
+# 托盘定位（ticket #29）：macOS / Windows 上把唤回的窗口贴到托盘旁边;
+# `tray-icon` feature 让插件监听 tray click 事件,把当前 tray 矩形存进
+# 内部 state——本项目 Linux 走 BottomRight 不依赖此 state,但打开这个 feature
+# 不增加额外 Linux 风险（Linux click 事件本身就不发,见 tray/mod.rs 注释）。
+tauri-plugin-positioner = { version = "2.3", features = ["tray-icon"] }
 
 [dev-dependencies]
 # `test` feature 打开 tauri::test（mock_builder / get_ipc_response），只在测试构建里生效

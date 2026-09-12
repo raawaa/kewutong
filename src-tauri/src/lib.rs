@@ -9,6 +9,7 @@ pub mod materialization;
 pub mod recurring;
 pub mod state;
 pub mod testing;
+pub mod tray;
 
 use chrono::Datelike;
 use state::AppState;
@@ -79,6 +80,8 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         commands::instance::instance_reschedule_chain,
         // —— ⌘K 全局命令面板（ticket #28）——
         commands::wayfinder::wayfinder_search,
+        // —— 托盘状态查询（ticket #29）——
+        commands::tray::tray_status,
     ])
 }
 
@@ -92,13 +95,18 @@ pub fn run() {
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 重复启动 = 把已有窗口唤回前台，而不是再开一份
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
+            tray::show_main_window(app);
         }));
     }
+
+    // 托盘定位插件：macOS / Windows 上把唤回的窗口贴到托盘旁边；
+    // Linux 上虽不直接用 Tray* 位置,但插件自身是位置抽象的稳定入口,
+    // 接入后后续要加「唤回贴托盘」也无需换方案。
+    //
+    // `tray-icon` feature 启用后插件会监听 tray click 事件把当前 tray 矩形
+    // 存进内部 state——Linux 上即便 click 事件本身没触发,这个 feature
+    // 不打开也不会更糟。
+    builder = builder.plugin(tauri_plugin_positioner::init());
 
     register_commands(builder)
         .setup(|app| {
@@ -111,7 +119,32 @@ pub fn run() {
                 eprintln!("[kewutong] 启动物化失败：{err}");
             }
             let state_for_tick = Arc::clone(&state);
+            let state_for_setup = Arc::clone(&state);
             app.manage(state);
+
+            // 托盘（ticket #29）：失败不 panic,把 state 翻成 Unavailable 让
+            // 前端 banner 提示;同时关窗拦截器看到 Unavailable 不会拦截——
+            // 关窗走默认行为(应用退出)。
+            match tray::install(app.handle(), &state_for_setup) {
+                Ok(()) => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        tray::intercept_close_to_tray(&window, &state_for_setup);
+                    } else {
+                        eprintln!("[kewutong] 主窗口未注册,跳过关窗拦截");
+                    }
+                    // Linux:托盘 click 事件不发,起焦点轮询兜底
+                    #[cfg(target_os = "linux")]
+                    tray::spawn_linux_focus_poll(app.handle());
+                }
+                Err(err) => {
+                    let reason = err.message().to_string();
+                    state_for_setup.set_tray_status(crate::state::TrayStatus::Unavailable {
+                        reason: reason.clone(),
+                    });
+                    eprintln!("[kewutong] 托盘初始化失败：{reason}");
+                }
+            }
+
             spawn_materialize_tick(state_for_tick);
             Ok(())
         })

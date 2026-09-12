@@ -15,5 +15,6 @@ pub mod personnel;
 pub mod project;
 pub mod recurring_template;
 pub mod task;
+pub mod tray;
 pub mod validation;
 pub mod wayfinder;
