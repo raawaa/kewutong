@@ -6,6 +6,7 @@ use crate::error::{AppError, Result};
 use crate::holiday::HolidayCalendar;
 use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::Connection;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 /// 单写者本地 app：一个连接串起所有命令，用 `Mutex` 串行化即可。
@@ -13,6 +14,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 /// `calendar` 启动时从打包 `holidays/cn-<year>.json` + SQLite 的
 /// `holiday_override` 合并加载,运行时随 override 写更新——物化层和日历
 /// 视图通过 [`AppState::holiday_calendar`] 取只读视图。
+///
+/// `db_path` 启动时由 [`crate::lib::run`] 写入,便于「数据文件位置」
+/// 命令(ticket #31)直接给科长看 Syncthing 要同步的目标。
 ///
 /// 整体包在 `Arc` 里是为了把 clone 出去给后台 tick 用
 /// （[`crate::spawn_materialize_tick`]）—每个字段单独 `Arc` 也可以,
@@ -25,6 +29,9 @@ pub struct AppStateInner {
     /// 程立刻翻成 `Unavailable { reason }`,前端 banner 跟着更新——单写者
     /// 场景下用 Mutex 而不是 `RwLock`,没必要承担读锁开销。
     pub tray_status: Mutex<TrayStatus>,
+    /// SQLite 数据库文件的绝对路径。`Mutex<Option<…>>` 是为了让内存
+    /// 测试 fixture 不必硬编路径也能构造 state。
+    pub db_path: Mutex<Option<PathBuf>>,
 }
 
 /// 托盘可达性。
@@ -61,6 +68,23 @@ pub fn new_app_state(conn: Connection, clock: Arc<dyn Clock>) -> AppState {
         clock,
         calendar: Mutex::new(HolidayCalendar::default()),
         tray_status: Mutex::new(TrayStatus::default()),
+        db_path: Mutex::new(None),
+    })
+}
+
+/// 构造一个新的 `AppState`,同时把数据库路径写进去。`db::open` 之后
+/// 调用,把路径也保留——便于「数据文件位置」命令给前端展示。
+pub fn new_app_state_with_path(
+    conn: Connection,
+    clock: Arc<dyn Clock>,
+    db_path: PathBuf,
+) -> AppState {
+    Arc::new(AppStateInner {
+        db: Mutex::new(conn),
+        clock,
+        calendar: Mutex::new(HolidayCalendar::default()),
+        tray_status: Mutex::new(TrayStatus::default()),
+        db_path: Mutex::new(Some(db_path)),
     })
 }
 
@@ -121,6 +145,23 @@ impl AppStateInner {
             .tray_status
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = status;
+    }
+
+    /// 数据库文件路径——`data_file_location` 命令与测试都从这里取。
+    /// 内存库 fixture 不设路径,这里返 `None`,命令层把它转成中文错误。
+    pub fn db_path(&self) -> Option<PathBuf> {
+        self.db_path
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// 设置数据库文件路径——`lib::run` 启动时调一次。
+    pub fn set_db_path(&self, path: PathBuf) {
+        *self
+            .db_path
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(path);
     }
 }
 

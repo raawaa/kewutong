@@ -89,6 +89,15 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         commands::notification::mark_notification_read,
         commands::notification::mark_all_notifications_read,
         commands::notification::get_notification,
+        // —— 示例数据与数据文件位置（ticket #31）——
+        commands::sample::is_sample_data_present,
+        commands::sample::clear_sample_data,
+        commands::sample::data_file_location,
+        commands::sample::seed_real_teams,
+        // —— 导出（JSON 整库 + CSV 当前视图，ticket #31）——
+        commands::export::export_database_json,
+        commands::export::import_database_json,
+        commands::export::export_tasks_csv,
     ])
 }
 
@@ -124,7 +133,14 @@ pub fn run() {
         .setup(|app| {
             let db_path = app.path().app_data_dir()?.join(DB_FILE_NAME);
             let state = state::compat::with_system_clock(db::open(&db_path)?);
+            state.set_db_path(db_path);
             install_holiday_calendar(app.handle(), &state)?;
+            // 首启灌入真实 4 子组 / 20 人骨架(ticket #31)。
+            // 已存在真实子组时静默跳过——保证后续启动与跨机同步漂移场景
+            // 不重复灌入。失败不阻塞启动,科长手动录也好。
+            if let Err(err) = commands::sample::seed_real_teams_via_state(&state) {
+                eprintln!("[kewutong] 首启真实数据 seed 失败：{err}");
+            }
             // 启动时立即跑一次物化——保证应用一打开就能看到未来 12 周
             // 的 instance。失败不阻塞启动,物化是后台能力。
             if let Err(err) = materialization::materialize_from_state(&state) {

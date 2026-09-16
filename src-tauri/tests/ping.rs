@@ -16,8 +16,8 @@ fn ping_直接调用返回_pong_与迁移版本() {
     let reply = ping(app.state(), None).expect("ping 应当成功");
 
     assert_eq!(reply.message, "pong");
-    // 当前已应用的最高迁移版本(V001 + V002 + V003 + V004 + V005 + V006),新增 migration 后再 +1。
-    assert_eq!(reply.schema_version, Some(6));
+    // 当前已应用的最高迁移版本(V001-V008)。新增 migration 后再 +1。
+    assert_eq!(reply.schema_version, Some(8));
     assert_eq!(reply.echo, None);
 }
 
@@ -61,7 +61,7 @@ fn ping_经_ipc_往返后_dto_是_camel_case() {
         serde_json::json!({
             "message": "pong",
             "now": "2026-09-10 12:00:00",
-            "schemaVersion": 6,
+            "schemaVersion": 8,
             "echo": "喂",
         })
     );

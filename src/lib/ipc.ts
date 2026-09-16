@@ -678,3 +678,82 @@ export type TrayStatusDto = {
 export function trayStatus(): Promise<TrayStatusDto> {
   return invoke<TrayStatusDto>("tray_status");
 }
+
+// ---------------------------------------------------------------------------
+// 示例数据 / 数据文件位置 / 导出（ticket #31）
+// ---------------------------------------------------------------------------
+
+/** `is_sample_data_present` 的返回——横幅是否要展示「这是示例数据」。 */
+export type SamplePresence = {
+  present: boolean;
+};
+
+/** `clear_sample_data` 的返回——每张表清掉的行数。 */
+export type ClearSampleSummary = {
+  subTeams: number;
+  people: number;
+  projects: number;
+  tasks: number;
+  recurringTemplates: number;
+};
+
+/** `seed_real_teams` 的返回——首启灌入的真实数据规模。 */
+export type RealTeamsSeedSummary = {
+  subTeamsInserted: number;
+  peopleInserted: number;
+  seeded: boolean;
+};
+
+/** `export_database_json` 的返回——整库 JSON 文本 + 元信息。 */
+export type DatabaseExport = {
+  jsonText: string;
+  schemaVersion: number;
+  byteSize: number;
+};
+
+/** `import_database_json` 的返回——回环导入的行数统计。 */
+export type DatabaseImportSummary = {
+  tablesImported: number;
+  rowsImported: number;
+};
+
+/** `export_tasks_csv` 的返回——CSV 文本 + 数据行数。 */
+export type TasksCsvExport = {
+  csvText: string;
+  rowCount: number;
+};
+
+/** 横幅查询——是否还有示例数据未清除。 */
+export function isSampleDataPresent(): Promise<SamplePresence> {
+  return invoke<SamplePresence>("is_sample_data_present");
+}
+
+/** 一键清除所有示例数据。返回每张表清掉的行数。 */
+export function clearSampleData(): Promise<ClearSampleSummary> {
+  return invoke<ClearSampleSummary>("clear_sample_data");
+}
+
+/** 返回 SQLite 数据库文件绝对路径——便于科长把它加进 Syncthing 同步目录。 */
+export function dataFileLocation(): Promise<string> {
+  return invoke<string>("data_file_location");
+}
+
+/** 灌入真实 4 子组 / 20 人骨架。已有真实子组时为 no-op。 */
+export function seedRealTeams(): Promise<RealTeamsSeedSummary> {
+  return invoke<RealTeamsSeedSummary>("seed_real_teams");
+}
+
+/** 整库 JSON 导出,用于备份 / 迁移。 */
+export function exportDatabaseJson(): Promise<DatabaseExport> {
+  return invoke<DatabaseExport>("export_database_json");
+}
+
+/** 整库 JSON 导入(回环导入 export 的产物)。 */
+export function importDatabaseJson(jsonText: string): Promise<DatabaseImportSummary> {
+  return invoke<DatabaseImportSummary>("import_database_json", { jsonText });
+}
+
+/** 当前视图 CSV 导出——在飞任务 + 完整转义。 */
+export function exportTasksCsv(): Promise<TasksCsvExport> {
+  return invoke<TasksCsvExport>("export_tasks_csv");
+}

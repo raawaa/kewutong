@@ -10,6 +10,7 @@ import {
   type CommandPaletteTarget,
 } from "@/components/wayfinder/CommandPalette";
 import { TrayStatusBanner } from "@/components/tray/TrayStatusBanner";
+import { SampleDataBanner } from "@/components/SampleDataBanner";
 import { PersonnelMatrixView } from "@/views/PersonnelMatrixView";
 import { PersonnelView } from "@/views/PersonnelView";
 import { ProjectsView } from "@/views/ProjectsView";
@@ -250,6 +251,7 @@ export default function App() {
       </header>
 
       <TrayStatusBanner status={trayStatusDto} />
+      <SampleDataBanner refreshToken={refreshToken} />
 
       {tab === "today" ? (
         <TodayWeekView
