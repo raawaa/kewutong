@@ -1,0 +1,111 @@
+# Release pipeline for 科室任务管理 (kewutong).
+#
+# ticket #32: GitHub Actions 4-runner 矩阵产出原生安装包,产物以 draft
+# Release 形式落到 GitHub Releases,人工 review 后再 publish。详见
+# docs/adr/0004-distribution-pipeline.md §1 / §2 / §3。
+#
+# 触发: 推送形如 `app-v1.2.3` 的 git tag。CI 会以 draft 形式建一个
+# GitHub Release 并上传 4 个原生安装包(.deb / .AppImage / .msi / .dmg);
+# Reviewer 在 GitHub Web 上点 "Publish release" 后,普通用户即可下载。
+#
+# 重跑: 删除 draft release → 重新打 tag → 重推。
+#
+# 测试 gating: 本 workflow 不跑 cargo test / cargo clippy / vitest。
+# 这些门已在 push-to-master / PR 阶段跑过(见 #16 / 后续 CI 票);
+# tag 触发的目的是出货,不是重新测。Rust 编译失败 / 链接失败会直接
+# 让 tauri build 退出,等价于一次"干跑"。
+
+name: release
+
+on:
+  push:
+    tags:
+      - "app-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  # 同一 tag 反复推送时,取消上一轮 build,避免重复 draft
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    # macOS runner 配额紧;矩阵打 tag 才跑,不是 PR 触发的预演
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      # 一个 runner 挂掉不连带取消其它 runner(尤其是 macOS 偶发排队)
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: windows-latest
+            args: ""
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+          - platform: macos-15-intel
+            args: "--target x86_64-apple-darwin"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          # `npm ci` 要有 package-lock.json;项目走 npm,不要换成 pnpm/yarn
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # 两个 macOS runner 用各自的目标三元组;Linux/Windows 走默认即可,
+          # 不用预装额外 target(冷构建慢不了多少,本机缓存会让增量构建更快)
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || (matrix.platform == 'macos-15-intel' && 'x86_64-apple-darwin' || '') }}
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          # ~/.cargo 与 src-tauri/target 都进 cache。`target-${{ platform }}`
+          # 把 target 目录的 cache key 绑到 runner 标签上 —— Apple Silicon 与
+          # Intel Mac 的 target 目录结构不兼容,但 cache key 一致就会拉错版本,
+          # 必须按 platform 拆分
+          workspaces: |
+            ~/.cargo
+            src-tauri/target -> target-${{ matrix.platform }}
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            build-essential \
+            curl wget file
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build & publish draft release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # tagName 用 `app-v<version>` 约定;tauri-action 会把 __VERSION__
+          # 替换成 Cargo.toml 里的 package.version
+          tagName: app-v__VERSION__
+          releaseName: "科室任务管理 v__VERSION__"
+          releaseDraft: true
+          prerelease: false
+          # `tauri build` 跑完后才会上传;4 个 runner 各跑各的,draft
+          # 在 4 个 job 都跑完后由人工 Publish
+          args: ${{ matrix.args }}
