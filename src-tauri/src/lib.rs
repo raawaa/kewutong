@@ -6,6 +6,7 @@ pub mod db;
 pub mod error;
 pub mod holiday;
 pub mod materialization;
+pub mod notifications;
 pub mod recurring;
 pub mod state;
 pub mod testing;
@@ -82,6 +83,12 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         commands::wayfinder::wayfinder_search,
         // —— 托盘状态查询（ticket #29）——
         commands::tray::tray_status,
+        // —— 通知（ticket #30）——
+        commands::notification::list_unread_notifications,
+        commands::notification::list_notifications,
+        commands::notification::mark_notification_read,
+        commands::notification::mark_all_notifications_read,
+        commands::notification::get_notification,
     ])
 }
 
@@ -108,6 +115,11 @@ pub fn run() {
     // 不打开也不会更糟。
     builder = builder.plugin(tauri_plugin_positioner::init());
 
+    // OS 通知插件（ticket #30）：三条规则命中的任务走这条路径 emit
+    // 桌面通知。permission 在 macOS 上首次弹权限请求;被拒时 emit 走
+    // fallback——通知仍写库,只不弹 OS 弹窗。
+    builder = builder.plugin(tauri_plugin_notification::init());
+
     register_commands(builder)
         .setup(|app| {
             let db_path = app.path().app_data_dir()?.join(DB_FILE_NAME);
@@ -117,6 +129,13 @@ pub fn run() {
             // 的 instance。失败不阻塞启动,物化是后台能力。
             if let Err(err) = materialization::materialize_from_state(&state) {
                 eprintln!("[kewutong] 启动物化失败：{err}");
+            }
+            // 启动时也跑一次通知扫描——若启动时正好是周一 8 点,触发周报;
+            // due_24h / blocked_3d 立即能命中已存在的过期任务。失败不阻塞。
+            let app_handle = app.handle().clone();
+            match notifications::run_all(&state) {
+                Ok(summary) => emit_os_notifications(&app_handle, summary.into_flat()),
+                Err(err) => eprintln!("[kewutong] 启动通知扫描失败：{err}"),
             }
             let state_for_tick = Arc::clone(&state);
             let state_for_setup = Arc::clone(&state);
@@ -145,7 +164,7 @@ pub fn run() {
                 }
             }
 
-            spawn_materialize_tick(state_for_tick);
+            spawn_materialize_tick(state_for_tick, app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -171,13 +190,19 @@ fn install_holiday_calendar<R: tauri::Runtime>(
     Ok(())
 }
 
-/// 后台 tick：每小时调一次 `materialize_if_new_week`。跨入新 ISO 周
-/// 时跑物化,其余时间 noop。
+/// 后台 tick：每小时跑一次。物化 + 通知扫描共用一个 trigger——
+/// ticket #30 AC「通知调度器可与物化层的定时器共用 trigger」。
+///
+/// 物化：跨入新 ISO 周时跑一次,其余时间 noop。通知扫描：每次 tick
+/// 都跑,规则内部自己判定今天是否要 emit（due_24h 看 due_date 区间、
+/// blocked_3d 看 blocked_at 阈值、weekly_digest 看周一 8 点 + 非
+/// holiday）。落库与去重由 [`notifications::run_all`] 负责,emit OS
+/// 通知由 [`emit_os_notifications`] 完成。
 ///
 /// 用 `tauri::async_runtime::spawn` 走 Tauri 自带的 tokio runtime,避
 /// 免引额外 runtime 依赖。tick 的 panic 由 Tauri runtime 兜底,不
 /// 影响主进程。
-fn spawn_materialize_tick(state: AppState) {
+fn spawn_materialize_tick<R: tauri::Runtime>(state: AppState, app: tauri::AppHandle<R>) {
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(MATERIALIZE_TICK_INTERVAL);
         // 第一次 tick 立即触发——配合启动那次,即使启动时今天没跨入新
@@ -188,8 +213,47 @@ fn spawn_materialize_tick(state: AppState) {
             if let Err(err) = commands::materialization::materialize_if_new_week_via_state(&state) {
                 eprintln!("[kewutong] tick 物化失败：{err}");
             }
+            match notifications::run_all(&state) {
+                Ok(summary) => emit_os_notifications(&app, summary.into_flat()),
+                Err(err) => eprintln!("[kewutong] tick 通知扫描失败：{err}"),
+            }
         }
     });
+}
+
+/// 把每个新插入的通知 emit 成 OS 通知。
+///
+/// 单条失败不连累后续;emit 整体失败(权限被拒 / Linux 缺 dbus 等)只
+/// 打日志,不 panic。通知仍写在 DB 里——前端"未读面板"是兜底通道,
+/// OS 弹窗是锦上添花。
+fn emit_os_notifications<R: tauri::Runtime>(app: &tauri::AppHandle<R>, rows: Vec<notifications::NotificationRow>) {
+    if rows.is_empty() {
+        return;
+    }
+    use tauri_plugin_notification::NotificationExt;
+    for row in rows {
+        // payload 反序列化拿标题/正文——emit 阶段不替 payload 重新设计
+        // 形状,与序列化路径共用同一份 NotificationPayload 渲染逻辑。
+        let payload: Result<notifications::NotificationPayload, _> =
+            serde_json::from_value(row.payload.clone());
+        let (title, body) = match payload {
+            Ok(p) => p.render_message(),
+            Err(err) => {
+                eprintln!("[kewutong] 通知 id={} payload 反序列化失败：{err}", row.id);
+                continue;
+            }
+        };
+        let body_with_id = format!("{body}\n\n（通知 #{}）", row.id);
+        if let Err(err) = app
+            .notification()
+            .builder()
+            .title(title)
+            .body(body_with_id)
+            .show()
+        {
+            eprintln!("[kewutong] emit 通知失败 (id={})：{err}", row.id);
+        }
+    }
 }
 
 /// `AppError` → `tauri::Error`：Tauri 没有给 `AppError` 实现 `From`,在

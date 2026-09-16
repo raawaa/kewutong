@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "主窗口的能力集",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "notification:default"]
 }

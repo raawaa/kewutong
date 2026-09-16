@@ -9,10 +9,11 @@ use kewutong_lib::testing::{fresh_db, fresh_db_file};
 /// - V003（holiday_override 表,ticket #23）
 /// - V004（recurring_template 全列,ticket #24）
 /// - V005（物化引擎索引 + 元数据 + task.sub_team_id,ticket #25）
+/// - V006（notification_log 表 + 索引,ticket #30）
 ///
 /// 后续每加一张 migration 都要把这里 +1,并在 issue 里说明；fixture 测试
 /// 断言的应是「迁移能跑通且幂等」,而不是固定数字。
-const EXPECTED_APPLIED_MIGRATIONS: i64 = 5;
+const EXPECTED_APPLIED_MIGRATIONS: i64 = 6;
 
 #[test]
 fn migrations_能跑通且版本号可读() {

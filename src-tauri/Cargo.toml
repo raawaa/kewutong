@@ -57,6 +57,10 @@ tauri-plugin-single-instance = "2.4"
 # 内部 state——本项目 Linux 走 BottomRight 不依赖此 state,但打开这个 feature
 # 不增加额外 Linux 风险（Linux click 事件本身就不发,见 tray/mod.rs 注释）。
 tauri-plugin-positioner = { version = "2.3", features = ["tray-icon"] }
+# OS 级通知（ticket #30）：三条规则命中的任务通过 plugin 弹 OS 通知。
+# `permission-request` feature 让我们在 macOS 上显式请求权限——未授权时
+# 走"落库 + 不弹"的降级,不阻塞启动。
+tauri-plugin-notification = "2"
 
 [dev-dependencies]
 # `test` feature 打开 tauri::test（mock_builder / get_ipc_response），只在测试构建里生效

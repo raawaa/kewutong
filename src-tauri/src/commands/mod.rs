@@ -11,6 +11,7 @@ pub mod diagnostics;
 pub mod holiday;
 pub mod instance;
 pub mod materialization;
+pub mod notification;
 pub mod personnel;
 pub mod project;
 pub mod recurring_template;
