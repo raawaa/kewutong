@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "科室任务管理"
 authors = ["raawaa"]
 edition = "2021"
+# 启动 Cargo.run / cargo tauri dev 时不指定 --bin 时跑哪一个——xtask 是
+# 节假日抓取脚本,不能当主程序入口。没这一行,build 后 cargo run 会报
+# "could not determine which binary to run"。
+default-run = "kewutong"
 
 [lib]
 # `_lib` 后缀是 Tauri 模板惯例：避免 Windows 上 lib 名与 bin 名冲突
