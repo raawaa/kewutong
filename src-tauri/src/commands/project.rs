@@ -32,11 +32,20 @@ use tauri::State;
 /// - 全部 task 的 `status` 都是 `Done` → `Done`
 /// - 其它（任意 task 处于在飞：Open / In-progress / Blocked / Waiting-on，
 ///   或在飞 + Done 混存）→ `Active`
+///
+/// 序列化字面量与前端 `ProjectStatus` 联合 (`"Active" | "Done" | "Cancelled"`)
+/// 一一对应——不用 `rename_all`,对每个 variant 显式 rename,否则单字
+/// variant 会被 `kebab-case` 全部小写化(`Active` → `"active"`),
+/// 与前端 `PROJECT_STATUS_STYLE` 按 PascalCase 取 key 的查找错位
+/// → 渲染 `ProjectStatusBadge` 直接 TypeError 白屏(同 ticket #30
+/// 验收期间 `TaskStatus` 同一 bug)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
 pub enum ProjectStatus {
+    #[serde(rename = "Active")]
     Active,
+    #[serde(rename = "Done")]
     Done,
+    #[serde(rename = "Cancelled")]
     Cancelled,
 }
 
@@ -440,6 +449,22 @@ mod tests {
         }
         assert!(parse_project_status("active").is_none()); // 大小写敏感
         assert!(parse_project_status("").is_none());
+    }
+
+    /// 序列化字面量与 TS 类型 / 前端 PROJECT_STATUS_STYLE key / DB 字面量
+    /// 三者一致。ticket #30 验收踩过 `rename_all = "kebab-case"` 把
+    /// `Active` → `"active"` 的坑——锁死契约,防回归。
+    #[test]
+    fn project_status_序列化字面量_与_ts_类型和_db_字面量对齐() {
+        for (status, expected) in [
+            (ProjectStatus::Active, "Active"),
+            (ProjectStatus::Done, "Done"),
+            (ProjectStatus::Cancelled, "Cancelled"),
+        ] {
+            let json = serde_json::to_value(status).expect("序列化");
+            let s = json.as_str().expect("enum 序列化为字符串");
+            assert_eq!(s, expected, "序列化字面量 {s:?} != 期望 {expected:?}");
+        }
     }
 
     #[test]

@@ -61,6 +61,10 @@ pub struct HolidayFile {
 ///
 /// 区分「调休 vs 默认 weekday」靠 [`DaySource`]，不在 [`DayKind`]。
 /// 仅看 [`DayKind`] 的查询请走 [`HolidayCalendar::is_makeup_workday`]。
+///
+/// 序列化字面量与前端类型 `"holiday" | "workday"` 对齐(serde kebab-case
+/// 默认行为即正确——单字 + 全小写,前端恰好就这么用)。`rename_all`
+/// 保留无副作用,但为统一本仓库所有 enum 的 kebab-case 风格留作明确信号。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DayKind {
@@ -77,6 +81,10 @@ pub struct DayInfo {
 }
 
 /// 一条记录的来源,用于 UI 标识「这条是种子写的还是你手动改的」。
+///
+/// 序列化字面量与前端类型 `"default" | "seed" | "override"` 对齐
+/// (`kebab-case` 默认: `Default` → `default`、`Override` → `override`,
+/// `Seed` → `seed`)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DaySource {
