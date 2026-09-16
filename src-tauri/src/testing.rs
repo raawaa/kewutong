@@ -58,19 +58,18 @@ pub fn fresh_db_file(path: &Path) -> AppState {
 
 /// 清掉 V007 在 migration 阶段灌入的示例数据,以及 V008 灌入的真实子组。
 /// 让测试 fixture 起手是空 schema(只有表与索引,没有任何业务行)。
+///
+/// `Result` 不丢弃——清不掉就 panic。Fixture 起不来就该当场炸,而不是
+/// 让后续断言对着"看似空了其实还在"的库去跑,得到一句云里雾里的失败。
 fn clear_seed_data(state: &AppState) {
-    let conn = match state.db() {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    // V007 的示例数据:任务 / 模板 / 项目 / 人员 / 子组(均带 is_sample=1)。
-    // V008 不再自动 seed,无需清"真实"行——但若某次 setup 漏掉了也要兜底。
-    let _ = conn.execute_batch(
+    let conn = state.db().expect("fixture 连接锁不该被污染");
+    conn.execute_batch(
         "DELETE FROM notification_log; \
          DELETE FROM task; \
          DELETE FROM recurring_template; \
          DELETE FROM project; \
          DELETE FROM person; \
          DELETE FROM sub_team;",
-    );
+    )
+    .expect("V007 seed 清空应当成功;FK / CHECK 出错说明有迁移不兼容");
 }

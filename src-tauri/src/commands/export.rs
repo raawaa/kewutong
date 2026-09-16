@@ -326,9 +326,9 @@ pub fn import_database_json(
 
 /// 当前视图 CSV 导出。
 ///
-/// "当前视图" = 全部在飞任务(剔除 Done / Cancelled),按在飞优先 +
-/// `effective_date` 升序——与 `list_tasks` 的默认排序对齐,前端把视图
-/// 上的内容直接落 CSV,发给领导时与他看到的一致。
+/// "当前视图" = 全部在飞任务(剔除 Done / Cancelled),按 `effective_date`
+/// 升序——与 `list_tasks` 的默认排序对齐,前端把视图上的内容直接落
+/// CSV,发给领导时与他看到的一致。
 ///
 /// CSV 列(`header_row`):
 /// - `id` `title` `status` `owner` `sub_team` `project` `due_date`
@@ -337,6 +337,10 @@ pub fn import_database_json(
 ///
 /// 转义走 RFC 4180:含逗号 / 双引号 / 换行的字段用 `"..."` 包裹,内部
 /// 双引号写两次(`""`)。
+///
+/// owner 是 INNER JOIN——若 task 行因导入漂移产生了悬空 owner,
+/// 这条会被静默丢弃(对应 AC「导入后无悬空 FK」由 [`import_database_json
+/// `] 的 round-trip 测试兜底)。
 #[tauri::command]
 pub fn export_tasks_csv(state: State<'_, AppState>) -> Result<TasksCsvExport> {
     let conn = state.db()?;
@@ -358,8 +362,7 @@ pub fn export_tasks_csv(state: State<'_, AppState>) -> Result<TasksCsvExport> {
            LEFT JOIN project pr ON pr.id = t.project_id \
            LEFT JOIN person wp ON wp.id = t.waiting_on_person_id \
           WHERE t.status NOT IN ('Done','Cancelled') \
-          ORDER BY CASE WHEN t.status IN ('Open','In-progress','Blocked','Waiting-on') THEN 0 ELSE 1 END ASC, \
-                   COALESCE(t.due_date, substr(t.scheduled_at, 1, 10)) ASC, \
+          ORDER BY COALESCE(t.due_date, substr(t.scheduled_at, 1, 10)) ASC, \
                    t.created_at ASC, \
                    t.id ASC",
     )?;

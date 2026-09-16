@@ -28,9 +28,13 @@ import { Button } from "@/components/ui/button";
 
 export function SampleDataBanner({
   refreshToken,
+  onCleared,
 }: {
   /** 父层 `clearSampleData` 成功后 +1,触发重新拉取。 */
   refreshToken: number;
+  /** 横幅清除成功时通知父层——views 按 refreshToken 拉数据,不回调则
+   * 已删的示例任务在视图里继续残留。 */
+  onCleared?: () => void;
 }) {
   const [present, setPresent] = useState<boolean | null>(null);
   const [clearing, setClearing] = useState(false);
@@ -58,7 +62,7 @@ export function SampleDataBanner({
     };
   }, [refreshToken]);
 
-  if (present !== true) {
+  if (present !== true && !error) {
     return null;
   }
 
@@ -76,6 +80,7 @@ export function SampleDataBanner({
       const summary = await clearSampleData();
       setLastSummary(summary);
       setPresent(false);
+      onCleared?.();
     } catch (err: unknown) {
       setError(toAppError(err));
     } finally {

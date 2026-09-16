@@ -88,6 +88,11 @@ export default function App() {
     setDialog(null);
     setRefreshToken((token) => token + 1);
   }, []);
+  // 横幅清除示例后也得刷——views 按 refreshToken 拉数据,不清的话
+  // Today/矩阵/项目/人员 视图继续展示已删的示例任务。
+  const onSampleCleared = useCallback(() => {
+    setRefreshToken((token) => token + 1);
+  }, []);
 
   // 顶栏「新建任务」按钮 + ⌘N / ⌘K 都在 window 层——保证在任意视图
   // 都能唤起。
@@ -251,7 +256,10 @@ export default function App() {
       </header>
 
       <TrayStatusBanner status={trayStatusDto} />
-      <SampleDataBanner refreshToken={refreshToken} />
+      <SampleDataBanner
+        refreshToken={refreshToken}
+        onCleared={onSampleCleared}
+      />
 
       {tab === "today" ? (
         <TodayWeekView

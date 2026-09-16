@@ -72,22 +72,6 @@ pub fn new_app_state(conn: Connection, clock: Arc<dyn Clock>) -> AppState {
     })
 }
 
-/// 构造一个新的 `AppState`,同时把数据库路径写进去。`db::open` 之后
-/// 调用,把路径也保留——便于「数据文件位置」命令给前端展示。
-pub fn new_app_state_with_path(
-    conn: Connection,
-    clock: Arc<dyn Clock>,
-    db_path: PathBuf,
-) -> AppState {
-    Arc::new(AppStateInner {
-        db: Mutex::new(conn),
-        clock,
-        calendar: Mutex::new(HolidayCalendar::default()),
-        tray_status: Mutex::new(TrayStatus::default()),
-        db_path: Mutex::new(Some(db_path)),
-    })
-}
-
 impl AppStateInner {
     /// 装入合并后的节假日日历。`setup` 钩子里调一次；之后 override 写命
     /// 令走 [`crate::holiday::reload_overrides_from_db`] 在原对象上原地
