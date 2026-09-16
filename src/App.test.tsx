@@ -15,6 +15,8 @@ import {
   listProjects,
   listSubTeams,
   listTasks,
+  todayWeek,
+  trayStatus,
 } from "@/lib/ipc";
 
 vi.mock("@/lib/ipc", async (importOriginal) => ({
@@ -25,6 +27,8 @@ vi.mock("@/lib/ipc", async (importOriginal) => ({
   listPeople: vi.fn(),
   listSubTeams: vi.fn(),
   listProjects: vi.fn(),
+  todayWeek: vi.fn(),
+  trayStatus: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -37,6 +41,13 @@ beforeEach(() => {
   vi.mocked(listPeople).mockResolvedValue([]);
   vi.mocked(listSubTeams).mockResolvedValue([]);
   vi.mocked(listProjects).mockResolvedValue([]);
+  vi.mocked(todayWeek).mockResolvedValue({
+    counts: { activePeople: 0, inProgress: 0, blocked: 0 },
+    buckets: { overdue: [], today: [], tomorrow: [], thisWeekRest: [] },
+  });
+  // 默认托盘可用——App.test 不关心 banner,显式给可用避免 banner 在这
+  // 些测试里冒出来干扰断言；专门测 banner 行为去 TrayStatusBanner.test。
+  vi.mocked(trayStatus).mockResolvedValue({ available: true, reason: "" });
 });
 
 /** 弹窗开着的判据：新建任务的对话框在 DOM 里。 */
@@ -93,5 +104,37 @@ describe("App · 全局新建入口", () => {
     await user.click(screen.getByRole("button", { name: /新建任务/ }));
 
     expect(新建弹窗()).toBeInTheDocument();
+  });
+});
+
+describe("App · 托盘不可用 banner（ticket #29）", () => {
+  it("tray_status 返回不可用时,主界面渲染 reason banner", async () => {
+    vi.mocked(trayStatus).mockResolvedValue({
+      available: false,
+      reason: "托盘初始化失败：缺少 libappindicator3-1",
+    });
+    render(<App />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("托盘初始化失败：缺少 libappindicator3-1");
+  });
+
+  it("tray_status 返回可用时,主界面不渲染 banner", async () => {
+    vi.mocked(trayStatus).mockResolvedValue({ available: true, reason: "" });
+    render(<App />);
+
+    // 等待 useEffect 跑完——再断言没有 alert
+    await waitFor(() => expect(trayStatus).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("tray_status 命令本身抛错时不臆测状态——banner 保持 null 不渲染", async () => {
+    vi.mocked(trayStatus).mockRejectedValue(new Error("ipc 断了"));
+    render(<App />);
+
+    // 等 effect 跑完——只断言 banner 不出现,理由是 reason 是后端拥有的
+    // 字段,前端不在 catch 里编一个;不渲染比渲染错的内容更安全。
+    await waitFor(() => expect(trayStatus).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

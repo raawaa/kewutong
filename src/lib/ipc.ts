@@ -655,3 +655,26 @@ export function wayfinderSearch(
 ): Promise<WayfinderSearchResults> {
   return invoke<WayfinderSearchResults>("wayfinder_search", { args });
 }
+
+// ---------------------------------------------------------------------------
+// 托盘可达性（ticket #29）
+// ---------------------------------------------------------------------------
+
+/** 托盘状态 DTO（与 Rust `commands::tray::TrayStatusDto` 一一对应）。
+ *
+ * - `available = true` 时 `reason` 必须是空串（前端会一起清掉 banner）。
+ * - `available = false` 时 `reason` 是面向科长的中文短句,前端原样展示。
+ *
+ * 启动时拉一次,后续状态变化由 Rust 端 emit 事件推给前端（事件总线
+ * 上线后由后续 ticket 接,本期 banner 只响应启动那一刻的状态）。
+ */
+export type TrayStatusDto = {
+  available: boolean;
+  reason: string;
+};
+
+/** 取托盘可达性。启动时调一次,把返回结果塞给 [`TrayStatusBanner`]
+ * ——后者只渲染,不重试,避免状态机读路径在 banner 自身抖动。 */
+export function trayStatus(): Promise<TrayStatusDto> {
+  return invoke<TrayStatusDto>("tray_status");
+}

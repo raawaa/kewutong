@@ -9,6 +9,7 @@ import {
   CommandPalette,
   type CommandPaletteTarget,
 } from "@/components/wayfinder/CommandPalette";
+import { TrayStatusBanner } from "@/components/tray/TrayStatusBanner";
 import { PersonnelMatrixView } from "@/views/PersonnelMatrixView";
 import { PersonnelView } from "@/views/PersonnelView";
 import { ProjectsView } from "@/views/ProjectsView";
@@ -17,12 +18,14 @@ import {
   listPeople,
   listProjects,
   listSubTeams,
+  trayStatus,
   type AssigneeCandidate,
   type Person,
   type Project,
   type ProjectCandidate,
   type SubTeam,
   type Task,
+  type TrayStatusDto,
 } from "@/lib/ipc";
 
 /**
@@ -66,6 +69,11 @@ export default function App() {
 
   // ⌘K 命令面板：开 / 关 + 选中目标后的导航意图。
   const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // 托盘可达性（ticket #29）：启动时拉一次。banner 只渲染不轮询——后续
+  // Rust 端走事件总线推状态变化时再加 effect,本期只响应启动那一瞬。
+  // `null` = 拉数据还没回来（不渲染,避免短暂闪烁）。
+  const [trayStatusDto, setTrayStatusDto] = useState<TrayStatusDto | null>(null);
 
   // 项目视图的"定位"——从命令面板跳过去时给一个 initialProjectId,
   // 视图据此选中该项目的卡片。完成定位后清空。
@@ -123,6 +131,25 @@ export default function App() {
       cancelled = true;
     };
   }, [refreshToken]);
+
+  // 启动时拉一次托盘可达性（ticket #29）。失败 = banner 保持 null,不
+  // 臆测状态——`reason` 是后端拥有的字段,前端不在 catch 里编一个;不
+  // 渲染比渲染一条错的「托盘不可用」更安全。IPC 真的抛了,通常意味着
+  // Tauri 自己就坏了,横幅说什么都不重要。
+  useEffect(() => {
+    let cancelled = false;
+    trayStatus()
+      .then((dto) => {
+        if (cancelled) return;
+        setTrayStatusDto(dto);
+      })
+      .catch(() => {
+        // 故意不调 setTrayStatusDto——保留 null,banner 不渲染。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /**
   视图点开一条已有任务时调这里——App 负责把弹窗开起来。`assignee` /
@@ -221,6 +248,8 @@ export default function App() {
           </Button>
         </div>
       </header>
+
+      <TrayStatusBanner status={trayStatusDto} />
 
       {tab === "today" ? (
         <TodayWeekView
