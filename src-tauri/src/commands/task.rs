@@ -30,16 +30,26 @@ use tauri::State;
 // ---------------------------------------------------------------------------
 
 /// 任务 6 状态。状态机唯一入口是 [`set_task_status`]。
+///
+/// 序列化字面量与 DB 列 / 前端 TS 类型 (`TaskStatus` 联合) 三者一一对齐:
+/// `Open` / `In-progress` / `Blocked` / `Waiting-on` / `Done` / `Cancelled`。
+/// 不用 `rename_all`,对每个变体显式 `rename` ——否则单字 variant 会被
+/// `kebab-case` 全部小写化(`Open` → `open`),与前端 `STATUS_STYLE`
+/// 按 PascalCase 取 key 的查找错位,渲染时 `STATUS_STYLE[task.status].label`
+/// 拿不到值,前端 TaskCard 直接崩(ticket #30 验收期间踩到这个)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
 pub enum TaskStatus {
+    #[serde(rename = "Open")]
     Open,
     #[serde(rename = "In-progress")]
     InProgress,
+    #[serde(rename = "Blocked")]
     Blocked,
     #[serde(rename = "Waiting-on")]
     WaitingOn,
+    #[serde(rename = "Done")]
     Done,
+    #[serde(rename = "Cancelled")]
     Cancelled,
 }
 
@@ -1258,6 +1268,33 @@ mod tests {
         assert!(parse_status("open").is_none()); // 大小写敏感
         assert!(parse_status("InProgress").is_none()); // 拼写
         assert!(parse_status("").is_none());
+    }
+
+    /// 序列化字面量与 TS 类型 / STATUS_STYLE key / DB 字面量**三者一致**。
+    ///
+    /// 之前用 `rename_all = "kebab-case"` 导致单字 variant 被小写化
+    /// (`Open` → `"open"`),前端 `STATUS_STYLE["open"]` 为 undefined,
+    /// 渲染 TaskCard 直接报 TypeError——ticket #30 验收期间踩到。锁
+    /// 死 JSON 字面量等于变体名,前端 / DB / Rust 三者不再漂移。
+    #[test]
+    fn task_status_序列化字面量_与_ts_类型和_db_字面量对齐() {
+        for status in [
+            TaskStatus::Open,
+            TaskStatus::InProgress,
+            TaskStatus::Blocked,
+            TaskStatus::WaitingOn,
+            TaskStatus::Done,
+            TaskStatus::Cancelled,
+        ] {
+            let json = serde_json::to_value(status).expect("序列化");
+            let s = json.as_str().expect("enum 序列化为字符串");
+            assert_eq!(
+                s,
+                status.as_str(),
+                "序列化字面量 {s:?} != DB 字面量 {:?}",
+                status.as_str()
+            );
+        }
     }
 
     #[test]
