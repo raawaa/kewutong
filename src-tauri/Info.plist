@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  裸二进制（cargo tauri dev 直接跑 target/debug/kewutong）嵌入的
+	  Info.plist 只有 CFBundleName/Version。dev 模式 tauri-bundler 不跑,
+	  CFBundleIdentifier 不会注入——macOS 不识别为合法 app,NSStatusItem
+	  不显示在菜单栏。这份由 bundle.macos.info_plist 在 dev 阶段合并进去。
+	  cargo tauri build 时 tauri-bundler 自己会写 CFBundleIdentifier 与
+	  CFBundlePackageType 等全套字段,所以这份只补 dev 缺的那几个。
+	-->
+	<key>CFBundleIdentifier</key>
+	<string>com.raawaa.kewutong</string>
+	<key>CFBundleExecutable</key>
+	<string>kewutong</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+</dict>
+</plist>

@@ -87,21 +87,34 @@ impl TrayWindowPosition {
 /// - `Menu::new` 失败 → 原样冒泡
 /// - `TrayIconBuilder::build` 失败 → 原样冒泡
 pub fn install<R: Runtime>(app: &AppHandle<R>, state: &AppState) -> Result<()> {
+    diag_log("install: start");
     let menu = build_menu(app)?;
     let icon = app
         .default_window_icon()
         .ok_or_else(|| AppError::internal("托盘图标缺失：default_window_icon 未注册"))?;
+    diag_log(&format!(
+        "install: icon acquired ({}x{}, {} bytes RGBA)",
+        icon.width(),
+        icon.height(),
+        icon.rgba().len()
+    ));
 
-    TrayIconBuilder::with_id("main-tray")
+    let tray = TrayIconBuilder::with_id("main-tray")
         .icon(icon.clone())
+        // macOS：菜单栏图标按 template 处理（系统按菜单栏主题自动着色，
+        // 不与背景冲突；非 template 在 Sequoia 上偶发被丢弃,见 research
+        // #8 §4 与 tauri#12060）。
+        .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(handle_menu_event)
         .on_tray_icon_event(handle_tray_event)
         .build(app)
         .map_err(|err| AppError::internal(format!("注册托盘失败：{err}")))?;
+    diag_log(&format!("install: tray built (id={})", tray.id().0));
 
     state.set_tray_status(TrayStatus::Available);
+    eprintln!("[diag-tray] install: status flipped to Available");
     Ok(())
 }
 
@@ -113,18 +126,46 @@ pub fn intercept_close_to_tray<R: Runtime>(
     window: &tauri::WebviewWindow<R>,
     state: &AppState,
 ) {
+    diag_log(&format!(
+        "intercept_close_to_tray: tray_status = {:?}",
+        state.tray_status()
+    ));
     if !matches!(state.tray_status(), TrayStatus::Available) {
         // 降级路径:不拦关窗,让默认行为跑(应用退出)
         return;
     }
     let app = window.app_handle().clone();
+    let label = window.label().to_string();
+    diag_log(&format!("intercept: registering handler on window label={label}"));
     window.on_window_event(move |event| {
+        diag_log(&format!("window event: {event:?}"));
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            diag_log("CloseRequested: prevent_close + hide");
             api.prevent_close();
             hide_main_window(&app);
         }
     });
+    diag_log("intercept: handler registered");
 }
+
+/// 诊断日志写到 /tmp/kewutong-tray-diag.log。cargo tauri dev 在子进程启
+/// 动后父 cargo 退出,子进程的 stderr/stdout pipe 断开,eprintln 不可见——
+/// 改写到文件,cargo run 退出后也能看到中间状态。
+#[cfg(debug_assertions)]
+fn diag_log(msg: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/kewutong-tray-diag.log")
+    {
+        let _ = writeln!(f, "[{}] {msg}", chrono::Utc::now().format("%H:%M:%S%.3f"));
+    }
+    eprintln!("[diag-tray] {msg}");
+}
+
+#[cfg(not(debug_assertions))]
+fn diag_log(_msg: &str) {}
 
 /// 唤回主窗口。从托盘菜单 / 图标点击 / 单实例重复启动都会调到这里。
 ///
