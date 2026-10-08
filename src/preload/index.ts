@@ -17,9 +17,12 @@ import type {
   CreateProjectArgs,
   CreateSubTeamArgs,
   CreateTaskArgs,
+  DatabaseExport,
+  DatabaseImportSummary,
   DeleteProjectArgs,
   DeleteSubTeamArgs,
   DueDateOption,
+  ImportDatabaseJsonArgs,
   ListAssigneeCandidatesArgs,
   ListPeopleArgs,
   ListProjectCandidatesArgs,
@@ -37,6 +40,7 @@ import type {
   SetTaskStatusArgs,
   SubTeam,
   Task,
+  TasksCsvExport,
   TodayWeek,
   TrayStatusDto,
   UpdatePersonArgs,
@@ -115,6 +119,16 @@ const api = {
     todayWeek: (): Promise<TodayWeek> => ipcRenderer.invoke("task.today_week"),
     listDueDateOptions: (): Promise<DueDateOption[]> =>
       ipcRenderer.invoke("task.list_due_date_options"),
+  },
+
+  // 导出（ticket #53）
+  export: {
+    exportDatabaseJson: (): Promise<DatabaseExport> =>
+      ipcRenderer.invoke("export.export_database_json"),
+    importDatabaseJson: (args: ImportDatabaseJsonArgs): Promise<DatabaseImportSummary> =>
+      ipcRenderer.invoke("export.import_database_json", args),
+    exportTasksCsv: (): Promise<TasksCsvExport> =>
+      ipcRenderer.invoke("export.export_tasks_csv"),
   },
 };
 

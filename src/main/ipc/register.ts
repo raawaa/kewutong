@@ -15,6 +15,7 @@ import type { AppState } from "../state.js";
 import * as Personnel from "../personnel/index.js";
 import * as Project from "../project/index.js";
 import * as Task from "../task/index.js";
+import * as Export from "../export/index.js";
 
 /**
  * 把命令函数包装成 ipcMain.handle 的 handler。
@@ -52,6 +53,7 @@ export function registerAllIpc(state: AppState): void {
   registerPersonnel(state);
   registerProject(state);
   registerTask(state);
+  registerExport(state);
 }
 
 /** M1 探活 / 数据文件位置 / 托盘状态。 */
@@ -216,6 +218,24 @@ function registerTask(state: AppState): void {
 
   handleVoid<import("../types.js").DueDateOption[]>("task.list_due_date_options", (s) =>
     Task.listDueDateOptions(s),
+  )(ipcMain, state);
+}
+
+/** Export domain（ticket #53）。 */
+function registerExport(state: AppState): void {
+  handleVoid<import("../types.js").DatabaseExport>(
+    "export.export_database_json",
+    (s) => Export.exportDatabaseJson(s),
+  )(ipcMain, state);
+
+  handle<Export.ImportDatabaseJsonArgs, import("../types.js").DatabaseImportSummary>(
+    "export.import_database_json",
+    (s, args) => Export.importDatabaseJson(s, args),
+  )(ipcMain, state);
+
+  handleVoid<import("../types.js").TasksCsvExport>(
+    "export.export_tasks_csv",
+    (s) => Export.exportTasksCsv(s),
   )(ipcMain, state);
 }
 

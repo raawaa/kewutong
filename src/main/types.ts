@@ -424,6 +424,10 @@ export interface DatabaseImportSummary {
   rowsImported: number;
 }
 
+export interface ImportDatabaseJsonArgs {
+  jsonText: string;
+}
+
 export interface TasksCsvExport {
   csvText: string;
   rowCount: number;

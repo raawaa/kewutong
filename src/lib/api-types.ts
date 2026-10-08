@@ -16,9 +16,12 @@ import type {
   CreateProjectArgs,
   CreateSubTeamArgs,
   CreateTaskArgs,
+  DatabaseExport,
+  DatabaseImportSummary,
   DeleteProjectArgs,
   DeleteSubTeamArgs,
   DueDateOption,
+  ImportDatabaseJsonArgs,
   ListAssigneeCandidatesArgs,
   ListPeopleArgs,
   ListProjectCandidatesArgs,
@@ -36,6 +39,7 @@ import type {
   SetTaskStatusArgs,
   SubTeam,
   Task,
+  TasksCsvExport,
   TodayWeek,
   TrayStatusDto,
   UpdatePersonArgs,
@@ -72,6 +76,10 @@ export type {
   ListTasksFilteredArgs,
   TodayWeek,
   DueDateOption,
+  DatabaseExport,
+  DatabaseImportSummary,
+  TasksCsvExport,
+  ImportDatabaseJsonArgs,
 };
 
 // ---------------------------------------------------------------------------
@@ -227,4 +235,20 @@ export function todayWeek(): Promise<TodayWeek> {
 
 export function listDueDateOptions(): Promise<DueDateOption[]> {
   return window.api.task.listDueDateOptions();
+}
+
+// ---------------------------------------------------------------------------
+// 导出（ticket #53）
+// ---------------------------------------------------------------------------
+
+export function exportDatabaseJson(): Promise<DatabaseExport> {
+  return window.api.export.exportDatabaseJson();
+}
+
+export function importDatabaseJson(args: ImportDatabaseJsonArgs): Promise<DatabaseImportSummary> {
+  return window.api.export.importDatabaseJson(args);
+}
+
+export function exportTasksCsv(): Promise<TasksCsvExport> {
+  return window.api.export.exportTasksCsv();
 }
