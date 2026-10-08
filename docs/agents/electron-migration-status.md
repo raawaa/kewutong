@@ -37,25 +37,37 @@
 `src/main/task/index.ts` 提供 `fetchInFlightTasksForPerson` 给 personnel 矩阵
 调用；任务 CRUD / today_week / search 等在 M2 #43 / #44 / #45 ticket 内补齐。
 
+### M2 #42：Project CRUD（✅ 完整 example）
+
+第二个完整示例——`src-tauri/src/commands/project.rs`（510 行）
+→ `src/main/project/index.ts`（~230 行）+ `project.test.ts`（10 个 case）。
+
+- CRUD（含日期字段校验 + FK 兜底）
+- 删除项目时事务内 UPDATE task.project_id = NULL + DELETE project
+- `listProjects` / `listProjectCandidates` 共享 `deriveStatusSqlFragment`
+  派生 status（空 Active / 全 Cancelled / 全 Done / 兜底 Active）
+- IPC 注册（`project.*` 5 个 channel）
+- preload typed wrapper + `src/lib/api-types.ts` 暴露同形 API
+
 ## 进行中 / 待办
 
 ### M2（13 个 domain 平迁）
 
-| 工单 | 标题                                | 剩余工作量估算 |
-| --- | ----------------------------------- | -------------- |
-| #41 | Personnel                            | ✅ 已完成       |
-| #42 | Project CRUD                         | ~510 行 Rust → TS |
-| #43 | Task CRUD + view queries (today_week) | ~1408 行（最大模块） |
-| #44 | Task status                          | 已合并到 #43 的 `setTaskStatus` |
-| #45 | Task FTS5 search                     | 搜索代码 + 测试 |
-| #46 | Recurring template                   | ~461 行 |
-| #47 | Holiday                              | ~180 行 + calendar 实现 |
-| #48 | Materialization                      | ~1409 行 + 测试 |
-| #49 | Instance actions                     | ~443 行 |
-| #50 | Wayfinder                            | ~441 行 |
-| #51 | Notification commands (CRUD)         | ~76 行（短） |
-| #52 | Sample data                          | ~234 行 |
-| #53 | Export                               | ~605 行 |
+| 工单 | 标题                                | 状态 |
+| --- | ----------------------------------- | ---- |
+| #41 | Personnel                            | ✅ 已完成 |
+| #42 | Project CRUD                         | ✅ 已完成 |
+| #43 | Task CRUD + view queries (today_week) | ⏳ 占位实现（`fetchInFlightTasksForPerson` 已平迁，余 ~1300 行） |
+| #44 | Task status                          | ⏳ 与 #43 一同落地 |
+| #45 | Task FTS5 search                     | ❌ 待办 |
+| #46 | Recurring template                   | ❌ 待办 |
+| #47 | Holiday                              | ❌ 待办 |
+| #48 | Materialization                      | ❌ 待办 |
+| #49 | Instance actions                     | ❌ 待办 |
+| #50 | Wayfinder                            | ❌ 待办 |
+| #51 | Notification commands (CRUD)         | ❌ 待办 |
+| #52 | Sample data                          | ❌ 待办 |
+| #53 | Export                               | ❌ 待办 |
 
 **剩余 M2 工作量 ~5500 行 Rust → TS + 等量测试。**
 
