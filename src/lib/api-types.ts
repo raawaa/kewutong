@@ -66,6 +66,11 @@ import type {
   SetHolidayOverrideArgs,
 } from "@/main/holiday/index";
 
+import type {
+  MaterializeIfNewWeekResult,
+  MaterializeTotals,
+} from "@/main/materialization/index";
+
 /** 与主进程 `AppError.toPayload()` 一一对应。 */
 export type AppError = AppErrorDto;
 
@@ -110,7 +115,9 @@ export type {
   HolidayLoadResult,
   NotificationRow,
   MarkReadArgs,
-  GetNotificationArgs,};
+  GetNotificationArgs,
+  MaterializeTotals,
+  MaterializeIfNewWeekResult,};
 
 // ---------------------------------------------------------------------------
 // 探活 / 数据文件位置 / 托盘（tickets #38 / #40 + 后续 #54）
@@ -346,4 +353,20 @@ export function markAllNotificationsRead(): Promise<number> {
 }
 
 export function getNotification(args: GetNotificationArgs): Promise<NotificationRow> {
-  return window.api.notification.getNotification(args);}
+  return window.api.notification.getNotification(args);
+}
+
+// ---------------------------------------------------------------------------
+// 物化（tickets #25 / #48）
+// ---------------------------------------------------------------------------
+
+/** 立即跑一次物化——UI 的「立即刷新」按钮、调停模板后想看到新 instance
+ *  等场景手动调。返回合计。 */
+export function materializeNow(): Promise<MaterializeTotals> {
+  return window.api.materialization.materializeNow();
+}
+
+/** 后台 tick 调用——只在跨入新 ISO 周时跑物化。`materialized = false`
+ *  表示本次没真跑（前端不弹提示）。 */
+export function materializeIfNewWeek(): Promise<MaterializeIfNewWeekResult> {
+  return window.api.materialization.materializeIfNewWeek();}

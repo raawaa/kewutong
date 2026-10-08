@@ -18,6 +18,7 @@ import * as Personnel from "../personnel/index.js";
 import * as Project from "../project/index.js";
 import * as Task from "../task/index.js";
 import * as Export from "../export/index.js";
+import * as Materialization from "../materialization/index.js";
 import * as RecurringTemplate from "../recurring_template/index.js";
 
 /**
@@ -59,6 +60,7 @@ export function registerAllIpc(state: AppState): void {
   registerTask(state);
   registerExport(state);
   registerRecurringTemplate(state);
+  registerMaterialization(state);
   registerNotification(state);
 }
 
@@ -289,6 +291,19 @@ function registerRecurringTemplate(state: AppState): void {
     import("../types.js").RecurringTemplate
   >("recurring_template.set_recurring_template_enabled", (s, args) =>
     RecurringTemplate.setRecurringTemplateEnabled(s, args),
+  )(ipcMain, state);
+}
+
+/** Materialization domain（tickets #25 / #48）。 */
+function registerMaterialization(state: AppState): void {
+  handleVoid<import("../materialization/index.js").MaterializeTotals>(
+    "materialization.materialize_now",
+    (s) => Materialization.materializeFromState(s),
+  )(ipcMain, state);
+
+  handleVoid<import("../materialization/index.js").MaterializeIfNewWeekResult>(
+    "materialization.materialize_if_new_week",
+    (s) => Materialization.materializeIfNewWeek(s),
   )(ipcMain, state);
 }
 

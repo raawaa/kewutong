@@ -65,6 +65,10 @@ import type {
   MarkReadArgs,
   NotificationRow,
 } from "@/main/notification/index";
+import type {
+  MaterializeIfNewWeekResult,
+  MaterializeTotals,
+} from "@/main/materialization/index";
 
 /** 渲染进程只能看到这一份 typed API。 */
 const api = {
@@ -184,6 +188,14 @@ const api = {
       ipcRenderer.invoke("notification.mark_all_notifications_read"),
     getNotification: (args: GetNotificationArgs): Promise<NotificationRow> =>
       ipcRenderer.invoke("notification.get_notification", args),
+  },
+
+  // 物化（tickets #25 / #48）
+  materialization: {
+    materializeNow: (): Promise<MaterializeTotals> =>
+      ipcRenderer.invoke("materialization.materialize_now"),
+    materializeIfNewWeek: (): Promise<MaterializeIfNewWeekResult> =>
+      ipcRenderer.invoke("materialization.materialize_if_new_week"),
   },
 };
 
