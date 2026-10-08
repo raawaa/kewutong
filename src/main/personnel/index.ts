@@ -14,6 +14,9 @@ import type Database from "better-sqlite3";
 
 import { AppError } from "../error.js";
 import type { AppState } from "../state.js";
+import { escapeLike } from "../util/sql.js";
+import { requireNonBlank, trimToOption } from "../util/strings.js";
+import { ensureSubTeamExists } from "../util/fk.js";
 import type {
   AssigneeCandidate,
   CreatePersonArgs,
@@ -98,30 +101,8 @@ function fetchPerson(db: Database.Database, id: number): Person | null {
 }
 
 // ---------------------------------------------------------------------------
-// 入参校验与字符串处理
+// 入参校验与字符串处理（已上提到 util/strings.ts）
 // ---------------------------------------------------------------------------
-
-function requireNonBlank(value: string, message: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) throw AppError.invalid(message);
-  return trimmed;
-}
-
-function trimToOption(value: string | null | undefined): string | null {
-  if (value === null || value === undefined) return null;
-  const trimmed = value.trim();
-  return trimmed.length === 0 ? null : trimmed;
-}
-
-/** LIKE 元字符（`%` / `_` / 反斜杠本身）转义，配合 SQL `ESCAPE '\'` 使用。 */
-function escapeLike(raw: string): string {
-  let escaped = "";
-  for (const ch of raw) {
-    if (ch === "\\" || ch === "%" || ch === "_") escaped += "\\";
-    escaped += ch;
-  }
-  return escaped;
-}
 
 // ---------------------------------------------------------------------------
 // 子组命令
@@ -391,13 +372,6 @@ function ensurePersonNameAvailable(
         )
         .get(subTeamId, name);
   if (taken) throw AppError.invalid("同子组内已存在同名人员。");
-}
-
-function ensureSubTeamExists(db: Database.Database, id: number): void {
-  const row = db
-    .prepare<[number], { id: number }>("SELECT id FROM sub_team WHERE id = ?")
-    .get(id);
-  if (!row) throw AppError.invalid("所属子组不存在。");
 }
 
 // ---------------------------------------------------------------------------

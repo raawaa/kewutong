@@ -495,7 +495,7 @@ describe("smoke / 场景 3：项目 + 任务关联 + status 派生（#20）", ()
           ownerPersonId: 9999,
           subTeamId: w.teamId,
         }),
-      ).toThrow(/项目负责人不存在/);
+      ).toThrow(/负责人不存在/);
 
       expect(() =>
         Project.createProject(w.state, {

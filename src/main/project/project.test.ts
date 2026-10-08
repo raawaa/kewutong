@@ -57,7 +57,7 @@ describe("project / CRUD（#20）", () => {
           ownerPersonId: 999,
           subTeamId: ctx.teamId,
         }),
-      ).toThrow(/项目负责人不存在/);
+      ).toThrow(/负责人不存在/);
     } finally {
       ctx.close();
     }

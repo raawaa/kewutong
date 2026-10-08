@@ -24,6 +24,7 @@ import type Database from "better-sqlite3";
 import { AppError } from "../error.js";
 import { parseSqlDate, toSqlDate } from "../clock.js";
 import type { AppState, HolidayCalendarLike } from "../state.js";
+import { requireNonBlank } from "../util/strings.js";
 
 // ---------------------------------------------------------------------------
 // DTO / 枚举
@@ -93,14 +94,8 @@ interface HolidayFileJson {
 const MAX_CALENDAR_SPAN_DAYS = 92;
 
 // ---------------------------------------------------------------------------
-// 入参校验与字符串处理
+// 入参校验与字符串处理（已上提到 util/strings.ts）
 // ---------------------------------------------------------------------------
-
-function requireNonBlank(value: string, message: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) throw AppError.invalid(message);
-  return trimmed;
-}
 
 /** 把 `YYYY-MM-DD` 文本解析为 `Date`。非此格式抛中文 `INVALID_ARGUMENT`。 */
 function parseIsoDate(text: string, label: string): Date {
