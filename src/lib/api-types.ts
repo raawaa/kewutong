@@ -15,16 +15,20 @@ import type {
   CreatePersonArgs,
   CreateProjectArgs,
   CreateSubTeamArgs,
+  CreateTaskArgs,
   DatabaseExport,
   DatabaseImportSummary,
   DeleteProjectArgs,
   DeleteSubTeamArgs,
+  DueDateOption,
   ImportDatabaseJsonArgs,
   ListAssigneeCandidatesArgs,
   ListPeopleArgs,
   ListProjectCandidatesArgs,
   ListProjectsArgs,
   ListRecurringTemplatesArgs,
+  ListTasksArgs,
+  ListTasksFilteredArgs,
   PersonnelMatrix,
   PersonnelMatrixArgs,
   Person,
@@ -35,12 +39,16 @@ import type {
   ReorderSubTeamsArgs,
   RecurringTemplate,
   SetRecurringTemplateEnabledArgs,
+  SetTaskStatusArgs,
   SubTeam,
+  Task,
   TasksCsvExport,
+  TodayWeek,
   TrayStatusDto,
   UpdatePersonArgs,
   UpdateProjectArgs,
   UpdateSubTeamArgs,
+  UpdateTaskArgs,
   UpsertRecurringTemplateArgs,
 } from "@/main/types";
 import type {
@@ -78,6 +86,14 @@ export type {
   ListAssigneeCandidatesArgs,
   PersonnelMatrixArgs,
   PersonnelMatrix,
+  Task,
+  CreateTaskArgs,
+  UpdateTaskArgs,
+  SetTaskStatusArgs,
+  ListTasksArgs,
+  ListTasksFilteredArgs,
+  TodayWeek,
+  DueDateOption,
   DatabaseExport,
   DatabaseImportSummary,
   TasksCsvExport,
@@ -217,6 +233,38 @@ export function updateProject(args: UpdateProjectArgs): Promise<Project> {
 
 export function deleteProject(args: DeleteProjectArgs): Promise<void> {
   return window.api.project.deleteProject(args);
+}
+
+// ---------------------------------------------------------------------------
+// 任务（tickets #43 / #44）
+// ---------------------------------------------------------------------------
+
+export function createTask(args: CreateTaskArgs): Promise<Task> {
+  return window.api.task.createTask(args);
+}
+
+export function updateTask(args: UpdateTaskArgs): Promise<Task> {
+  return window.api.task.updateTask(args);
+}
+
+export function setTaskStatus(args: SetTaskStatusArgs): Promise<Task> {
+  return window.api.task.setTaskStatus(args);
+}
+
+export function listTasks(args: ListTasksArgs): Promise<Task[]> {
+  return window.api.task.listTasks(args);
+}
+
+export function listTasksFiltered(args: ListTasksFilteredArgs): Promise<Task[]> {
+  return window.api.task.listTasksFiltered(args);
+}
+
+export function todayWeek(): Promise<TodayWeek> {
+  return window.api.task.todayWeek();
+}
+
+export function listDueDateOptions(): Promise<DueDateOption[]> {
+  return window.api.task.listDueDateOptions();
 }
 
 // ---------------------------------------------------------------------------

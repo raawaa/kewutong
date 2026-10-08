@@ -152,6 +152,23 @@ export interface ListTasksArgs {
   projectId?: number | null;
 }
 
+export interface ListTasksFilteredArgs {
+  /** 状态多选过滤；空 = 不过滤。 */
+  statuses: TaskStatus[];
+  /** 负责人过滤；`null` = 不过滤。 */
+  ownerPersonId?: number | null;
+  /** 项目过滤；`null` = 不过滤。 */
+  projectId?: number | null;
+  /** 截止日下界（含）；`null` = 不限。 */
+  dueDateFrom?: string | null;
+  /** 截止日上界（含）；`null` = 不限。 */
+  dueDateTo?: string | null;
+  /** 默认 false 过滤 Cancelled。 */
+  includeCancelled: boolean;
+  /** 默认 false 过滤掉负责人离岗的任务。 */
+  includeDeactivatedOwners: boolean;
+}
+
 export interface SetTaskStatusArgs {
   taskId: number;
   status: TaskStatus;
@@ -175,6 +192,9 @@ export interface TodayWeekBuckets {
 export interface TodayWeek {
   counts: TodayWeekCounts;
   buckets: TodayWeekBuckets;
+  /** 物化窗口右端（今天 + 12 周）。UI 在此日期之后的「下周/下下周」
+   * 等视图给"未物化,可能没安排"提示,而不是空白或错误。 */
+  materializationWindowEnd: string;
 }
 
 export interface PersonnelMatrixArgs {

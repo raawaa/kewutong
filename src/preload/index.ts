@@ -16,16 +16,20 @@ import type {
   CreatePersonArgs,
   CreateProjectArgs,
   CreateSubTeamArgs,
+  CreateTaskArgs,
   DatabaseExport,
   DatabaseImportSummary,
   DeleteProjectArgs,
   DeleteSubTeamArgs,
+  DueDateOption,
   ImportDatabaseJsonArgs,
   ListAssigneeCandidatesArgs,
   ListPeopleArgs,
   ListProjectCandidatesArgs,
   ListProjectsArgs,
   ListRecurringTemplatesArgs,
+  ListTasksArgs,
+  ListTasksFilteredArgs,
   PersonnelMatrix,
   PersonnelMatrixArgs,
   Person,
@@ -36,12 +40,16 @@ import type {
   ReorderSubTeamsArgs,
   RecurringTemplate,
   SetRecurringTemplateEnabledArgs,
+  SetTaskStatusArgs,
   SubTeam,
+  Task,
   TasksCsvExport,
+  TodayWeek,
   TrayStatusDto,
   UpdatePersonArgs,
   UpdateProjectArgs,
   UpdateSubTeamArgs,
+  UpdateTaskArgs,
   UpsertRecurringTemplateArgs,
 } from "@/main/types";
 import type {
@@ -111,6 +119,23 @@ const api = {
       ipcRenderer.invoke("project.update_project", args),
     deleteProject: (args: DeleteProjectArgs): Promise<void> =>
       ipcRenderer.invoke("project.delete_project", args),
+  },
+
+  // 任务管理（tickets #43 / #44）
+  task: {
+    createTask: (args: CreateTaskArgs): Promise<Task> =>
+      ipcRenderer.invoke("task.create_task", args),
+    updateTask: (args: UpdateTaskArgs): Promise<Task> =>
+      ipcRenderer.invoke("task.update_task", args),
+    setTaskStatus: (args: SetTaskStatusArgs): Promise<Task> =>
+      ipcRenderer.invoke("task.set_task_status", args),
+    listTasks: (args: ListTasksArgs): Promise<Task[]> =>
+      ipcRenderer.invoke("task.list_tasks", args),
+    listTasksFiltered: (args: ListTasksFilteredArgs): Promise<Task[]> =>
+      ipcRenderer.invoke("task.list_tasks_filtered", args),
+    todayWeek: (): Promise<TodayWeek> => ipcRenderer.invoke("task.today_week"),
+    listDueDateOptions: (): Promise<DueDateOption[]> =>
+      ipcRenderer.invoke("task.list_due_date_options"),
   },
 
   // 导出（ticket #53）
