@@ -35,6 +35,11 @@ import type {
   UpdateProjectArgs,
   UpdateSubTeamArgs,
 } from "@/main/types";
+import type {
+  GetNotificationArgs,
+  MarkReadArgs,
+  NotificationRow,
+} from "@/main/notification/index";
 
 /** 与主进程 `AppError.toPayload()` 一一对应。 */
 export type AppError = AppErrorDto;
@@ -56,6 +61,9 @@ export type {
   ListAssigneeCandidatesArgs,
   PersonnelMatrixArgs,
   PersonnelMatrix,
+  NotificationRow,
+  MarkReadArgs,
+  GetNotificationArgs,
 };
 
 // ---------------------------------------------------------------------------
@@ -179,4 +187,28 @@ export function updateProject(args: UpdateProjectArgs): Promise<Project> {
 
 export function deleteProject(args: DeleteProjectArgs): Promise<void> {
   return window.api.project.deleteProject(args);
+}
+
+// ---------------------------------------------------------------------------
+// 通知（ticket #51）
+// ---------------------------------------------------------------------------
+
+export function listUnreadNotifications(): Promise<NotificationRow[]> {
+  return window.api.notification.listUnreadNotifications();
+}
+
+export function listNotifications(): Promise<NotificationRow[]> {
+  return window.api.notification.listNotifications();
+}
+
+export function markNotificationRead(args: MarkReadArgs): Promise<boolean> {
+  return window.api.notification.markNotificationRead(args);
+}
+
+export function markAllNotificationsRead(): Promise<number> {
+  return window.api.notification.markAllNotificationsRead();
+}
+
+export function getNotification(args: GetNotificationArgs): Promise<NotificationRow> {
+  return window.api.notification.getNotification(args);
 }

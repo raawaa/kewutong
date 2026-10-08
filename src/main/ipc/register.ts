@@ -12,6 +12,7 @@ import * as path from "node:path";
 import { AppError } from "../error.js";
 import { schemaVersion } from "../db.js";
 import type { AppState } from "../state.js";
+import * as Notification from "../notification/index.js";
 import * as Personnel from "../personnel/index.js";
 import * as Project from "../project/index.js";
 
@@ -50,6 +51,7 @@ export function registerAllIpc(state: AppState): void {
   registerDiagnostics(state);
   registerPersonnel(state);
   registerProject(state);
+  registerNotification(state);
 }
 
 /** M1 探活 / 数据文件位置 / 托盘状态。 */
@@ -175,6 +177,34 @@ function registerProject(state: AppState): void {
   handle<import("../types.js").DeleteProjectArgs, void>(
     "project.delete_project",
     (s, args) => Project.deleteProject(s, args),
+  )(ipcMain, state);
+}
+
+/** Notification domain（ticket #51）。 */
+function registerNotification(state: AppState): void {
+  handleVoid<import("../notification/index.js").NotificationRow[]>(
+    "notification.list_unread_notifications",
+    (s) => Notification.listUnreadNotifications(s),
+  )(ipcMain, state);
+
+  handleVoid<import("../notification/index.js").NotificationRow[]>(
+    "notification.list_notifications",
+    (s) => Notification.listNotifications(s),
+  )(ipcMain, state);
+
+  handle<import("../notification/index.js").MarkReadArgs, boolean>(
+    "notification.mark_notification_read",
+    (s, args) => Notification.markNotificationRead(s, args),
+  )(ipcMain, state);
+
+  handleVoid<number>(
+    "notification.mark_all_notifications_read",
+    (s) => Notification.markAllNotificationsRead(s),
+  )(ipcMain, state);
+
+  handle<import("../notification/index.js").GetNotificationArgs, import("../notification/index.js").NotificationRow>(
+    "notification.get_notification",
+    (s, args) => Notification.getNotification(s, args),
   )(ipcMain, state);
 }
 
