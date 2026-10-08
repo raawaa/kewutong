@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { freshDb } from "../test/commands/fresh_db.js";
 import * as Notification from "./index.js";
 import { AppError } from "../error.js";
+import { withTx } from "../sqlite.js";
 
 // ---------------------------------------------------------------------------
 // 直接把 fixture 塞进 `notification_log`（不走调度引擎——它是后续 ticket）。
@@ -27,7 +28,7 @@ interface InsertArgs {
 
 /** FK 占位已建好就跳过,反之插一条 person + task 顶住外键。 */
 function ensureTaskFixture(
-  db: import("better-sqlite3").Database,
+  db: import("node:sqlite").DatabaseSync,
   taskId: number,
 ): void {
   const exists = db
@@ -55,7 +56,7 @@ function ensureTaskFixture(
 }
 
 function insertNotification(
-  state: { db: import("better-sqlite3").Database },
+  state: { db: import("node:sqlite").DatabaseSync },
   args: InsertArgs,
 ): number {
   if (args.relatedTaskId != null) {
@@ -206,7 +207,7 @@ describe("notification / listNotifications（#51）", () => {
     try {
       // FK：task.owner_person_id → person；notification_log.related_task_id → task。
       // 一次性插好 sub_team / person / 250 条 task,再批量写 notification_log。
-      state.db.transaction(() => {
+      withTx(state.db, () => {
         state.db.prepare(`INSERT INTO sub_team (id, name, sort_order) VALUES (1, '一组', 0)`).run();
         state.db.prepare(
           `INSERT INTO person (id, name, sub_team_id, contact) VALUES (1, '张三', 1, '123')`,
@@ -224,7 +225,7 @@ describe("notification / listNotifications（#51）", () => {
         for (let i = 0; i < 250; i++) {
           stmt.run(`2026-09-09 0${(i % 9) + 1}:00:00`, i + 1, JSON.stringify(due24Payload(i + 1)));
         }
-      })();
+      });
       const all = Notification.listNotifications(state);
       expect(all.length).toBe(200);
     } finally {

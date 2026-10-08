@@ -9,7 +9,7 @@
  * 所有命令入参与返回都是稳定 DTO，不透传行结构。
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 import { AppError } from "../error.js";
 import { parseSqlDate } from "../clock.js";
@@ -27,6 +27,7 @@ import type {
   ProjectStatus,
   UpdateProjectArgs,
 } from "../types.js";
+import { withTx } from "../sqlite.js";
 
 // ---------------------------------------------------------------------------
 // DTO
@@ -107,7 +108,7 @@ function rowToProject(row: ProjectRowWithStatus): Project {
   };
 }
 
-function fetchProject(db: Database.Database, id: number): Project | null {
+function fetchProject(db: DatabaseSync, id: number): Project | null {
   const sql = `SELECT ${projectSelectColumns(true)} FROM project p WHERE p.id = ?`;
   const row = db.prepare<[number], ProjectRowWithStatus>(sql).get(id);
   return row ? rowToProject(row) : null;
@@ -195,7 +196,7 @@ export function createProject(state: AppState, args: CreateProjectArgs): Project
   ensurePersonExists(state.db, args.ownerPersonId);
   ensureSubTeamExists(state.db, args.subTeamId);
 
-  state.db.transaction(() => {
+  withTx(state.db, () => {
     state.db
       .prepare(
         `INSERT INTO project
@@ -203,7 +204,7 @@ export function createProject(state: AppState, args: CreateProjectArgs): Project
          VALUES (?, ?, ?, ?, ?, ?)`,
       )
       .run(name, args.ownerPersonId, args.subTeamId, startDate, dueDate, notes);
-  })();
+  });
 
   const id = state.db.prepare<[], { id: number }>("SELECT last_insert_rowid() AS id").get()?.id;
   if (id === undefined) throw AppError.internal("刚插入的项目立即查不到 id");
@@ -243,9 +244,9 @@ export function updateProject(state: AppState, args: UpdateProjectArgs): Project
  * 事务内先 UPDATE 任务，再 DELETE 项目——两步必须在同一事务内。
  */
 export function deleteProject(state: AppState, args: DeleteProjectArgs): void {
-  state.db.transaction(() => {
+  withTx(state.db, () => {
     state.db.prepare("UPDATE task SET project_id = NULL WHERE project_id = ?").run(args.id);
     const result = state.db.prepare("DELETE FROM project WHERE id = ?").run(args.id);
     if (result.changes === 0) throw AppError.invalid("项目不存在或已被删除。");
-  })();
+  });
 }

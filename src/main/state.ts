@@ -6,7 +6,7 @@
  * calendar；后台 tick 直接 clone 整个 state（共享同一份 db / calendar）。
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 import type { Clock } from "./clock.js";
 import type { HolidayCalendar } from "./holiday/index.js";
 
@@ -27,7 +27,7 @@ export const DEFAULT_TRAY_STATUS: TrayStatus = {
  * 与命令层共用同一份 db 引用即可。
  */
 export interface AppState {
-  readonly db: Database.Database;
+  readonly db: DatabaseSync;
   readonly clock: Clock;
   /**
    * 启动时调一次 [`loadHolidayCalendar`] 挂上 [`HolidayCalendar`];
@@ -50,7 +50,7 @@ function placeholderCalendar(): HolidayCalendar {
   return { kindOf: () => "workday" } as unknown as HolidayCalendar;
 }
 
-export function newAppState(db: Database.Database, clock: Clock): AppState {
+export function newAppState(db: DatabaseSync, clock: Clock): AppState {
   return {
     db,
     clock,

@@ -11,7 +11,7 @@
  * 所有命令入参与返回都是稳定 DTO（camelCase），不透传行结构。
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 import { AppError } from "../error.js";
 import { parseSqlDate, toSqlDate } from "../clock.js";
@@ -31,6 +31,7 @@ import type {
   TodayWeek,
   UpdateTaskArgs,
 } from "../types.js";
+import { withTx } from "../sqlite.js";
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -193,7 +194,7 @@ function parseOptionalFilterDate(
 // ---------------------------------------------------------------------------
 
 /** 取一条 task 行；不存在则返回 `null`。 */
-export function fetchTask(db: Database.Database, id: number): Task | null {
+export function fetchTask(db: DatabaseSync, id: number): Task | null {
   const row = db
     .prepare<[number], TaskRow>(`SELECT ${TASK_COLUMNS} FROM task WHERE id = ?`)
     .get(id);
@@ -202,7 +203,7 @@ export function fetchTask(db: Database.Database, id: number): Task | null {
 
 /** 取一名人员的**在飞**任务列表（ticket #22 · 人员矩阵）。 */
 export function fetchInFlightTasksForPerson(
-  db: Database.Database,
+  db: DatabaseSync,
   ownerPersonId: number,
 ): Task[] {
   const placeholders = IN_FLIGHT_STATUSES.map(() => "?").join(",");
@@ -273,7 +274,7 @@ export function createTask(state: AppState, args: CreateTaskArgs): Task {
 
   const now = state.clock.nowSql();
   let id: number | undefined;
-  state.db.transaction(() => {
+  withTx(state.db, () => {
     const info = state.db
       .prepare(
         `INSERT INTO task
@@ -283,7 +284,7 @@ export function createTask(state: AppState, args: CreateTaskArgs): Task {
       )
       .run(title, description, args.ownerPersonId, args.projectId ?? null, dueDate, now, now);
     id = Number(info.lastInsertRowid);
-  })();
+  });
 
   if (id === undefined) throw AppError.internal("刚插入的任务立即查不到 id");
   const task = fetchTask(state.db, id);
@@ -359,7 +360,7 @@ export function setTaskStatus(state: AppState, args: SetTaskStatusArgs): Task {
     now,
   );
 
-  state.db.transaction(() => {
+  withTx(state.db, () => {
     const result = state.db
       .prepare(
         `UPDATE task
@@ -381,7 +382,7 @@ export function setTaskStatus(state: AppState, args: SetTaskStatusArgs): Task {
     if (result.changes === 0) {
       throw AppError.invalid("任务不存在或已被删除。");
     }
-  })();
+  });
 
   const task = fetchTask(state.db, args.taskId);
   if (!task) throw AppError.internal(`任务 id=${args.taskId} 查询不一致`);
@@ -565,7 +566,7 @@ function bucketBoundBetween(lo: Date, hi: Date): BucketBound {
 
 /**
  * 写出这一桶在指定日期列上的 WHERE 片段。两段分支（due_date / instance）
- * 必须用不同的匿名 `?` 占位——同一 `?` 在 SQL 中多次出现会与 better-sqlite3
+ * 必须用不同的匿名 `?` 占位——同一 `?` 在 SQL 中多次出现会与 node:sqlite
  * 的绑定计数不兼容（见 `fetchBucket`）。
  */
 function bucketBoundToSql(bound: BucketBound, column: string): string {
@@ -667,7 +668,7 @@ export function todayWeek(state: AppState): TodayWeek {
  * 两条路径在 SQL 端用 OR union-all，各自带 `IS NOT NULL` 守护。两段共用
  * 同一组 `?1` / `?2`（SQLite 允许同一条 SQL 里 `?` 被多处引用）。
  */
-function fetchBucket(db: Database.Database, bound: BucketBound): Task[] {
+function fetchBucket(db: DatabaseSync, bound: BucketBound): Task[] {
   const sqlDue = bucketBoundToSql(bound, "due_date");
   const sqlInst = bucketBoundToSql(bound, "date(scheduled_at, '+8 hours')");
   const sql = `
@@ -777,7 +778,7 @@ export function dueDateOptions(today: Date): DueDateOption[] {
  * 两条路径共享同一份 `includeCancelled` / `includeDeactivatedOwners`
  * 与排序、limit——搜索语义只有一处权威。
  *
- * 与 Rust 不同点：TS 端 `better-sqlite3` 是同步 API，无需 `spawn_blocking`；
+ * 与 Rust 不同点：TS 端 `node:sqlite` 是同步 API，无需 `spawn_blocking`；
  * IPC handler 直接调这条同步函数即可。Rust 的「`search_tasks_blocking` +
  * `search_tasks_blocking_for_tests`」在 TS 上合成一条 [`searchTasks`]，
  * 入参校验 + 清洗由它统一负责，#[doc(hidden)] 的 for_tests 同步体不再
@@ -856,7 +857,7 @@ export function searchTasksBlocking(
  * 稳定呈现比排序质量更重要。
  */
 function searchTasksLike(
-  db: Database.Database,
+  db: DatabaseSync,
   sanitizedQuery: string,
   includeCancelled: boolean,
   includeDeactivatedOwners: boolean,

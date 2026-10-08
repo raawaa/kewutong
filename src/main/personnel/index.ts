@@ -10,7 +10,7 @@
  * 所有命令入参与返回都是稳定 DTO，不透传行结构。
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 import { AppError } from "../error.js";
 import type { AppState } from "../state.js";
@@ -36,6 +36,7 @@ import type {
   UpdateSubTeamArgs,
 } from "../types.js";
 import { fetchInFlightTasksForPerson } from "../task/index.js";
+import { withTx } from "../sqlite.js";
 
 /** `@` 下拉里最多显示几条。原型下拉高度 6 行；封顶在命令层。 */
 const ASSIGNEE_CANDIDATE_LIMIT = 6;
@@ -82,7 +83,7 @@ function rowToPerson(row: PersonRow): Person {
   };
 }
 
-function fetchSubTeam(db: Database.Database, id: number): SubTeam | null {
+function fetchSubTeam(db: DatabaseSync, id: number): SubTeam | null {
   const row = db
     .prepare<[number], SubTeamRow>(
       "SELECT id, name, description, sort_order, created_at FROM sub_team WHERE id = ?",
@@ -91,7 +92,7 @@ function fetchSubTeam(db: Database.Database, id: number): SubTeam | null {
   return row ? rowToSubTeam(row) : null;
 }
 
-function fetchPerson(db: Database.Database, id: number): Person | null {
+function fetchPerson(db: DatabaseSync, id: number): Person | null {
   const row = db
     .prepare<[number], PersonRow>(
       "SELECT id, name, sub_team_id, contact, deactivated_at, created_at FROM person WHERE id = ?",
@@ -132,11 +133,11 @@ export function createSubTeam(state: AppState, args: CreateSubTeamArgs): SubTeam
     .get();
   const nextSort = maxRow?.next ?? 0;
 
-  state.db.transaction(() => {
+  withTx(state.db, () => {
     state.db
       .prepare("INSERT INTO sub_team (name, description, sort_order) VALUES (?, ?, ?)")
       .run(name, description, nextSort);
-  })();
+  });
 
   const id = state.db.prepare<[], { id: number }>("SELECT last_insert_rowid() AS id").get()?.id;
   if (id === undefined) throw AppError.internal("刚插入的子组立即查不到 id");
@@ -197,10 +198,10 @@ export function reorderSubTeams(state: AppState, args: ReorderSubTeamsArgs): voi
     throw AppError.invalid("子组列表与数据库不一致,请刷新后重试。");
   }
 
-  state.db.transaction(() => {
+  withTx(state.db, () => {
     const stmt = state.db.prepare("UPDATE sub_team SET sort_order = ? WHERE id = ?");
     args.orderedIds.forEach((id, index) => stmt.run(index, id));
-  })();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -263,11 +264,11 @@ export function createPerson(state: AppState, args: CreatePersonArgs): Person {
   ensureSubTeamExists(state.db, args.subTeamId);
   ensurePersonNameAvailable(state.db, args.subTeamId, name, null);
 
-  state.db.transaction(() => {
+  withTx(state.db, () => {
     state.db
       .prepare("INSERT INTO person (name, sub_team_id, contact) VALUES (?, ?, ?)")
       .run(name, args.subTeamId, contact);
-  })();
+  });
 
   const id = state.db.prepare<[], { id: number }>("SELECT last_insert_rowid() AS id").get()?.id;
   if (id === undefined) throw AppError.internal("刚插入的人员立即查不到 id");
@@ -338,7 +339,7 @@ export function deletePerson(state: AppState, args: PersonIdArgs): void {
 // ---------------------------------------------------------------------------
 
 function ensureSubTeamNameAvailable(
-  db: Database.Database,
+  db: DatabaseSync,
   name: string,
   excludeId: number | null,
 ): void {
@@ -355,7 +356,7 @@ function ensureSubTeamNameAvailable(
 }
 
 function ensurePersonNameAvailable(
-  db: Database.Database,
+  db: DatabaseSync,
   subTeamId: number,
   name: string,
   excludeId: number | null,

@@ -4,6 +4,7 @@ import { freshDb } from "../test/commands/fresh_db.js";
 import * as Project from "./index.js";
 import * as Personnel from "../personnel/index.js";
 import { AppError } from "../error.js";
+import { withTx } from "../sqlite.js";
 
 function setupWorld(): ReturnType<typeof freshDb> & { teamId: number; personId: number } {
   const ctx = freshDb();
@@ -85,14 +86,14 @@ describe("project / CRUD（#20）", () => {
         ownerPersonId: ctx.personId,
         subTeamId: ctx.teamId,
       });
-      ctx.state.db.transaction(() => {
+      withTx(ctx.state.db, () => {
         ctx.state.db
           .prepare(
             `INSERT INTO task (title, status, owner_person_id, project_id)
              VALUES (?, ?, ?, ?)`,
           )
           .run("t1", "Cancelled", ctx.personId, p.id);
-      })();
+      });
       const fetched = Project.listProjects(ctx.state, { includeDone: true });
       expect(fetched[0]?.status).toBe("Cancelled");
     } finally {
@@ -108,7 +109,7 @@ describe("project / CRUD（#20）", () => {
         ownerPersonId: ctx.personId,
         subTeamId: ctx.teamId,
       });
-      ctx.state.db.transaction(() => {
+      withTx(ctx.state.db, () => {
         ctx.state.db
           .prepare(
             `INSERT INTO task (title, status, owner_person_id, project_id)
@@ -118,7 +119,7 @@ describe("project / CRUD（#20）", () => {
             "t1", "Done", ctx.personId, p.id,
             "t2", "Open", ctx.personId, p.id,
           );
-      })();
+      });
       const fetched = Project.listProjects(ctx.state, { includeDone: true });
       expect(fetched[0]?.status).toBe("Active");
     } finally {
@@ -140,14 +141,14 @@ describe("project / CRUD（#20）", () => {
         subTeamId: ctx.teamId,
       });
       // p2 全 Done
-      ctx.state.db.transaction(() => {
+      withTx(ctx.state.db, () => {
         ctx.state.db
           .prepare(
             `INSERT INTO task (title, status, owner_person_id, project_id)
              VALUES (?, ?, ?, ?)`,
           )
           .run("t1", "Done", ctx.personId, p2.id);
-      })();
+      });
 
       const inFlightOnly = Project.listProjects(ctx.state, { includeDone: false });
       expect(inFlightOnly.map((p) => p.id)).toEqual([p1.id]);
@@ -171,9 +172,9 @@ describe("project / CRUD（#20）", () => {
         `INSERT INTO task (title, status, owner_person_id, project_id)
          VALUES (?, ?, ?, ?)`,
       );
-      ctx.state.db.transaction(() => {
+      withTx(ctx.state.db, () => {
         insertTask.run("t1", "Open", ctx.personId, p.id);
-      })();
+      });
 
       Project.deleteProject(ctx.state, { id: p.id });
 
@@ -199,14 +200,14 @@ describe("project / CRUD（#20）", () => {
         ownerPersonId: ctx.personId,
         subTeamId: ctx.teamId,
       });
-      ctx.state.db.transaction(() => {
+      withTx(ctx.state.db, () => {
         ctx.state.db
           .prepare(
             `INSERT INTO task (title, status, owner_person_id, project_id)
              VALUES (?, ?, ?, ?)`,
           )
           .run("t", "Done", ctx.personId, p2.id);
-      })();
+      });
 
       const cands = Project.listProjectCandidates(ctx.state, { query: null });
       expect(cands.map((c) => c.projectId)).toEqual([p1.id]);

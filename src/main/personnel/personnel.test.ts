@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { freshDb } from "../test/commands/fresh_db.js";
 import * as Personnel from "./index.js";
 import { AppError } from "../error.js";
+import { withTx } from "../sqlite.js";
 
 describe("personnel / 子组 CRUD（#17）", () => {
   it("空库时 listSubTeams 返回空", () => {
@@ -213,7 +214,7 @@ describe("personnel / personnelMatrix（#22）", () => {
       });
 
       // 插入 3 条任务：Open / Done / Blocked
-      state.db.transaction(() => {
+      withTx(state.db, () => {
         state.db
           .prepare(
             `INSERT INTO task (title, status, owner_person_id, due_date)
@@ -224,7 +225,7 @@ describe("personnel / personnelMatrix（#22）", () => {
             "t2", "Done", person.id, "2026-09-11",
             "t3", "Blocked", person.id, "2026-09-12",
           );
-      })();
+      });
 
       const matrix = Personnel.personnelMatrix(state, { includeDeactivated: false });
       const card = matrix.segments[0]?.people[0];
