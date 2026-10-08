@@ -1,16 +1,20 @@
 # 托盘与窗口生命周期手工验证清单（ticket #29）
 
-> 本期 acceptance criteria 第 5 条要求「三平台各有一份手工验证清单并已实际跑过（含 Wayland 与 macOS 两个已知失踪场景）」。这份清单就是给后续每次发版前回归用的。
+> 本期 acceptance criteria 第 5 条要求「macOS 有一份手工验证清单并已实际跑过」——这份清单就是给每次发版前回归用的。
 >
-> Rust 端已有 9 条集成测试（`cargo test --test tray`）覆盖平台分支、状态机、`tray_status` 命令,但 GUI 行为（点击、右键、隐藏 dock 图标、托盘消失场景）必须人工跑过——这部分在 headless 测试里没法覆盖。
+> Vitest 已覆盖 IPC DTO 转换（`src/main/tray/tray.test.ts`）与 renderer banner 行为（`src/App.test.tsx`），但 GUI 行为（菜单栏 click、右键菜单、关窗是否进入托盘、Dock 图标切换）必须人工跑——headless 测试覆盖不到。
 
 ---
 
 ## 通用前置
 
-- 编译:`cargo tauri build` 拿到 release 包,或者 `cargo tauri dev` 起开发版
-- 准备一份空 SQLite 库(`$XDG_DATA_HOME/com.raawaa.kewutong/kewutong.db` 等)
-- 起动应用,看到主窗口标题「科室任务管理」
+- **构建**：`npm run build`（typecheck + electron-vite build + electron-builder 出 `.dmg`）；纯 electron-vite 构建用 `npm run build:app`（跳过 typecheck 与 electron-builder，dev-loop 调试时更省时）；dev 走 `npm run dev`（electron-vite dev，HMR 启用）。
+- **配置**：`electron-builder.yml`（mac 段：`target: dmg`、`arch: [arm64, x64]`、`identity: '-'`、`notarize: false`）。
+- **空 SQLite**：跑前清空 `~/Library/Application Support/kewutong/`，首次启动自动建表（`src/main/index.ts:125` 的 `dbPath = path.join(app.getPath('userData'), 'kewutong.sqlite')`）。
+- **启动应用**：dev 模式直接看主窗口；prod 模式拖 `.dmg` 进「应用程序」，按 [`docs/distribution.md`](distribution.md)「方法 1 / 2 / 3」过 Gatekeeper。
+- **主窗口标题**：「科室任务管理」（`src/main/index.ts:71`）。
+
+---
 
 ## macOS（macOS 14+，Apple Silicon）
 
@@ -18,109 +22,61 @@
 
 ### 正常路径
 
-- [ ] **关窗 = 隐藏到菜单栏**。点窗口左上红钮,窗口消失;`⌘+Tab` 看不到应用图标;**菜单栏右侧出现 kewutong 图标**;Dock 不再有图标。
-- [ ] **菜单栏唤回**。点击菜单栏图标 → 弹菜单「显示主窗口 / 退出」;点「显示主窗口」→ 窗口回到屏幕,Dock 图标重新出现。
-- [ ] **退出**。点菜单栏菜单的「退出」→ 进程结束,菜单栏图标消失。
-- [ ] **单实例重复启动**。应用已运行时,在终端再跑一次二进制 → 不再开第二个窗口,已有窗口被唤回前台。
-- [ ] **激活策略切换**。第一次隐藏后,Dock 图标确实没了（不是只最小化窗口）。唤回后,Dock 图标恢复。
-
-### 已知场景回归
-
-- [ ] **托盘消失场景（tauri#12060）**。连续唤回 / 隐藏 30 次,菜单栏图标始终稳定——虽然 #12060 未稳定复现,但本期不调 `set_title` / `set_icon`,baseline 上不应触发。
+- [ ] **关窗 = 隐藏到菜单栏**。点窗口左上红钮，主窗口消失；`⌘+Tab` 看不到应用入口；**菜单栏右侧出现 kewutong 图标**；进程仍在（活动监视器能看到）。
+- [ ] **菜单栏唤回**。点击菜单栏图标 → 系统弹出右键菜单（含「打开主窗口 / 退出」）；点「打开主窗口」→ 主窗口回到屏幕。注：macOS 菜单栏图标的 left-click 由系统接管为「打开菜单」（见 `src/main/tray/index.ts:139-143` 的 `process.platform !== 'darwin'` 分支），不要误以为 click 没生效。
+- [ ] **退出**。点菜单栏菜单的「退出」→ 进程结束，菜单栏图标消失。**这是唯一能退出进程的路径**（`src/main/tray/index.ts:125-129` 的 `app.quit()`）。
+- [ ] **单实例重复启动**。应用已运行时，在终端再跑一次 `open /Applications/kewutong.app` → 不再开第二个进程，已有进程把主窗口拉回前台（`src/main/index.ts:113-122` 的 `requestSingleInstanceLock` + `second-instance` 监听）。
+- [ ] **关窗 → hide → 唤回** 闭环。连续执行 5 次「关窗 → 菜单栏唤回」，每次唤回后主窗口都能正确显示在前台，没有焦点错位、菜单栏图标闪烁、进程泄漏等问题。
 
 ### 失败降级
 
-- [ ] **托盘构建失败时**:在 `tauri.conf.json` 把 `bundle.icon` 路径改坏(临时),重新 build → 应用启动后**主窗口可见**,点关窗直接退出进程;前端 `tray_status` 命令返回 `available: false` + 一条中文 reason。
+- [ ] **托盘初始化失败时**：把 `build/icon.png` 临时改名（例如 `icon.png.bak`），重新 `npm run build` → 应用启动后**主窗口可见**，点关窗直接退出进程（不卡死、不静默失活）；前端 `trayStatus` IPC（命令在 `src/lib/api.ts:198`，IPC channel 常量 `tray.status` 在 `src/main/tray/dto.ts:18`）返回 `{ available: false, reason: "系统托盘不可用，请检查系统设置。" }` 或类似中文短句（见 `src/main/index.ts:138-148` 的 try/catch）；renderer 显示 `TrayStatusBanner`（`src/components/tray/TrayStatusBanner.tsx`）。
+  - 注：当前实现里 `createTray` 内部对图标缺失有兜底（`nativeImage.createEmpty()`，见 `src/main/tray/index.ts:78-88`），所以这条「触发 unavailable」的实际路径在 macOS 上**较难触发**——若本次跑通后没有触发，注记「macOS 下当前实现未触发 unavailable 路径，但降级逻辑已就位」即可，**不需要强行造一个失败**。
 
 ---
 
-## Linux X11（Ubuntu 22.04 / GNOME）
+## Linux / Windows（本期不发）
 
-环境：`libappindicator3-1`、`libgtk-3-0`、`libxdo-dev` 已装（research #8 §4）。
-
-### 正常路径
-
-- [ ] **关窗 = 隐藏到托盘**。点窗口右上 X 钮,主窗口消失;**顶部状态栏右侧出现 kewutong 图标**;进程仍在（`ps aux | grep kewutong`）。
-- [ ] **右键菜单唤回**。点托盘图标右键 → 弹菜单「显示主窗口 / 退出」;选「显示主窗口」→ 主窗口回到屏幕。
-- [ ] **退出**。右键菜单选「退出」→ 进程结束。
-- [ ] **左键唤回**。按 tauri 注释（`crates/tauri/src/tray/mod.rs`），**Linux click 事件不触发**，左键应该是 no-op 或弹出右键菜单（取决于 libappindicator 版本），不是直接唤回。这是已知限制,文档已记。
-- [ ] **避开 Tray* 位置**。唤回主窗口后，窗口位置在屏幕右下角附近(`Position::BottomRight`),不调用 `Position::Tray*` 系列——Rust 编译期分支保证(`for_current_platform` 单测已覆盖)。
-
-### 已知场景回归
-
-- [ ] **依赖缺失场景**。在容器里卸掉 `libappindicator3-1`,启动应用 → 主窗口可见,关窗正常退出,`tray_status` 命令返回 `available: false` + reason 形如「注册托盘失败：libappindicator …」。**不 panic**。
-
----
-
-## Linux Wayland（Ubuntu 22.04 / GNOME Wayland）
-
-环境：登录会话选 GNOME on Xorg 反例——必须 Wayland 会话。`echo $XDG_SESSION_TYPE` 应输出 `wayland`。
-
-### 已知失踪场景（tauri#14234）
-
-- [ ] **托盘图标可能出现也可能不出现**。这是上游已知 bug——Wayland 下某些 DE 给 SNI（StatusNotifierItem）协议的实现不一致。验收口径是：**若图标出现了**,右键菜单能唤回;**若图标没出现**,前端 `tray_status` 命令仍能拿到 reason 给科长看（图标从未注册成功时,降级逻辑生效）。
-- [ ] **降级提示**。在 Wayland 没托盘图标的机器上启动 → 主窗口可见;关窗正常退出（不卡死也不静默失活);前端如果有 banner 应展示 reason。
-
-### 正常路径（若托盘出现）
-
-- [ ] **关窗 = 隐藏**。点 X 钮,主窗口消失;进程仍在。
-- [ ] **右键菜单唤回 / 退出**。同上 X11。
-
----
-
-## Windows 10/11
-
-### 正常路径
-
-- [ ] **关窗 = 隐藏到托盘**。点右上 X 钮,主窗口消失;**任务栏右下角系统托盘出现 kewutong 图标**;进程仍在（任务管理器能看到 `kewutong.exe`）。
-- [ ] **左键唤回**。点托盘图标左键 → 主窗口回到前台（macOS 同样行为)。
-- [ ] **右键菜单**。右键图标 → 弹菜单「显示主窗口 / 退出」。
-- [ ] **退出**。选「退出」→ 进程结束,托盘图标消失。
-- [ ] **单实例重复启动**。再次运行 `kewutong.exe` → 不开新窗口,已有窗口被唤回（[#3548](https://github.com/tauri-apps/plugins-workspace/issues/3548) 报告需要 `AllowSetForegroundWindow`,plugin 2.4.x 已处理）。
-
-### 已知场景
-
-- [ ] **焦点错位（#14795）**。从其它应用切回时,若出现焦点没拉到前台,点托盘图标左键仍能把窗口拉到最前。
-
----
-
-## 跨平台通用:降级路径
-
-> 这条最重要——托盘不可用时不能让应用半残。
-
-- [ ] **托盘初始化失败**:
-  - 拿到 release 包后,临时改 `tauri.conf.json` 的 `bundle.icon[0]` 指向不存在的文件 → 重 build → 启动应用
-  - 预期:主窗口正常出现,关窗走默认行为(进程退出,不卡住),前端 `tray_status` 命令返回 `{available: false, reason: "..."}`
-  - **绝不能**:panic、应用半残、关窗后菜单栏图标残留
+本期只发 macOS（[`docs/distribution.md`](distribution.md) 钉在 2026-10-08：Linux / Windows 以后再做）。Linux X11 / Wayland 与 Windows 的手工验证清单等对应平台正式开工时另开票维护——本文件不留空白框。`electron-builder.yml` 的 win / linux target 与 `.github/workflows/release.yml` 的多 runner 矩阵照旧保留，所以打 tag 时 Linux / Windows 产物**仍会照常构建并挂到 draft release 上**，但当前不承诺可用、不下载。
 
 ---
 
 ## 自动化测试覆盖一览
 
 ```
-$ cargo test --test tray
-running 9 tests
-test 托盘定位策略_按当前平台返回正确变体 ... ok
-test 托盘菜单项_id_是稳定字符串 ... ok
-test 托盘状态默认值是_不可用_且带原因 ... ok
-test 托盘状态_set_available_后能读出_available ... ok
-test 托盘状态_set_unavailable_后能读出_unavailable_并带原因 ... ok
-test tray_status_命令_默认返回_unavailable ... ok
-test tray_status_命令_设置_available_后返回_available_且原因为空 ... ok
-test tray_status_命令_dto_字段是_camel_case ... ok
-test tray_status_命令_返回的_dto_与状态机的不可用路径一致 ... ok
+$ npm test -- src/main/tray/tray.test.ts
+ ✓ src/main/tray/tray.test.ts (4)
+   ✓ tray #54
+     ✓ trayStatusToDto
+       ✓ available → available: true, reason 为空
+       ✓ unavailable → available: false, reason 原样透传
+       ✓ DEFAULT_TRAY_STATUS 默认 unavailable
+     ✓ IPC channel 常量
+       ✓ TRAY_STATUS_CHANNEL 与 preload 对齐
 
-test result: ok. 9 passed; 0 failed
+$ npm test -- src/App.test.tsx
+ ✓ src/App.test.tsx (8)
+   ✓ App · 全局新建入口                    ← 非 tray 范围,本 doc 不展开,见 ticket #19
+     ✓ 顶栏按钮唤起新建弹窗
+     ✓ ⌘N 唤起新建弹窗
+     ✓ 非 mac 的 Ctrl+N 一样唤起
+     ✓ 切到人员界面后，⌘N 仍然唤起新建弹窗
+     ✓ 切到人员界面后，顶栏按钮仍然唤起新建弹窗
+   ✓ App · 托盘不可用 banner（ticket #29）
+     ✓ tray_status 返回不可用时,主界面渲染 reason banner
+       → TrayStatusBanner 渲染 role="alert" 节点 + reason 文案
+     ✓ tray_status 返回可用时,主界面不渲染 banner
+     ✓ tray_status 命令本身抛错时不臆测状态——banner 保持 null 不渲染
+       → IPC 抛错 → 不臆测 unavailable → 不假报「托盘不可用」给科长
 ```
 
-单元覆盖：`kewutong_lib::tray` 模块内 `tests` 子模块两条（平台分支 + menu_id 稳定性）。
+Vitest 覆盖的是「IPC DTO 契约」（`src/main/tray/dto.ts` 的 `trayStatusToDto` 转换 + `TRAY_STATUS_CHANNEL` 常量；`src/lib/api.ts:198` 的 `trayStatus()` IPC 命令封装）和「IPC 命令抛错时的退化」（不臆测状态）。**不能**自动化、必须人工的部分：菜单栏 click 行为、关窗是否进入菜单栏、Dock 显隐、`⌘+Tab` 不响应应用入口。
 
-不能自动化、必须人工的部分：菜单项视觉呈现、托盘 click 行为、Wayland 失踪场景、macOS dock 切换。
+> 关于 `App.test.tsx` 的 `App · 全局新建入口` 5 个测：不在 tray 范围内，是 ticket #19（全局新建入口）的 AC 覆盖——见 `src/App.test.tsx:66-116`。本 doc 只覆盖 tray 相关子集，避免误把非 tray 行为算入 tray 验证范围。
 
 ---
 
 ## 复测节奏
 
-- **每次发版前** 跑 macOS + Linux X11（开发机默认）。
-- **每季度** 在 Wayland 机器上跑一次失踪场景回归——`tauri#14234` 上游若关掉,这条可以淡化。
-- **依赖变更后**(升级 tauri / libappindicator):重跑 macOS 全部 + Linux X11 全部。
+- **每次发版前** 跑 macOS 全部条目（Apple Silicon 必跑；Intel 若能借到 runner / 机器就一并跑）。
+- **升级 Electron / electron-builder 主版本后** 重跑全部——API 行为可能漂移（菜单栏策略、Dock 行为、`requestSingleInstanceLock` 语义）。
