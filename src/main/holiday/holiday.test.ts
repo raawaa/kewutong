@@ -94,7 +94,15 @@ describe("holiday / 种子文件解析与加载", () => {
     const fx = seedDir();
     try {
       fs.writeFileSync(path.join(fx.dir, "cn-2026.json"), "{ this is not json", "utf8");
-      expect(() => HolidayCalendar.load(state.db, fx.dir, 2026)).toThrow(AppError);
+      let caught: unknown;
+      try {
+        HolidayCalendar.load(state.db, fx.dir, 2026);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(AppError);
+      expect((caught as AppError).code).toBe("INTERNAL");
+      expect((caught as AppError).detail).toMatch(/解析节假日文件/);
     } finally {
       close();
       fx.cleanup();
@@ -109,7 +117,14 @@ describe("holiday / 种子文件解析与加载", () => {
         holidays: [{ start: "2026/10/01", end: "2026-10-01", name: "国庆节" }],
         workdays: [],
       });
-      expect(() => HolidayCalendar.load(state.db, fx.dir, 2026)).toThrow(/holidays\[0\].start 非法/);
+      let caught: unknown;
+      try {
+        HolidayCalendar.load(state.db, fx.dir, 2026);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(AppError);
+      expect((caught as AppError).detail).toMatch(/holidays\[0\].start 非法/);
     } finally {
       close();
       fx.cleanup();
@@ -121,7 +136,14 @@ describe("holiday / 种子文件解析与加载", () => {
     const fx = seedDir();
     try {
       fs.writeFileSync(path.join(fx.dir, "cn-2026.json"), JSON.stringify({ foo: 1 }), "utf8");
-      expect(() => HolidayCalendar.load(state.db, fx.dir, 2026)).toThrow(/顶层结构/);
+      let caught: unknown;
+      try {
+        HolidayCalendar.load(state.db, fx.dir, 2026);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(AppError);
+      expect((caught as AppError).detail).toMatch(/顶层结构/);
     } finally {
       close();
       fx.cleanup();

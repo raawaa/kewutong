@@ -123,6 +123,11 @@ function rowKindToDayKind(raw: string): DayKind | null {
   return null;
 }
 
+/** `DayKind` 直接落到 DB 列字面量——同形,只过一道类型断言。 */
+function dayKindAsDbString(value: DayKind): "holiday" | "workday" {
+  return value;
+}
+
 // ---------------------------------------------------------------------------
 // 种子文件解析
 // ---------------------------------------------------------------------------
