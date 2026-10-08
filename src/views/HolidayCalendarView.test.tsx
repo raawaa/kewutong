@@ -15,7 +15,8 @@
  * 度阻塞）,又能精确断言跨年窗口。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/dom";
 import { HolidayCalendarView } from "./HolidayCalendarView";
 import { holidayCalendar, type HolidayCalendarDay } from "@/lib/api";
 
