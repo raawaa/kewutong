@@ -153,6 +153,35 @@ export function onTrayStatus(handler: (status: TrayStatusDto) => void): () => vo
   return window.api.onTrayStatus(handler);
 }
 
+// ---------------------------------------------------------------------------
+// Main → renderer 事件总线（ticket #55）
+// ---------------------------------------------------------------------------
+
+/**
+ * 通用 main → renderer 事件订阅——任意 `webContents.send` 通道都能透
+ * 过它接到 renderer。`T` 由调用方声明,TS 在编译期校验 payload 形状。
+ *
+ * 返回 unsubscribe 函数——`useEffect(() => api.onEvent(...), [])` 在
+ * cleanup 里调,避免热重载后 listener 累加。
+ */
+export function onEvent<T>(channel: string, handler: (payload: T) => void): () => void {
+  return window.api.onEvent<T>(channel, handler);
+}
+
+/**
+ * ⌘K / Ctrl+K 全局快捷键触发——主进程 globalShortcut 触发后,renderer
+ * 在这里收到 `{ shortcut }` payload,App 层据此打开命令面板。
+ *
+ * App 层窗口 keydown 也会同时触发面板,但这条 IPC 通道作为「兜底通
+ * 道」存在:即便 keydown 被输入框截获、面板仍会通过 IPC 被打开(参考
+ * ticket #55 验收点 #5)。
+ */
+export function onCommandPaletteShortcut(
+  handler: (payload: { shortcut: string }) => void,
+): () => void {
+  return window.api.onCommandPaletteShortcut(handler);
+}
+
 /**
  * 命令抛出来的一律是 `AppError` 形状；非预期异常也收敛成同一形状。
  */

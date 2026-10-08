@@ -91,6 +91,37 @@ const api = {
     return () => ipcRenderer.off("tray.status", listener);
   },
 
+  // Main → renderer 事件总线（ticket #55）。
+  //
+  // `onEvent` 是通用订阅入口——任意 main 端 `webContents.send` 都能透
+  // 过它接到 renderer。后续 tray 状态变化、通知广播、窗口聚焦事件等
+  // 都可以挂这一个口子,无需再各自写 wrapper。
+  //
+  // 已知的具体事件各自包一层 typed 便利方法(`onTrayStatus` 是 #54 旧
+  // 约定保留),不直接收 `onEvent` 的 channel 字面量——保持与 ADR 0008
+  // §事件总线一致(channel 名集中在主进程侧,preload 复刻同形字面量,
+  // 不引入跨进程常量共享机制以避免 preload 多 import 一个文件)。
+  onEvent: <T>(channel: string, handler: (payload: T) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, payload: T): void => handler(payload);
+    ipcRenderer.on(channel, listener);
+    // 返回 unsubscribe——renderer 在 useEffect cleanup 里调,避免热重载
+    // 后 listener 累加造成内存泄漏 + 多次触发。
+    return () => ipcRenderer.off(channel, listener);
+  },
+
+  // ⌘K / Ctrl+K 全局快捷键触发（ticket #55）。
+  //
+  // 主进程 globalShortcut 触发后调用 `webContents.send("shortcut.comma
+  // nd-palette", { shortcut })`。renderer 订阅这个事件以打开命令面板
+  // ——App 层窗口 keydown 也会同时触发,但这条 IPC 通道作为「兜底通道
+  // 」存在:即便 keydown 被某些输入框截获、面板仍会通过 IPC 被打开。
+  onCommandPaletteShortcut: (handler: (payload: { shortcut: string }) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, payload: { shortcut: string }): void =>
+      handler(payload);
+    ipcRenderer.on("shortcut.command-palette", listener);
+    return () => ipcRenderer.off("shortcut.command-palette", listener);
+  },
+
   // 人员管理（tickets #17 / #19 / #22）
   personnel: {
     listSubTeams: (): Promise<SubTeam[]> => ipcRenderer.invoke("personnel.list_sub_teams"),
