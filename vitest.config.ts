@@ -12,13 +12,11 @@ export default defineConfig({
     environment: "node",
     include: ["src/**/*.test.ts", "src/main/**/*.test.ts"],
     exclude: ["src/**/*.test.tsx", "node_modules/**"],
+    // Vitest 4+ 移除了 `poolOptions.forks.singleFork`——改用
+    // `fileParallelism: false` 让多文件串行跑；better-sqlite3 的
+    // `:memory:` 在每个 test 文件里都是独立的 in-memory 连接,无需
+    // 同一进程内的 fork 隔离。
     pool: "forks",
-    poolOptions: {
-      forks: {
-        // 串行跑单测——better-sqlite3 native 模块 + in-memory 各测试隔离，
-        // 并行会撞 :memory: 不共享的预期。
-        singleFork: true,
-      },
-    },
+    fileParallelism: false,
   },
 });
