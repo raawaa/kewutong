@@ -101,6 +101,8 @@ export type {
   ListAssigneeCandidatesArgs,
   PersonnelMatrixArgs,
   PersonnelMatrix,
+  Project,
+  ProjectCandidate,
 SamplePresence,
   ClearSampleSummary,
   RealTeamsSeedSummary,

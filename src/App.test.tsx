@@ -44,6 +44,7 @@ beforeEach(() => {
   vi.mocked(todayWeek).mockResolvedValue({
     counts: { activePeople: 0, inProgress: 0, blocked: 0 },
     buckets: { overdue: [], today: [], tomorrow: [], thisWeekRest: [] },
+    materializationWindowEnd: "2026-12-31",
   });
   // 默认托盘可用——App.test 不关心 banner,显式给可用避免 banner 在这
   // 些测试里冒出来干扰断言；专门测 banner 行为去 TrayStatusBanner.test。

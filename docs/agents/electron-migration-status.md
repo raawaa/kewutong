@@ -3,6 +3,8 @@
 承接 spec #37（Tauri → Electron 迁移）。本文档是本仓库实际落地进度，
 对应 GitHub 工单 #38–#59。
 
+**状态（#59 cutover PR 完成后）：M1 + M2 全部落地；M3 + M4（除 #59）经 #54–#58 单 PR 收口；#59 删 `src-tauri/` + `Cargo.toml` + `@tauri-apps/*` ——Tauri 痕迹清零，仓库进入纯 Electron 时代。**
+
 ## 已完成
 
 ### M1：Shell + IPC scaffold（✅ 落地）
@@ -82,10 +84,10 @@
 
 ### M4：切发布 + 撤 Tauri（2 个 ticket）
 
-| 工单 | 标题                                                              |
-| --- | ----------------------------------------------------------------- |
-| #58 | electron-builder 4-runner 矩阵                                    |
-| #59 | Cutover PR：删 src-tauri/ + Cargo.toml + @tauri-apps/*             |
+| 工单 | 标题                                                              | 状态 |
+| --- | ----------------------------------------------------------------- | ---- |
+| #58 | electron-builder 4-runner 矩阵                                    | ✅ |
+| #59 | Cutover PR：删 src-tauri/ + Cargo.toml + @tauri-apps/*             | ✅（本 PR，draft 待 review） |
 
 注：#58 的 `electron-builder.yml` 已经在 M1 阶段落地；只是 CI workflow 与
 draft release 流程还要写。
