@@ -11,30 +11,68 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { IpcRendererEvent } from "electron";
 
-import type { PingReply, TrayStatusDto } from "@/main/types";
+import type {
+  AssigneeCandidate,
+  CreatePersonArgs,
+  CreateSubTeamArgs,
+  DeleteSubTeamArgs,
+  ListAssigneeCandidatesArgs,
+  ListPeopleArgs,
+  PersonnelMatrix,
+  PersonnelMatrixArgs,
+  Person,
+  PersonIdArgs,
+  PingReply,
+  ReorderSubTeamsArgs,
+  SubTeam,
+  TrayStatusDto,
+  UpdatePersonArgs,
+  UpdateSubTeamArgs,
+} from "@/main/types";
 
 /** 渲染进程只能看到这一份 typed API。 */
 const api = {
-  ping: (echo: string | null): Promise<PingReply> =>
-    ipcRenderer.invoke("ping", echo),
-
-  dataFileLocation: (): Promise<string | null> =>
-    ipcRenderer.invoke("dataFileLocation"),
-
-  trayStatus: (): Promise<TrayStatusDto> =>
-    ipcRenderer.invoke("trayStatus"),
-
-  // —— 事件订阅（M3 阶段由 #54 / #55 补齐具体事件）——
-  // 占位：当前无事件——tray / window / globalShortcut 在 #54 / #55 ticket
-  // 里通过 `webContents.send` 推过来。
+  // 探活 / 诊断（tickets #38 / #40 + 后续 #54）
+  ping: (echo: string | null): Promise<PingReply> => ipcRenderer.invoke("ping", echo),
+  dataFileLocation: (): Promise<string | null> => ipcRenderer.invoke("dataFileLocation"),
+  trayStatus: (): Promise<TrayStatusDto> => ipcRenderer.invoke("trayStatus"),
   onTrayStatus: (handler: (status: TrayStatusDto) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, status: TrayStatusDto): void => handler(status);
     ipcRenderer.on("tray.status", listener);
     return () => ipcRenderer.off("tray.status", listener);
   },
+
+  // 人员管理（tickets #17 / #19 / #22）
+  personnel: {
+    listSubTeams: (): Promise<SubTeam[]> => ipcRenderer.invoke("personnel.list_sub_teams"),
+    createSubTeam: (args: CreateSubTeamArgs): Promise<SubTeam> =>
+      ipcRenderer.invoke("personnel.create_sub_team", args),
+    updateSubTeam: (args: UpdateSubTeamArgs): Promise<SubTeam> =>
+      ipcRenderer.invoke("personnel.update_sub_team", args),
+    deleteSubTeam: (args: DeleteSubTeamArgs): Promise<void> =>
+      ipcRenderer.invoke("personnel.delete_sub_team", args),
+    reorderSubTeams: (args: ReorderSubTeamsArgs): Promise<void> =>
+      ipcRenderer.invoke("personnel.reorder_sub_teams", args),
+    listPeople: (args: ListPeopleArgs): Promise<Person[]> =>
+      ipcRenderer.invoke("personnel.list_people", args),
+    createPerson: (args: CreatePersonArgs): Promise<Person> =>
+      ipcRenderer.invoke("personnel.create_person", args),
+    updatePerson: (args: UpdatePersonArgs): Promise<Person> =>
+      ipcRenderer.invoke("personnel.update_person", args),
+    deactivatePerson: (args: PersonIdArgs): Promise<Person> =>
+      ipcRenderer.invoke("personnel.deactivate_person", args),
+    reactivatePerson: (args: PersonIdArgs): Promise<Person> =>
+      ipcRenderer.invoke("personnel.reactivate_person", args),
+    deletePerson: (args: PersonIdArgs): Promise<void> =>
+      ipcRenderer.invoke("personnel.delete_person", args),
+    listAssigneeCandidates: (args: ListAssigneeCandidatesArgs): Promise<AssigneeCandidate[]> =>
+      ipcRenderer.invoke("personnel.list_assignee_candidates", args),
+    personnelMatrix: (args: PersonnelMatrixArgs): Promise<PersonnelMatrix> =>
+      ipcRenderer.invoke("personnel.personnel_matrix", args),
+  },
 };
 
 contextBridge.exposeInMainWorld("api", api);
 
-// 给 TypeScript 一个 window.api 的声明（渲染进程 import 时拿到类型）。
+/** 给 TypeScript 一个 window.api 的声明。 */
 export type KewutongApi = typeof api;
