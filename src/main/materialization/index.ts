@@ -798,10 +798,9 @@ export function materializeAll(
 export function materializeFromState(state: AppState): MaterializeTotals {
   const now = dateToNaiveDate(state.clock.today());
   const conn = state.db;
-  // state.calendar 一定是 HolidayCalendar（启动时 loadHolidayCalendar 已挂）；
-  // 占位实现 emptyCalendar 也满足 HolidayCalendarLike，这里显式断言以访问
-  // findNextWorkday 等的方法。
-  const calendar = state.calendar as HolidayCalendar;
+  // state.calendar 由 state.ts 类型为 HolidayCalendar——启动时
+  // loadHolidayCalendar 已挂占位/真实实例。
+  const calendar = state.calendar;
   const totals = materializeAll(conn, calendar, now);
   const week = isoWeekFromDate(now);
   writeLastMaterializedWeek(conn, week);
