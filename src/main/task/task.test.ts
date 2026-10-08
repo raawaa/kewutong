@@ -952,3 +952,293 @@ describe("task / 共享片段", () => {
     expect(Task.TASK_STATUSES).toContain("Cancelled");
   });
 });
+
+// ---------------------------------------------------------------------------
+// sanitizeFts5Query 纯函数（#45）
+// ---------------------------------------------------------------------------
+
+describe("task / sanitizeFts5Query（#45）", () => {
+  it("空输入 → 空字符串", () => {
+    expect(Task.sanitizeFts5Query("")).toBe("");
+  });
+  it("全是 FTS5 特殊字符 → 空字符串", () => {
+    expect(Task.sanitizeFts5Query("***")).toBe("");
+    expect(Task.sanitizeFts5Query("\"\"")).toBe("");
+    expect(Task.sanitizeFts5Query("()")).toBe("");
+    expect(Task.sanitizeFts5Query(":-^+-")).toBe("");
+  });
+  it("LIKE 元字符也被替换", () => {
+    expect(Task.sanitizeFts5Query("%")).toBe("");
+    expect(Task.sanitizeFts5Query("_")).toBe("");
+    expect(Task.sanitizeFts5Query("\\")).toBe("");
+  });
+  it("特殊字符替换为空白 + 折叠多空白", () => {
+    expect(Task.sanitizeFts5Query("a*b")).toBe("a b");
+    expect(Task.sanitizeFts5Query('"合同"')).toBe("合同");
+    expect(Task.sanitizeFts5Query("  合同  ")).toBe("合同");
+    expect(Task.sanitizeFts5Query("a  *  b")).toBe("a b");
+  });
+  it("汉字 / 字母 / 数字 / 普通标点保留", () => {
+    expect(Task.sanitizeFts5Query("外委合同 2024")).toBe("外委合同 2024");
+    expect(Task.sanitizeFts5Query("合同，评审")).toBe("合同，评审");
+    expect(Task.sanitizeFts5Query("task/评审")).toBe("task/评审");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// searchTasks FTS5 全文搜索（#45）
+// ---------------------------------------------------------------------------
+
+describe("task / searchTasks（#45）", () => {
+  it("空关键词被拒", () => {
+    const ctx = setupWorld();
+    try {
+      expect(() =>
+        Task.searchTasks(ctx.state, {
+          query: "   ",
+          includeCancelled: false,
+          includeDeactivatedOwners: false,
+        }),
+      ).toThrow(/搜索关键词不能为空/);
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("关键词全是 FTS5 特殊字符：返回空列表而不是抛错", () => {
+    const ctx = setupWorld();
+    try {
+      rawInsert(ctx.state, {
+        title: "某任务",
+        status: "Open",
+        ownerPersonId: ctx.personId,
+      });
+      const hits = Task.searchTasks(ctx.state, {
+        query: "***",
+        includeCancelled: false,
+        includeDeactivatedOwners: false,
+      });
+      expect(hits).toEqual([]);
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("≥3 字中文走 FTS5 trigram：'委合同' 命中 '外委合同评审'", () => {
+    const ctx = setupWorld();
+    try {
+      const id = rawInsert(ctx.state, {
+        title: "外委合同评审",
+        description: "本年度外委合同集中评审",
+        status: "Open",
+        ownerPersonId: ctx.personId,
+      });
+      const hits = Task.searchTasks(ctx.state, {
+        query: "委合同",
+        includeCancelled: false,
+        includeDeactivatedOwners: false,
+      });
+      expect(hits.map((t) => t.id)).toEqual([id]);
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("描述里的关键词也进 FTS5 索引", () => {
+    const ctx = setupWorld();
+    try {
+      const id = rawInsert(ctx.state, {
+        title: "整理卷宗",
+        description: "把去年的项目档案归档入库",
+        status: "Open",
+        ownerPersonId: ctx.personId,
+      });
+      // 「档案归档」3 字 -> 走 FTS5 trigram
+      const hits = Task.searchTasks(ctx.state, {
+        query: "档案归档",
+        includeCancelled: false,
+        includeDeactivatedOwners: false,
+      });
+      expect(hits.map((t) => t.id)).toEqual([id]);
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("<3 字短查询走 LIKE 兜底：'合同' 命中 '外委合同评审'", () => {
+    const ctx = setupWorld();
+    try {
+      const id = rawInsert(ctx.state, {
+        title: "外委合同评审",
+        description: null,
+        status: "Open",
+        ownerPersonId: ctx.personId,
+      });
+      const hits = Task.searchTasks(ctx.state, {
+        query: "合同",
+        includeCancelled: false,
+        includeDeactivatedOwners: false,
+      });
+      expect(hits.map((t) => t.id)).toEqual([id]);
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("1 字查询走 LIKE 兜底", () => {
+    const ctx = setupWorld();
+    try {
+      const id = rawInsert(ctx.state, {
+        title: "外委合同评审",
+        description: null,
+        status: "Open",
+        ownerPersonId: ctx.personId,
+      });
+      const hits = Task.searchTasks(ctx.state, {
+        query: "合",
+        includeCancelled: false,
+        includeDeactivatedOwners: false,
+      });
+      expect(hits.map((t) => t.id)).toEqual([id]);
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("limit 截断返回前 N 条", () => {
+    const ctx = setupWorld();
+    try {
+      for (let i = 0; i < 10; i++) {
+        rawInsert(ctx.state, {
+          title: `合同任务 ${String(i).padStart(2, "0")}`,
+          description: null,
+          status: "Open",
+          ownerPersonId: ctx.personId,
+        });
+      }
+      const hits = Task.searchTasks(ctx.state, {
+        query: "合同",
+        includeCancelled: false,
+        includeDeactivatedOwners: false,
+        limit: 3,
+      });
+      expect(hits.length).toBe(3);
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("默认过滤 Cancelled 与离岗人员负责的任务", () => {
+    const ctx = setupWorld();
+    try {
+      const a = Personnel.createPerson(ctx.state, {
+        name: "李四",
+        subTeamId: ctx.teamId,
+        contact: "999",
+      });
+      const idActive = rawInsert(ctx.state, {
+        title: "外委合同 A",
+        status: "Open",
+        ownerPersonId: ctx.personId,
+      });
+      const idCancelled = rawInsert(ctx.state, {
+        title: "外委合同 B",
+        status: "Cancelled",
+        ownerPersonId: ctx.personId,
+      });
+      const idDeactivated = rawInsert(ctx.state, {
+        title: "外委合同 C",
+        status: "Open",
+        ownerPersonId: a.id,
+      });
+      Personnel.deactivatePerson(ctx.state, { id: a.id });
+
+      // 默认 includeCancelled=false / includeDeactivatedOwners=false
+      const hits = Task.searchTasks(ctx.state, {
+        query: "外委合同",
+        includeCancelled: false,
+        includeDeactivatedOwners: false,
+      });
+      expect(hits.map((t) => t.id)).toEqual([idActive]);
+
+      // 打开 includeCancelled：cancelled 仍出现，deactivated 不出现
+      const withCancelled = Task.searchTasks(ctx.state, {
+        query: "外委合同",
+        includeCancelled: true,
+        includeDeactivatedOwners: false,
+      });
+      const withCancelledIds = withCancelled.map((t) => t.id).sort();
+      expect(withCancelledIds).toEqual([idActive, idCancelled].sort());
+
+      // 全部打开：3 条都出现
+      const allOpen = Task.searchTasks(ctx.state, {
+        query: "外委合同",
+        includeCancelled: true,
+        includeDeactivatedOwners: true,
+      });
+      expect(allOpen.map((t) => t.id).sort()).toEqual(
+        [idActive, idCancelled, idDeactivated].sort(),
+      );
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("update 后 FTS 行同步：旧词消失，新词命中", () => {
+    const ctx = setupWorld();
+    try {
+      const id = rawInsert(ctx.state, {
+        title: "原任务",
+        description: "原描述",
+        status: "Open",
+        ownerPersonId: ctx.personId,
+      });
+      // update 改标题与描述
+      Task.updateTask(ctx.state, {
+        id,
+        title: "新任务",
+        description: "新描述",
+        ownerPersonId: ctx.personId,
+      });
+
+      // 新词命中
+      const newHits = Task.searchTasks(ctx.state, {
+        query: "新任务",
+        includeCancelled: false,
+        includeDeactivatedOwners: false,
+      });
+      expect(newHits.map((t) => t.id)).toEqual([id]);
+
+      // 旧词消失
+      const oldHits = Task.searchTasks(ctx.state, {
+        query: "原任务",
+        includeCancelled: false,
+        includeDeactivatedOwners: false,
+      });
+      expect(oldHits).toEqual([]);
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("insert 后 task_fts 影子表立即可见（触发器 task_ai 有效）", () => {
+    const ctx = setupWorld();
+    try {
+      const id = rawInsert(ctx.state, {
+        title: "外委合同评审",
+        description: null,
+        status: "Open",
+        ownerPersonId: ctx.personId,
+      });
+      // 直接断言影子表行数
+      const count = ctx.state.db
+        .prepare<[number], { c: number }>(
+          "SELECT COUNT(*) AS c FROM task_fts WHERE rowid = ?",
+        )
+        .get(id)?.c ?? 0;
+      expect(count).toBe(1);
+    } finally {
+      ctx.close();
+    }
+  });
+});

@@ -248,6 +248,11 @@ function registerTask(state: AppState): void {
   handleVoid<import("../types.js").DueDateOption[]>("task.list_due_date_options", (s) =>
     Task.listDueDateOptions(s),
   )(ipcMain, state);
+
+  handle<import("../types.js").SearchTasksArgs, import("../types.js").Task[]>(
+    "task.search_tasks",
+    (s, args) => Task.searchTasks(s, args),
+  )(ipcMain, state);
 }
 
 /** Export domain（ticket #53）。 */

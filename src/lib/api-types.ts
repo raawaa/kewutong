@@ -38,6 +38,7 @@ import type {
   ProjectCandidate,
   ReorderSubTeamsArgs,
   RecurringTemplate,
+  SearchTasksArgs,
   SetRecurringTemplateEnabledArgs,
   SetTaskStatusArgs,
   SubTeam,
@@ -90,6 +91,7 @@ export type {
   CreateTaskArgs,
   UpdateTaskArgs,
   SetTaskStatusArgs,
+  SearchTasksArgs,
   ListTasksArgs,
   ListTasksFilteredArgs,
   TodayWeek,
@@ -265,6 +267,10 @@ export function todayWeek(): Promise<TodayWeek> {
 
 export function listDueDateOptions(): Promise<DueDateOption[]> {
   return window.api.task.listDueDateOptions();
+}
+
+export function searchTasks(args: SearchTasksArgs): Promise<Task[]> {
+  return window.api.task.searchTasks(args);
 }
 
 // ---------------------------------------------------------------------------

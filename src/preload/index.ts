@@ -39,6 +39,7 @@ import type {
   ProjectCandidate,
   ReorderSubTeamsArgs,
   RecurringTemplate,
+  SearchTasksArgs,
   SetRecurringTemplateEnabledArgs,
   SetTaskStatusArgs,
   SubTeam,
@@ -136,6 +137,8 @@ const api = {
     todayWeek: (): Promise<TodayWeek> => ipcRenderer.invoke("task.today_week"),
     listDueDateOptions: (): Promise<DueDateOption[]> =>
       ipcRenderer.invoke("task.list_due_date_options"),
+    searchTasks: (args: SearchTasksArgs): Promise<Task[]> =>
+      ipcRenderer.invoke("task.search_tasks", args),
   },
 
   // 导出（ticket #53）

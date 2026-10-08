@@ -176,6 +176,22 @@ export interface SetTaskStatusArgs {
   waitingOnPersonId?: number | null;
 }
 
+/**
+ * ⌘K 命令面板 / 任务搜索入参（ticket #45 · FTS5 平迁）。
+ *
+ * - `query` 走 FTS5 trigram；不足 3 字时 LIKE 兜底（短查询召回）。
+ * - `includeCancelled` / `includeDeactivatedOwners` 默认 false，与
+ *   [`ListTasksFilteredArgs`] 同语义——「在岗 + 在飞」是命令面板的默认
+ *   视图。
+ * - `limit` 由命令层封顶 `SEARCH_TASKS_LIMIT = 50`；传 null = 用默认。
+ */
+export interface SearchTasksArgs {
+  query: string;
+  includeCancelled: boolean;
+  includeDeactivatedOwners: boolean;
+  limit?: number | null;
+}
+
 export interface TodayWeekCounts {
   activePeople: number;
   inProgress: number;

@@ -22,6 +22,7 @@ import type {
   DueDateOption,
   ListTasksArgs,
   ListTasksFilteredArgs,
+  SearchTasksArgs,
   SetTaskStatusArgs,
   Task,
   TaskStatus,
@@ -781,4 +782,170 @@ export function dueDateOptions(today: Date): DueDateOption[] {
     offsetOption("next-week", "一周后", 7),
     { chip: "none", label: "无", dueDate: null },
   ];
+}
+
+// ---------------------------------------------------------------------------
+// 全文搜索（ticket #45 · FTS5 平迁）
+// ---------------------------------------------------------------------------
+
+/**
+ * FTS5 trigram 全文搜索（ticket #27 · ⌘K 命令面板 #28）。
+ *
+ * 中文子串召回：「合同」→「外委合同评审」（不必记住完整措辞，trigram
+ * 分词器把查询切成 3 字 chunks，与索引 chunks 求交集匹配）。
+ *
+ * 与原 Rust `search_tasks` 同语义：
+ * - `query` 走 [`sanitizeFts5Query`] 清掉 FTS5 特殊字符，再按码点长度分流；
+ * - **≥ 3 字**：走 `task_fts MATCH ?` —— trigram 索引高效；
+ * - **< 3 字**：trigram 无法生成 token，降级到 `LIKE '%?%'` 对
+ *   `title || description` 直接子串匹配——科长打「合同」两字就能命中
+ *   「外委合同评审」（issue #27 验收点）。
+ *
+ * 两条路径共享同一份 `includeCancelled` / `includeDeactivatedOwners`
+ * 与排序、limit——搜索语义只有一处权威。
+ *
+ * 与 Rust 不同点：TS 端 `better-sqlite3` 是同步 API，无需 `spawn_blocking`；
+ * IPC handler 直接调这条同步函数即可。Rust 的「`search_tasks_blocking` +
+ * `search_tasks_blocking_for_tests`」在 TS 上合成一条 [`searchTasks`]，
+ * 入参校验 + 清洗由它统一负责，#[doc(hidden)] 的 for_tests 同步体不再
+ * 单独存在——TS 不区分「主线程」与「blocking pool」。
+ */
+export function searchTasks(state: AppState, args: SearchTasksArgs): Task[] {
+  const query = requireNonBlank(args.query, "搜索关键词不能为空。");
+  const sanitized = sanitizeFts5Query(query);
+  // 关键词全是 FTS5 语法字符——视为无命中，直接返回空列表。
+  // 比抛错更友好：UI 命令面板里打了「***」想清屏，不应给中文错误。
+  if (sanitized.length === 0) return [];
+  const limit = args.limit ?? SEARCH_TASKS_LIMIT;
+  return searchTasksBlocking(
+    state,
+    sanitized,
+    args.includeCancelled,
+    args.includeDeactivatedOwners,
+    limit,
+  );
+}
+
+/**
+ * `searchTasks` 的同步核心——独立函数，便于测试直接驱动同步路径，
+ * 跳过 IPC 包装。Rust 端命名 `search_tasks_blocking` 沿用过来，名字中
+ * 「blocking」指「同步」（不阻塞 UI 是 Rust tokio 的语义，TS 这边只是
+ * 普通同步函数）。
+ */
+export function searchTasksBlocking(
+  state: AppState,
+  sanitizedQuery: string,
+  includeCancelled: boolean,
+  includeDeactivatedOwners: boolean,
+  limit: number,
+): Task[] {
+  if ([...sanitizedQuery].length < 3) {
+    return searchTasksLike(
+      state.db,
+      sanitizedQuery,
+      includeCancelled,
+      includeDeactivatedOwners,
+      limit,
+    );
+  }
+
+  const where: string[] = [
+    "t.id IN (SELECT rowid FROM task_fts WHERE task_fts MATCH ?)",
+  ];
+  if (!includeCancelled) where.push("t.status != 'Cancelled'");
+  if (!includeDeactivatedOwners) where.push("p.deactivated_at IS NULL");
+
+  // FTS5 query 走 `MATCH`——trigram 分词器对中英文子串都有效。
+  // LIMIT 在 SQL 端做；外层再 JOIN 拉全列。FTS5 子查询只输出 rowid。
+  // `task_fts.rowid` 与 `task.id` 对齐（task 表 `INTEGER PRIMARY KEY`
+  // 复用 rowid），无需显式关联列。
+  const sql = `
+    SELECT ${TASK_COLUMNS_WITH_T}
+      FROM task_fts
+      JOIN task t ON t.id = task_fts.rowid
+      JOIN person p ON p.id = t.owner_person_id
+     WHERE ${where.join(" AND ")}
+     ORDER BY rank ASC, t.id ASC
+     LIMIT ?`;
+
+  const rows = state.db.prepare<unknown[], TaskRow>(sql).all(sanitizedQuery, limit);
+  return rows.map(rowToTask);
+}
+
+/**
+ * 短查询的 LIKE 子串匹配（`< 3 字` 走这条）——trigram 兜不住的边界。
+ *
+ * 不走索引，但短查询本身过滤集小，无显著开销。`LIKE` 的元字符
+ * (`%` / `_` / `\\`) 已在调用 [`sanitizeFts5Query`] 时一并替换成空
+ * 白——这里不再二次转义。
+ *
+ * 排序按 id 升序兜底：短查询召回集本来就小，trigram 的 `rank` 不适用，
+ * 稳定呈现比排序质量更重要。
+ */
+function searchTasksLike(
+  db: Database.Database,
+  sanitizedQuery: string,
+  includeCancelled: boolean,
+  includeDeactivatedOwners: boolean,
+  limit: number,
+): Task[] {
+  const pattern = `%${sanitizedQuery}%`;
+  const where: string[] = ["(t.title LIKE ? OR t.description LIKE ?)"];
+  if (!includeCancelled) where.push("t.status != 'Cancelled'");
+  if (!includeDeactivatedOwners) where.push("p.deactivated_at IS NULL");
+
+  // 用 [`TASK_COLUMNS_WITH_T`]——LIKE 路径 `JOIN person p` 引入 `p.id`,
+  // 不带 `t.` 前缀的列会让 SQLite 报 ambiguous column。
+  const sql = `
+    SELECT ${TASK_COLUMNS_WITH_T}
+      FROM task t
+      JOIN person p ON p.id = t.owner_person_id
+     WHERE ${where.join(" AND ")}
+     ORDER BY t.id ASC
+     LIMIT ?`;
+
+  const rows = db.prepare<unknown[], TaskRow>(sql).all(pattern, pattern, limit);
+  return rows.map(rowToTask);
+}
+
+/**
+ * 把用户输入的 FTS5 query 做一次清洗：替换 FTS5 query syntax 里的特殊
+ * 字符为空白，然后把多余空白折叠成单空格。
+ *
+ * 替换目标：`"`、`*`、`(`、`)`、`:`、`^`、`+`、`-`——
+ * - `"`：短语分隔符；保留会强制把查询切成短语
+ * - `*`：前缀通配符
+ * - `(`、`)`：子表达式，单独出现会触发语法错误
+ * - `:`：列过滤器前缀（如 `title:`）
+ * - `^`：FTS5 排序 hint
+ * - `+`、`-`：必须 / 必须不包含项前缀
+ *
+ * 此外 `%` / `_` / `\` 一并替换——短查询走 LIKE 兜底路径，不替换会触
+ * 发 SQL 通配符语义。
+ *
+ * 保留汉字 / 字母 / 数字 / 普通标点（空格、`。`、`，`、`/` 等）——
+ * 这些 trigram 分词器能正确 tokenize 成 3 字 chunks。
+ */
+export function sanitizeFts5Query(raw: string): string {
+  let replaced = "";
+  for (const ch of raw) {
+    if (
+      ch === '"' ||
+      ch === "*" ||
+      ch === "(" ||
+      ch === ")" ||
+      ch === ":" ||
+      ch === "^" ||
+      ch === "+" ||
+      ch === "-" ||
+      ch === "%" ||
+      ch === "_" ||
+      ch === "\\"
+    ) {
+      replaced += " ";
+    } else {
+      replaced += ch;
+    }
+  }
+  return replaced.split(/\s+/).filter((s) => s.length > 0).join(" ");
 }
