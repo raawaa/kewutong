@@ -15,6 +15,7 @@ import { PersonnelMatrixView } from "@/views/PersonnelMatrixView";
 import { PersonnelView } from "@/views/PersonnelView";
 import { ProjectsView } from "@/views/ProjectsView";
 import { TodayWeekView } from "@/views/TodayWeekView";
+import { HolidayCalendarView } from "@/views/HolidayCalendarView";
 import {
   listPeople,
   listProjects,
@@ -36,13 +37,14 @@ import {
  * 「项目看板」（ticket #20）并列。「人员」单独一个 tab——做子组 / 人员
  * CRUD,与矩阵的"读"视角分开。
  */
-type Tab = "today" | "matrix" | "projects" | "personnel";
+type Tab = "today" | "matrix" | "projects" | "personnel" | "holiday";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "today", label: "今日 / 本周" },
   { id: "matrix", label: "人员矩阵" },
   { id: "projects", label: "项目" },
   { id: "personnel", label: "人员" },
+  { id: "holiday", label: "节假日" },
 ];
 
 /**
@@ -279,8 +281,10 @@ export default function App() {
           pendingProjectId={pendingProjectId}
           onProjectLocated={() => setPendingProjectId(null)}
         />
-      ) : (
+      ) : tab === "personnel" ? (
         <PersonnelView />
+      ) : (
+        <HolidayCalendarView refreshToken={refreshToken} />
       )}
 
       {dialog && (
