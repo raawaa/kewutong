@@ -20,6 +20,8 @@ import { openDatabase } from "./db.js";
 import { SystemClock } from "./clock.js";
 import { newAppState, DEFAULT_TRAY_STATUS, type AppState } from "./state.js";
 import { registerAllIpc, resolveMigrationsDir } from "./ipc/register.js";
+import * as Materialization from "./materialization/index.js";
+import * as Scheduler from "./notification/scheduler.js";
 import { createTray, pushTrayStatus, showMainWindow } from "./tray/index.js";
 import {
   bindWillQuitUnregister,
@@ -153,6 +155,52 @@ if (!gotTheLock) {
     // 全局快捷键挂在 `will-quit` 唯一注销——避免 dev 重启时残留
     // 「ghost shortcut」(Electron 文档明确要求)。
     bindWillQuitUnregister();
+
+    // -------------------------------------------------------------------------
+    // Spec §M4 / ticket #56 — Materialization + Scheduler 启动 + 跨周触发
+    // -------------------------------------------------------------------------
+    //
+    // 启动时立即跑一次物化（12 周窗口）+ 一次 scheduler（due_24h /
+    // blocked_3d / weekly_digest）。`materializeIfNewWeek` 内部已经做
+    // "current ISO week 与 meta `last_iso_year/week` 比较"的判定——
+    // 启动时 meta 通常是 null（首次启动）或上一周的；首次启动强制跑一
+    // 次,后续启动同 ISO 周内重复会被它自己拒掉,定时器兜底。
+    //
+    // 失败仅 console.error,不 panic（通知是后台能力）。
+    try {
+      Materialization.materializeIfNewWeek(state);
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      console.error(`[materialization] 启动物化失败：${detail}`);
+    }
+    try {
+      Scheduler.runAll(state);
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      console.error(`[notification] 启动调度失败：${detail}`);
+    }
+
+    // 跨周检查 + 通知扫——每小时一次。`materializeIfNewWeek` 自带
+    // ISO-week gate,只有真正跨入新一周时才落库；`runAll` 每小时跑
+    // 一次也只算"扫描"代价,内部 dedup 阻止重复轰炸。
+    const TICK_INTERVAL_MS = 60 * 60 * 1000; // 1h
+    const tickHandle = setInterval(() => {
+      try {
+        Materialization.materializeIfNewWeek(state);
+      } catch (cause) {
+        const detail = cause instanceof Error ? cause.message : String(cause);
+        console.error(`[materialization] tick 失败：${detail}`);
+      }
+      try {
+        Scheduler.runAll(state);
+      } catch (cause) {
+        const detail = cause instanceof Error ? cause.message : String(cause);
+        console.error(`[notification] tick 失败：${detail}`);
+      }
+    }, TICK_INTERVAL_MS);
+    // 后台定时器不需要 keep process alive——`unref()` 让进程可以
+    // 在没有其他阻挡时正常退出。
+    tickHandle.unref();
 
     // 托盘可达：所有窗口关掉后保留 app（托盘常驻，进程不退）。
     // 托盘不可用：窗口关掉 = 没有 UI 也没有托盘 = 直接退——下次启动
