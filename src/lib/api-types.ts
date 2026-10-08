@@ -16,12 +16,22 @@ import type {
   CreatePersonArgs,
   CreateProjectArgs,
   CreateSubTeamArgs,
+  CreateTaskArgs,
+  DatabaseExport,
+  DatabaseImportSummary,
   DeleteProjectArgs,
   DeleteSubTeamArgs,
+  DueDateOption,
+  ImportDatabaseJsonArgs,
+  InstanceIdArgs,
   ListAssigneeCandidatesArgs,
   ListPeopleArgs,
   ListProjectCandidatesArgs,
   ListProjectsArgs,
+  ListRecurringTemplatesArgs,
+  ListTasksArgs,
+  ListTasksFilteredArgs,
+  OverrideInstanceScheduledAtArgs,
   PersonnelMatrix,
   PersonnelMatrixArgs,
   Person,
@@ -32,12 +42,44 @@ import type {
   RealTeamsSeedSummary,
   ReorderSubTeamsArgs,
   SamplePresence,
+  RecurringTemplate,
+  RescheduleInstanceArgs,
+  SearchTasksArgs,
+  SetRecurringTemplateEnabledArgs,
+  SetTaskStatusArgs,
   SubTeam,
+  Task,
+  TasksCsvExport,
+  TodayWeek,
   TrayStatusDto,
   UpdatePersonArgs,
   UpdateProjectArgs,
   UpdateSubTeamArgs,
+  UpdateTaskArgs,
+  UpdateTemplateZoneArgs,
+  UpsertRecurringTemplateArgs,
+  WayfinderSearchArgs,
+  WayfinderSearchResults,
 } from "@/main/types";
+import type {
+  GetNotificationArgs,
+  MarkReadArgs,
+  NotificationRow,
+} from "@/main/notification/index";
+
+import type {
+  ClearHolidayOverrideArgs,
+  HolidayCalendarArgs,
+  HolidayCalendarDay,
+  HolidayLoadResult,
+  LoadHolidayCalendarArgs,
+  SetHolidayOverrideArgs,
+} from "@/main/holiday/index";
+
+import type {
+  MaterializeIfNewWeekResult,
+  MaterializeTotals,
+} from "@/main/materialization/index";
 
 /** 与主进程 `AppError.toPayload()` 一一对应。 */
 export type AppError = AppErrorDto;
@@ -59,9 +101,43 @@ export type {
   ListAssigneeCandidatesArgs,
   PersonnelMatrixArgs,
   PersonnelMatrix,
-  SamplePresence,
+SamplePresence,
   ClearSampleSummary,
   RealTeamsSeedSummary,
+  Task,
+  CreateTaskArgs,
+  UpdateTaskArgs,
+  SetTaskStatusArgs,
+  SearchTasksArgs,
+  ListTasksArgs,
+  ListTasksFilteredArgs,
+  TodayWeek,
+  DueDateOption,
+  DatabaseExport,
+  DatabaseImportSummary,
+  TasksCsvExport,
+  ImportDatabaseJsonArgs,
+  RecurringTemplate,
+  ListRecurringTemplatesArgs,
+  UpsertRecurringTemplateArgs,
+  SetRecurringTemplateEnabledArgs,
+  RescheduleInstanceArgs,
+  OverrideInstanceScheduledAtArgs,
+  UpdateTemplateZoneArgs,
+  InstanceIdArgs,
+  HolidayCalendarArgs,
+  HolidayCalendarDay,
+  SetHolidayOverrideArgs,
+  ClearHolidayOverrideArgs,
+  LoadHolidayCalendarArgs,
+  HolidayLoadResult,
+  NotificationRow,
+  MarkReadArgs,
+  GetNotificationArgs,
+  MaterializeTotals,
+  MaterializeIfNewWeekResult,
+  WayfinderSearchArgs,
+  WayfinderSearchResults,
 };
 
 // ---------------------------------------------------------------------------
@@ -204,4 +280,183 @@ export function clearSampleData(): Promise<ClearSampleSummary> {
 /** 首启种子：库里没有真实子组时灌入 4 子组 + 20 人，否则跳过。 */
 export function seedRealTeams(): Promise<RealTeamsSeedSummary> {
   return window.api.sample.seedRealTeams();
+}
+
+// ---------------------------------------------------------------------------
+// 任务（tickets #43 / #44）
+// ---------------------------------------------------------------------------
+
+export function createTask(args: CreateTaskArgs): Promise<Task> {
+  return window.api.task.createTask(args);
+}
+
+export function updateTask(args: UpdateTaskArgs): Promise<Task> {
+  return window.api.task.updateTask(args);
+}
+
+export function setTaskStatus(args: SetTaskStatusArgs): Promise<Task> {
+  return window.api.task.setTaskStatus(args);
+}
+
+export function listTasks(args: ListTasksArgs): Promise<Task[]> {
+  return window.api.task.listTasks(args);
+}
+
+export function listTasksFiltered(args: ListTasksFilteredArgs): Promise<Task[]> {
+  return window.api.task.listTasksFiltered(args);
+}
+
+export function todayWeek(): Promise<TodayWeek> {
+  return window.api.task.todayWeek();
+}
+
+export function listDueDateOptions(): Promise<DueDateOption[]> {
+  return window.api.task.listDueDateOptions();
+}
+
+export function searchTasks(args: SearchTasksArgs): Promise<Task[]> {
+  return window.api.task.searchTasks(args);
+}
+
+// ---------------------------------------------------------------------------
+// 导出（ticket #53）
+// ---------------------------------------------------------------------------
+
+export function exportDatabaseJson(): Promise<DatabaseExport> {
+  return window.api.export.exportDatabaseJson();
+}
+
+export function importDatabaseJson(args: ImportDatabaseJsonArgs): Promise<DatabaseImportSummary> {
+  return window.api.export.importDatabaseJson(args);
+}
+
+export function exportTasksCsv(): Promise<TasksCsvExport> {
+  return window.api.export.exportTasksCsv();
+}
+
+// ---------------------------------------------------------------------------
+// 周期性模板（tickets #24 / #46）
+// ---------------------------------------------------------------------------
+
+export function upsertRecurringTemplate(
+  args: UpsertRecurringTemplateArgs,
+): Promise<RecurringTemplate> {
+  return window.api.recurringTemplate.upsertRecurringTemplate(args);
+}
+
+export function listRecurringTemplates(
+  args: ListRecurringTemplatesArgs,
+): Promise<RecurringTemplate[]> {
+  return window.api.recurringTemplate.listRecurringTemplates(args);
+}
+
+export function setRecurringTemplateEnabled(
+  args: SetRecurringTemplateEnabledArgs,
+): Promise<RecurringTemplate> {
+  return window.api.recurringTemplate.setRecurringTemplateEnabled(args);
+}
+
+// ---------------------------------------------------------------------------
+// 节假日管理（tickets #23 / #47）
+// ---------------------------------------------------------------------------
+
+export function loadHolidayCalendar(args: LoadHolidayCalendarArgs): Promise<HolidayLoadResult> {
+  return window.api.holiday.loadHolidayCalendar(args);
+}
+
+export function holidayCalendar(args: HolidayCalendarArgs): Promise<HolidayCalendarDay[]> {
+  return window.api.holiday.holidayCalendar(args);
+}
+
+export function setHolidayOverride(args: SetHolidayOverrideArgs): Promise<void> {
+  return window.api.holiday.setHolidayOverride(args);
+}
+
+export function clearHolidayOverride(args: ClearHolidayOverrideArgs): Promise<void> {
+  return window.api.holiday.clearHolidayOverride(args);
+}
+
+// ---------------------------------------------------------------------------
+// 通知（ticket #51）
+// ---------------------------------------------------------------------------
+
+export function listUnreadNotifications(): Promise<NotificationRow[]> {
+  return window.api.notification.listUnreadNotifications();
+}
+
+export function listNotifications(): Promise<NotificationRow[]> {
+  return window.api.notification.listNotifications();
+}
+
+export function markNotificationRead(args: MarkReadArgs): Promise<boolean> {
+  return window.api.notification.markNotificationRead(args);
+}
+
+export function markAllNotificationsRead(): Promise<number> {
+  return window.api.notification.markAllNotificationsRead();
+}
+
+export function getNotification(args: GetNotificationArgs): Promise<NotificationRow> {
+  return window.api.notification.getNotification(args);
+}
+
+// ---------------------------------------------------------------------------
+// 物化（tickets #25 / #48）
+// ---------------------------------------------------------------------------
+
+/** 立即跑一次物化——UI 的「立即刷新」按钮、调停模板后想看到新 instance
+ *  等场景手动调。返回合计。 */
+export function materializeNow(): Promise<MaterializeTotals> {
+  return window.api.materialization.materializeNow();
+}
+
+/** 后台 tick 调用——只在跨入新 ISO 周时跑物化。`materialized = false`
+ *  表示本次没真跑（前端不弹提示）。 */
+export function materializeIfNewWeek(): Promise<MaterializeIfNewWeekResult> {
+  return window.api.materialization.materializeIfNewWeek();
+}
+
+// ---------------------------------------------------------------------------
+// 实例动作（tickets #26 / #49）
+// ---------------------------------------------------------------------------
+
+/** 手工改期单次 instance——原 instance → `Cancelled` + 新 instance →
+ *  `Open`，`rescheduled_from_id` 串起来（与 SHIFT 路径同形）。 */
+export function rescheduleInstance(args: RescheduleInstanceArgs): Promise<Task> {
+  return window.api.instance.rescheduleInstance(args);
+}
+
+/** 仅覆盖单 instance 的 `scheduled_at`——不取消、不挂
+ *  `rescheduled_from_id`。出差场景的轻量手势。 */
+export function overrideInstanceScheduledAt(
+  args: OverrideInstanceScheduledAtArgs,
+): Promise<Task> {
+  return window.api.instance.overrideInstanceScheduledAt(args);
+}
+
+/** 整体改模板的 `iana_zone`。v1 仅允许 `Asia/Shanghai`。 */
+export function updateRecurringTemplateZone(
+  args: UpdateTemplateZoneArgs,
+): Promise<RecurringTemplate> {
+  return window.api.instance.updateRecurringTemplateZone(args);
+}
+
+/** 沿 `rescheduled_from_id` 一路回溯，返回整条链（含自身，自身在最前）。
+ *  深度上限 32——防同步漂移引入的环路。 */
+export function instanceRescheduleChain(args: InstanceIdArgs): Promise<Task[]> {
+  return window.api.instance.instanceRescheduleChain(args);
+}
+
+// ---------------------------------------------------------------------------
+// ⌘K 全局命令面板（tickets #28 / #50）
+// ---------------------------------------------------------------------------
+
+/**
+ * ⌘K 命令面板搜索——一次拉回三类候选（人员 / 项目 / 任务）。
+ *
+ * `query` 空 = 默认候选；非空 = 子串 / FTS5 搜索。
+ * 命令层是候选列表的权威,前端不再二次过滤 / 排序 / 截断。
+ */
+export function wayfinderSearch(args: WayfinderSearchArgs): Promise<WayfinderSearchResults> {
+  return window.api.wayfinder.wayfinderSearch(args);
 }

@@ -17,12 +17,20 @@ import type {
   CreatePersonArgs,
   CreateProjectArgs,
   CreateSubTeamArgs,
+  CreateTaskArgs,
+  DatabaseExport,
+  DatabaseImportSummary,
   DeleteProjectArgs,
   DeleteSubTeamArgs,
+  DueDateOption,
+  ImportDatabaseJsonArgs,
   ListAssigneeCandidatesArgs,
   ListPeopleArgs,
   ListProjectCandidatesArgs,
   ListProjectsArgs,
+  ListRecurringTemplatesArgs,
+  ListTasksArgs,
+  ListTasksFilteredArgs,
   PersonnelMatrix,
   PersonnelMatrixArgs,
   Person,
@@ -33,11 +41,45 @@ import type {
   RealTeamsSeedSummary,
   ReorderSubTeamsArgs,
   SamplePresence,
+  RecurringTemplate,
+  SearchTasksArgs,
+  SetRecurringTemplateEnabledArgs,
+  SetTaskStatusArgs,
   SubTeam,
+  Task,
+  TasksCsvExport,
+  TodayWeek,
   TrayStatusDto,
   UpdatePersonArgs,
   UpdateProjectArgs,
   UpdateSubTeamArgs,
+  UpdateTaskArgs,
+  UpsertRecurringTemplateArgs,
+  WayfinderSearchArgs,
+  WayfinderSearchResults,
+} from "@/main/types";
+import type {
+  ClearHolidayOverrideArgs,
+  HolidayCalendarArgs,
+  HolidayCalendarDay,
+  HolidayLoadResult,
+  LoadHolidayCalendarArgs,
+  SetHolidayOverrideArgs,
+} from "@/main/holiday/index";
+import type {
+  GetNotificationArgs,
+  MarkReadArgs,
+  NotificationRow,
+} from "@/main/notification/index";
+import type {
+  MaterializeIfNewWeekResult,
+  MaterializeTotals,
+} from "@/main/materialization/index";
+import type {
+  InstanceIdArgs,
+  OverrideInstanceScheduledAtArgs,
+  RescheduleInstanceArgs,
+  UpdateTemplateZoneArgs,
 } from "@/main/types";
 
 /** 渲染进程只能看到这一份 typed API。 */
@@ -95,7 +137,7 @@ const api = {
       ipcRenderer.invoke("project.delete_project", args),
   },
 
-  // 示例数据（ticket #31）
+// 示例数据（ticket #31）
   sample: {
     isSampleDataPresent: (): Promise<SamplePresence> =>
       ipcRenderer.invoke("sample.is_sample_data_present"),
@@ -103,6 +145,99 @@ const api = {
       ipcRenderer.invoke("sample.clear_sample_data"),
     seedRealTeams: (): Promise<RealTeamsSeedSummary> =>
       ipcRenderer.invoke("sample.seed_real_teams"),
+  },
+
+  // 任务管理（tickets #43 / #44）
+  task: {
+    createTask: (args: CreateTaskArgs): Promise<Task> =>
+      ipcRenderer.invoke("task.create_task", args),
+    updateTask: (args: UpdateTaskArgs): Promise<Task> =>
+      ipcRenderer.invoke("task.update_task", args),
+    setTaskStatus: (args: SetTaskStatusArgs): Promise<Task> =>
+      ipcRenderer.invoke("task.set_task_status", args),
+    listTasks: (args: ListTasksArgs): Promise<Task[]> =>
+      ipcRenderer.invoke("task.list_tasks", args),
+    listTasksFiltered: (args: ListTasksFilteredArgs): Promise<Task[]> =>
+      ipcRenderer.invoke("task.list_tasks_filtered", args),
+    todayWeek: (): Promise<TodayWeek> => ipcRenderer.invoke("task.today_week"),
+    listDueDateOptions: (): Promise<DueDateOption[]> =>
+      ipcRenderer.invoke("task.list_due_date_options"),
+    searchTasks: (args: SearchTasksArgs): Promise<Task[]> =>
+      ipcRenderer.invoke("task.search_tasks", args),
+  },
+
+  // 导出（ticket #53）
+  export: {
+    exportDatabaseJson: (): Promise<DatabaseExport> =>
+      ipcRenderer.invoke("export.export_database_json"),
+    importDatabaseJson: (args: ImportDatabaseJsonArgs): Promise<DatabaseImportSummary> =>
+      ipcRenderer.invoke("export.import_database_json", args),
+    exportTasksCsv: (): Promise<TasksCsvExport> =>
+      ipcRenderer.invoke("export.export_tasks_csv"),
+  },
+
+  // 周期性模板（tickets #24 / #46）
+  recurringTemplate: {
+    upsertRecurringTemplate: (args: UpsertRecurringTemplateArgs): Promise<RecurringTemplate> =>
+      ipcRenderer.invoke("recurring_template.upsert_recurring_template", args),
+    listRecurringTemplates: (args: ListRecurringTemplatesArgs): Promise<RecurringTemplate[]> =>
+      ipcRenderer.invoke("recurring_template.list_recurring_templates", args),
+    setRecurringTemplateEnabled: (
+      args: SetRecurringTemplateEnabledArgs,
+    ): Promise<RecurringTemplate> =>
+      ipcRenderer.invoke("recurring_template.set_recurring_template_enabled", args),
+  },
+
+  // 节假日管理（tickets #23 / #47）
+  holiday: {
+    loadHolidayCalendar: (args: LoadHolidayCalendarArgs): Promise<HolidayLoadResult> =>
+      ipcRenderer.invoke("holiday.load_holiday_calendar", args),
+    holidayCalendar: (args: HolidayCalendarArgs): Promise<HolidayCalendarDay[]> =>
+      ipcRenderer.invoke("holiday.holiday_calendar", args),
+    setHolidayOverride: (args: SetHolidayOverrideArgs): Promise<void> =>
+      ipcRenderer.invoke("holiday.set_holiday_override", args),
+    clearHolidayOverride: (args: ClearHolidayOverrideArgs): Promise<void> =>
+      ipcRenderer.invoke("holiday.clear_holiday_override", args),
+  },
+
+  // 通知（ticket #51）
+  notification: {
+    listUnreadNotifications: (): Promise<NotificationRow[]> =>
+      ipcRenderer.invoke("notification.list_unread_notifications"),
+    listNotifications: (): Promise<NotificationRow[]> =>
+      ipcRenderer.invoke("notification.list_notifications"),
+    markNotificationRead: (args: MarkReadArgs): Promise<boolean> =>
+      ipcRenderer.invoke("notification.mark_notification_read", args),
+    markAllNotificationsRead: (): Promise<number> =>
+      ipcRenderer.invoke("notification.mark_all_notifications_read"),
+    getNotification: (args: GetNotificationArgs): Promise<NotificationRow> =>
+      ipcRenderer.invoke("notification.get_notification", args),
+  },
+
+  // 物化（tickets #25 / #48）
+  materialization: {
+    materializeNow: (): Promise<MaterializeTotals> =>
+      ipcRenderer.invoke("materialization.materialize_now"),
+    materializeIfNewWeek: (): Promise<MaterializeIfNewWeekResult> =>
+      ipcRenderer.invoke("materialization.materialize_if_new_week"),
+  },
+
+// 实例动作（tickets #26 / #49）
+  instance: {
+    rescheduleInstance: (args: RescheduleInstanceArgs): Promise<Task> =>
+      ipcRenderer.invoke("instance.reschedule_instance", args),
+    overrideInstanceScheduledAt: (args: OverrideInstanceScheduledAtArgs): Promise<Task> =>
+      ipcRenderer.invoke("instance.override_instance_scheduled_at", args),
+    updateRecurringTemplateZone: (args: UpdateTemplateZoneArgs): Promise<RecurringTemplate> =>
+      ipcRenderer.invoke("instance.update_recurring_template_zone", args),
+    instanceRescheduleChain: (args: InstanceIdArgs): Promise<Task[]> =>
+      ipcRenderer.invoke("instance.instance_reschedule_chain", args),
+  },
+
+  // ⌘K 全局命令面板（tickets #28 / #50）
+  wayfinder: {
+    wayfinderSearch: (args: WayfinderSearchArgs): Promise<WayfinderSearchResults> =>
+      ipcRenderer.invoke("wayfinder.wayfinder_search", args),
   },
 };
 

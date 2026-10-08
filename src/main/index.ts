@@ -1,22 +1,26 @@
 /**
- * Electron 主进程入口（M1 ticket #38）。
+ * Electron 主进程入口（tickets #38 #40 #54）。
  *
- * 职责：起 `BrowserWindow` + 加载 `dist/index.html`（prod）/ Vite dev
- * server（dev）+ 装 AppState（db + clock + tray status）+ 注册 IPC
- * handlers。
- *
- * 体积代价 / tray / globalShortcut / single-instance / notification 三件事
- * 在 M3 阶段（tickets #54 / #55 / #56）补齐。本文件先开起得来。
+ * 职责（#54 之后）：
+ * - 单实例锁：第二个进程启动 → 立即 quit,但把已有实例的主窗口唤回。
+ * - 起 `BrowserWindow` + 加载 `dist/index.html`（prod）/ Vite dev
+ *   server（dev）。
+ * - 装 AppState（db + clock + tray status）+ 注册 IPC handlers。
+ * - 装 Tray + 菜单：托盘可达时 `trayStatus = Available`,失败时
+ *   `Unavailable { reason: 中文短句 }`。
+ * - 窗口生命周期：close → 默认 hide 到托盘；只有显式 `app.quit()` 才
+ *   退出进程；activate（macOS dock 点击 / 单实例重复启动）唤回。
  */
 
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, type WebPreferences } from "electron";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { openDatabase } from "./db.js";
 import { SystemClock } from "./clock.js";
-import { newAppState, DEFAULT_TRAY_STATUS } from "./state.js";
+import { newAppState, DEFAULT_TRAY_STATUS, type AppState } from "./state.js";
 import { registerAllIpc, resolveMigrationsDir } from "./ipc/register.js";
+import { createTray, pushTrayStatus, showMainWindow } from "./tray/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -37,11 +41,80 @@ function resolvePreload(): string {
   return path.join(__dirname, "../preload/index.js");
 }
 
-/** 单写者本机场景下也允许启动多实例——single-instance 在 #54 接入。 */
+/** 统一的 BrowserWindow webPreferences——`createMainWindow` 与 `activate` 分支共用。 */
+function makeWebPreferences(): WebPreferences {
+  return {
+    preload: resolvePreload(),
+    contextIsolation: true,
+    sandbox: true,
+    nodeIntegration: false,
+    webSecurity: true,
+  };
+}
+
+function loadRenderer(win: BrowserWindow): void {
+  if (DEV_SERVER_URL) {
+    void win.loadURL(DEV_SERVER_URL);
+  } else {
+    void win.loadFile(path.join(RENDERER_DIST, "index.html"));
+  }
+}
+
+function createMainWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    title: "科室任务管理",
+    width: 1280,
+    height: 800,
+    minWidth: 1024,
+    minHeight: 640,
+    webPreferences: makeWebPreferences(),
+  });
+  loadRenderer(win);
+  return win;
+}
+
+/**
+ * 把「关窗 = 隐藏到托盘」+ 「did-finish-load 补推 tray.status」两件
+ * 事绑到窗口上——初始创建与 `activate` 重建共用,避免漂移。
+ */
+function attachWindowLifecycle(win: BrowserWindow, state: AppState): void {
+  win.on("close", (e) => {
+    if (!isQuitting && state.trayStatus.kind === "available") {
+      e.preventDefault();
+      win.hide();
+    }
+  });
+  win.webContents.on("did-finish-load", () => pushTrayStatus(win, state));
+}
+
+// ---------------------------------------------------------------------------
+// 全局 main-process 状态
+// ---------------------------------------------------------------------------
+
+/** 主窗口——单例；激活路径会重建。 */
+let mainWindow: BrowserWindow | null = null;
+
+/**
+ * 区分「用户关窗」与「真退出」：
+ * - 关窗 = 默认 hide 到托盘（托盘可用时）；
+ * - 显式 `app.quit()`（托盘菜单「退出」/ 二次启动唤醒时若已 quit 等）
+ *   = 走 `before-quit` → 这里置 true,窗口 close 事件就放行不再
+ *   preventDefault。
+ */
+let isQuitting = false;
+
+/** 单实例锁：第二个实例启动 → quit 自己，但已运行的实例把主窗口唤回。 */
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 } else {
+  app.on("second-instance", () => {
+    // 用户从 Finder/Explorer 双击图标重新唤起——把主窗口拉回前台。
+    if (mainWindow) {
+      showMainWindow(mainWindow);
+    }
+  });
+
   app.whenReady().then(() => {
     const dbPath = path.join(app.getPath("userData"), "kewutong.sqlite");
     const db = openDatabase(dbPath, resolveMigrationsDir());
@@ -50,53 +123,48 @@ if (!gotTheLock) {
 
     registerAllIpc(state);
 
-    const win = new BrowserWindow({
-      title: "科室任务管理",
-      width: 1280,
-      height: 800,
-      minWidth: 1024,
-      minHeight: 640,
-      webPreferences: {
-        preload: resolvePreload(),
-        contextIsolation: true,
-        sandbox: true,
-        nodeIntegration: false,
-        webSecurity: true,
-      },
-    });
+    mainWindow = createMainWindow();
+    attachWindowLifecycle(mainWindow, state);
 
-    if (DEV_SERVER_URL) {
-      void win.loadURL(DEV_SERVER_URL);
-    } else {
-      void win.loadFile(path.join(RENDERER_DIST, "index.html"));
+    // 装托盘——失败时降级成 unavailable,不 panic。
+    try {
+      createTray({ window: mainWindow, state });
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      state.trayStatus = {
+        kind: "unavailable",
+        reason: "系统托盘不可用，请检查系统设置。",
+      };
+      // 降级时再补一次推送——启动 banner 已经在 `DEFAULT_TRAY_STATUS`
+      // 上展示「unavailable」,但这条更新带了真正的 reason。
+      if (mainWindow) pushTrayStatus(mainWindow, state);
+      console.error(`[tray] 托盘初始化失败：${detail}`);
     }
 
+    // 托盘可达：所有窗口关掉后保留 app（托盘常驻，进程不退）。
+    // 托盘不可用：窗口关掉 = 没有 UI 也没有托盘 = 直接退——下次启动
+    // 再试一次托盘初始化。这是「托盘不可用」的降级路径终点。
+    app.on("window-all-closed", () => {
+      if (state.trayStatus.kind !== "available") {
+        app.quit();
+      }
+      // 否则 no-op: 托盘在,进程不退。
+    });
+
     app.on("activate", () => {
+      // macOS：Dock 图标被点 / Launchpad 唤回。
       if (BrowserWindow.getAllWindows().length === 0) {
-        // macOS：Dock 图标被点开时重建窗口。
-        const w = new BrowserWindow({
-          webPreferences: {
-            preload: resolvePreload(),
-            contextIsolation: true,
-            sandbox: true,
-            nodeIntegration: false,
-            webSecurity: true,
-          },
-        });
-        if (DEV_SERVER_URL) {
-          void w.loadURL(DEV_SERVER_URL);
-        } else {
-          void w.loadFile(path.join(RENDERER_DIST, "index.html"));
-        }
+        mainWindow = createMainWindow();
+        attachWindowLifecycle(mainWindow, state);
+      } else if (mainWindow) {
+        showMainWindow(mainWindow);
       }
     });
   });
 
-  app.on("window-all-closed", () => {
-    // macOS 习惯：所有窗口关掉后保留 app（等 tray 接入后改；M3 #54 处理）。
-    if (process.platform !== "darwin") {
-      app.quit();
-    }
+  app.on("before-quit", () => {
+    // 让 window close 事件直接退出,不 hide。
+    isQuitting = true;
   });
 }
 
