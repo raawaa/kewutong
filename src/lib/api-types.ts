@@ -21,6 +21,7 @@ import type {
   ListPeopleArgs,
   ListProjectCandidatesArgs,
   ListProjectsArgs,
+  ListRecurringTemplatesArgs,
   PersonnelMatrix,
   PersonnelMatrixArgs,
   Person,
@@ -29,11 +30,14 @@ import type {
   Project,
   ProjectCandidate,
   ReorderSubTeamsArgs,
+  RecurringTemplate,
+  SetRecurringTemplateEnabledArgs,
   SubTeam,
   TrayStatusDto,
   UpdatePersonArgs,
   UpdateProjectArgs,
   UpdateSubTeamArgs,
+  UpsertRecurringTemplateArgs,
 } from "@/main/types";
 
 /** 与主进程 `AppError.toPayload()` 一一对应。 */
@@ -56,6 +60,10 @@ export type {
   ListAssigneeCandidatesArgs,
   PersonnelMatrixArgs,
   PersonnelMatrix,
+  RecurringTemplate,
+  ListRecurringTemplatesArgs,
+  UpsertRecurringTemplateArgs,
+  SetRecurringTemplateEnabledArgs,
 };
 
 // ---------------------------------------------------------------------------
@@ -179,4 +187,26 @@ export function updateProject(args: UpdateProjectArgs): Promise<Project> {
 
 export function deleteProject(args: DeleteProjectArgs): Promise<void> {
   return window.api.project.deleteProject(args);
+}
+
+// ---------------------------------------------------------------------------
+// 周期性模板（tickets #24 / #46）
+// ---------------------------------------------------------------------------
+
+export function upsertRecurringTemplate(
+  args: UpsertRecurringTemplateArgs,
+): Promise<RecurringTemplate> {
+  return window.api.recurringTemplate.upsertRecurringTemplate(args);
+}
+
+export function listRecurringTemplates(
+  args: ListRecurringTemplatesArgs,
+): Promise<RecurringTemplate[]> {
+  return window.api.recurringTemplate.listRecurringTemplates(args);
+}
+
+export function setRecurringTemplateEnabled(
+  args: SetRecurringTemplateEnabledArgs,
+): Promise<RecurringTemplate> {
+  return window.api.recurringTemplate.setRecurringTemplateEnabled(args);
 }
