@@ -5,7 +5,7 @@
  * 章都走这里，不在视图里再各自定义一份。改一处就同步所有调用点，避免
  * "阻塞"在不同视图里颜色漂移。
  */
-import type { TaskStatus } from "@/lib/ipc";
+import type { TaskStatus } from "@/lib/api";
 
 export const STATUS_STYLE: Record<
   TaskStatus,

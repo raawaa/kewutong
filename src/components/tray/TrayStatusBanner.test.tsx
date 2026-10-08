@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { TrayStatusBanner } from "./TrayStatusBanner";
-import type { TrayStatusDto } from "@/lib/ipc";
+import type { TrayStatusDto } from "@/lib/api";
 
 function unavailableDto(
   overrides: Partial<TrayStatusDto> = {},

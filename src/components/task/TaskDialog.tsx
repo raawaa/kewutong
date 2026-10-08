@@ -18,7 +18,7 @@ import {
   type StructuredRule,
   type Task,
   type UpsertRecurringTemplateArgs,
-} from "@/lib/ipc";
+} from "@/lib/api";
 
 /**
  * 打开弹窗的两种方式。

@@ -17,7 +17,7 @@ import {
   type AppError,
   type Person,
   type SubTeam,
-} from "@/lib/ipc";
+} from "@/lib/api";
 
 /**
  * 人员管理界面（ticket #17）。

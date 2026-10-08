@@ -4,9 +4,8 @@
  * 约定：前端不含业务逻辑，只调命令、显示 DTO。每个命令在这里包一层带类型的函数，
  * 组件不直接写 `window.api.*`。
  *
- * 本文件是原 `src/lib/ipc.ts` 的平迁：函数签名同形态，函数体换成
- * `window.api.<command>(args)`。完整迁移完成后删除原 `ipc.ts`（M3 ticket
- * 完成 renderer 全量切到 api.ts 后）。
+ * 文件命名 = spec #37 §M1 的「`api.ts`」——原 Tauri 时代 `src/lib/ipc.ts`
+ * （含 `@tauri-apps/*` 依赖）已删除(#59 cutover），并入本文件。
  */
 
 import type {
@@ -127,20 +126,62 @@ SamplePresence,
   OverrideInstanceScheduledAtArgs,
   UpdateTemplateZoneArgs,
   InstanceIdArgs,
+  WayfinderSearchArgs,
+  WayfinderSearchResults,
+} from "@/main/types";
+
+export type {
   HolidayCalendarArgs,
   HolidayCalendarDay,
   SetHolidayOverrideArgs,
   ClearHolidayOverrideArgs,
   LoadHolidayCalendarArgs,
   HolidayLoadResult,
+} from "@/main/holiday/index";
+
+export type {
   NotificationRow,
   MarkReadArgs,
   GetNotificationArgs,
+} from "@/main/notification/index";
+
+export type {
   MaterializeTotals,
   MaterializeIfNewWeekResult,
-  WayfinderSearchArgs,
-  WayfinderSearchResults,
-};
+} from "@/main/materialization/index";
+
+// 类型与常量原 `src/lib/ipc.ts`（Tauri 时代）单独声明——`api.ts` 的
+  // `export type {}` 块当时没把它们列进来,这里统一收口单点暴露。
+  export type {
+    TaskStatus,
+    ProjectStatus,
+    DueDateChip,
+    PersonnelMatrixPerson,
+    PersonnelMatrixSegment,
+    TodayWeekCounts,
+    TodayWeekBuckets,
+    StructuredRule,
+    RecurringFreq,
+    RecurringHolidayBehavior,
+    RecurringEnds,
+    WayfinderMatchKind,
+    WayfinderPersonHit,
+    WayfinderProjectHit,
+  } from "@/main/types";
+
+// byday bitmask 常量（与主进程 `src/main/recurring_template/index.ts`
+// 里的 BYDAY_MO..BYDAY_SU 对应）。原 Tauri 版 `ipc.ts` 末尾就有这个
+// 对象,现在 `api.ts` 单点暴露;UI 侧 `RecurringSheet` 用
+// `byday.MO | byday.WE` 这种写法拼周内组合。
+export const byday = {
+  MO: 1 << 0,
+  TU: 1 << 1,
+  WE: 1 << 2,
+  TH: 1 << 3,
+  FR: 1 << 4,
+  SA: 1 << 5,
+  SU: 1 << 6,
+} as const;
 
 // ---------------------------------------------------------------------------
 // 探活 / 数据文件位置 / 托盘（tickets #38 / #40 + 后续 #54）

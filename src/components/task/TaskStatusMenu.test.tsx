@@ -12,11 +12,11 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TaskStatusMenu } from "./TaskStatusMenu";
-import type { Task } from "@/lib/ipc";
-import { listAssigneeCandidates } from "@/lib/ipc";
+import type { Task } from "@/lib/api";
+import { listAssigneeCandidates } from "@/lib/api";
 
-vi.mock("@/lib/ipc", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/ipc")>()),
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
   listAssigneeCandidates: vi.fn(),
 }));
 

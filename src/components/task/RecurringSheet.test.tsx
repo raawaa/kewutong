@@ -12,8 +12,8 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RecurringSheet } from "./RecurringSheet";
-import type { StructuredRule } from "@/lib/ipc";
-import { byday } from "@/lib/ipc";
+import type { StructuredRule } from "@/lib/api";
+import { byday } from "@/lib/api";
 
 const initialRule: StructuredRule = {
   freq: "weekly",
