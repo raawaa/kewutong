@@ -14,19 +14,26 @@ import type { IpcRendererEvent } from "electron";
 import type {
   AssigneeCandidate,
   CreatePersonArgs,
+  CreateProjectArgs,
   CreateSubTeamArgs,
+  DeleteProjectArgs,
   DeleteSubTeamArgs,
   ListAssigneeCandidatesArgs,
   ListPeopleArgs,
+  ListProjectCandidatesArgs,
+  ListProjectsArgs,
   PersonnelMatrix,
   PersonnelMatrixArgs,
   Person,
   PersonIdArgs,
   PingReply,
+  Project,
+  ProjectCandidate,
   ReorderSubTeamsArgs,
   SubTeam,
   TrayStatusDto,
   UpdatePersonArgs,
+  UpdateProjectArgs,
   UpdateSubTeamArgs,
 } from "@/main/types";
 
@@ -69,6 +76,20 @@ const api = {
       ipcRenderer.invoke("personnel.list_assignee_candidates", args),
     personnelMatrix: (args: PersonnelMatrixArgs): Promise<PersonnelMatrix> =>
       ipcRenderer.invoke("personnel.personnel_matrix", args),
+  },
+
+  // 项目管理（ticket #20）
+  project: {
+    listProjects: (args: ListProjectsArgs): Promise<Project[]> =>
+      ipcRenderer.invoke("project.list_projects", args),
+    listProjectCandidates: (args: ListProjectCandidatesArgs): Promise<ProjectCandidate[]> =>
+      ipcRenderer.invoke("project.list_project_candidates", args),
+    createProject: (args: CreateProjectArgs): Promise<Project> =>
+      ipcRenderer.invoke("project.create_project", args),
+    updateProject: (args: UpdateProjectArgs): Promise<Project> =>
+      ipcRenderer.invoke("project.update_project", args),
+    deleteProject: (args: DeleteProjectArgs): Promise<void> =>
+      ipcRenderer.invoke("project.delete_project", args),
   },
 };
 

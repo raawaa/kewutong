@@ -13,6 +13,7 @@ import { AppError } from "../error.js";
 import { schemaVersion } from "../db.js";
 import type { AppState } from "../state.js";
 import * as Personnel from "../personnel/index.js";
+import * as Project from "../project/index.js";
 
 /**
  * 把命令函数包装成 ipcMain.handle 的 handler。
@@ -48,6 +49,7 @@ export function handleVoid<TReturn>(
 export function registerAllIpc(state: AppState): void {
   registerDiagnostics(state);
   registerPersonnel(state);
+  registerProject(state);
 }
 
 /** M1 探活 / 数据文件位置 / 托盘状态。 */
@@ -143,6 +145,36 @@ function registerPersonnel(state: AppState): void {
   handle<import("../types.js").PersonnelMatrixArgs, import("../types.js").PersonnelMatrix>(
     "personnel.personnel_matrix",
     (s, args) => Personnel.personnelMatrix(s, args),
+  )(ipcMain, state);
+}
+
+/** Project domain（ticket #20）。 */
+function registerProject(state: AppState): void {
+  handle<import("../types.js").ListProjectsArgs, import("../types.js").Project[]>(
+    "project.list_projects",
+    (s, args) => Project.listProjects(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").ListProjectCandidatesArgs,
+    import("../types.js").ProjectCandidate[]
+  >("project.list_project_candidates", (s, args) =>
+    Project.listProjectCandidates(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").CreateProjectArgs, import("../types.js").Project>(
+    "project.create_project",
+    (s, args) => Project.createProject(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").UpdateProjectArgs, import("../types.js").Project>(
+    "project.update_project",
+    (s, args) => Project.updateProject(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").DeleteProjectArgs, void>(
+    "project.delete_project",
+    (s, args) => Project.deleteProject(s, args),
   )(ipcMain, state);
 }
 

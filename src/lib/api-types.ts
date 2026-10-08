@@ -13,19 +13,26 @@ import type {
   AppErrorDto,
   AssigneeCandidate,
   CreatePersonArgs,
+  CreateProjectArgs,
   CreateSubTeamArgs,
+  DeleteProjectArgs,
   DeleteSubTeamArgs,
   ListAssigneeCandidatesArgs,
   ListPeopleArgs,
+  ListProjectCandidatesArgs,
+  ListProjectsArgs,
   PersonnelMatrix,
   PersonnelMatrixArgs,
   Person,
   PersonIdArgs,
   PingReply,
+  Project,
+  ProjectCandidate,
   ReorderSubTeamsArgs,
   SubTeam,
   TrayStatusDto,
   UpdatePersonArgs,
+  UpdateProjectArgs,
   UpdateSubTeamArgs,
 } from "@/main/types";
 
@@ -146,4 +153,30 @@ export function listAssigneeCandidates(
 
 export function personnelMatrix(args: PersonnelMatrixArgs): Promise<PersonnelMatrix> {
   return window.api.personnel.personnelMatrix(args);
+}
+
+// ---------------------------------------------------------------------------
+// 项目（ticket #20）
+// ---------------------------------------------------------------------------
+
+export function listProjects(args: ListProjectsArgs): Promise<Project[]> {
+  return window.api.project.listProjects(args);
+}
+
+export function listProjectCandidates(
+  args: ListProjectCandidatesArgs,
+): Promise<ProjectCandidate[]> {
+  return window.api.project.listProjectCandidates(args);
+}
+
+export function createProject(args: CreateProjectArgs): Promise<Project> {
+  return window.api.project.createProject(args);
+}
+
+export function updateProject(args: UpdateProjectArgs): Promise<Project> {
+  return window.api.project.updateProject(args);
+}
+
+export function deleteProject(args: DeleteProjectArgs): Promise<void> {
+  return window.api.project.deleteProject(args);
 }
