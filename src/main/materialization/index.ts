@@ -830,25 +830,6 @@ export function materializeIfNewWeek(state: AppState): MaterializeIfNewWeekResul
   return { materialized: true, totals };
 }
 
-/**
- * 后台 tick 调用的非 IPC 命令版——直接吃 `&AppState` 即可，不依赖 IPC
- * 生命周期。`materialized = true` 时内部已写元数据；调用方无需再做任何
- * 收尾。
- *
- * 单独抽出这一函数让 [`materializeIfNewWeek`] 与后台 tick 共用同一份
- * 「是否要跑」的判定逻辑，避免在两处重复实现「读 meta + 比较 + 调物化」
- * 的序列。
- */
-export function materializeIfNewWeekViaState(state: AppState): boolean {
-  const now = dateToNaiveDate(state.clock.today());
-  const currentWeek = isoWeekFromDate(now);
-  const conn = state.db;
-  const last = readLastMaterializedWeek(conn);
-  if (!shouldMaterializeThisTick(last, currentWeek)) return false;
-  materializeFromState(state);
-  return true;
-}
-
 // ---------------------------------------------------------------------------
 // 内部辅助：模板加载
 // ---------------------------------------------------------------------------

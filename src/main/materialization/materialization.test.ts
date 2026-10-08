@@ -682,17 +682,6 @@ describe("materialization / 集成：materializeAll + meta", () => {
       world.close();
     }
   });
-
-  it("materializeIfNewWeekViaState: 同周内重复返回 false", () => {
-    const world = setupWorld("2026-09-10 00:00:00");
-    try {
-      makeTemplate(world, "周一周三", weeklyMoWe());
-      expect(Mat.materializeIfNewWeekViaState(world.state)).toBe(true);
-      expect(Mat.materializeIfNewWeekViaState(world.state)).toBe(false);
-    } finally {
-      world.close();
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------

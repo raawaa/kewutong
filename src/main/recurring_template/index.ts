@@ -85,10 +85,6 @@ function freqAsDb(freq: RecurringFreq): string {
   }
 }
 
-function freqAsRrule(freq: RecurringFreq): string {
-  return freqAsDb(freq);
-}
-
 function parseFreqDb(text: string): RecurringFreq {
   switch (text) {
     case "DAILY":
@@ -277,7 +273,7 @@ export function deriveRrule(rule: StructuredRule): string {
   validateEnds(rule.ends);
 
   const parts: string[] = [];
-  parts.push(`FREQ=${freqAsRrule(rule.freq)}`);
+  parts.push(`FREQ=${freqAsDb(rule.freq)}`);
 
   if (rule.freq === "weekly") {
     parts.push(`BYDAY=${bydayTokensOf(rule.bydayMask)}`);
