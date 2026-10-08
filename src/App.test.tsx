@@ -10,6 +10,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import {
+  dataFileLocation,
+  isSampleDataPresent,
   listDueDateOptions,
   listPeople,
   listProjects,
@@ -29,6 +31,8 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   listProjects: vi.fn(),
   todayWeek: vi.fn(),
   trayStatus: vi.fn(),
+  isSampleDataPresent: vi.fn(),
+  dataFileLocation: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -49,6 +53,9 @@ beforeEach(() => {
   // 默认托盘可用——App.test 不关心 banner,显式给可用避免 banner 在这
   // 些测试里冒出来干扰断言；专门测 banner 行为去 TrayStatusBanner.test。
   vi.mocked(trayStatus).mockResolvedValue({ available: true, reason: "" });
+  // 示例数据 banner——默认不存在,避免 banner 干扰断言。
+  vi.mocked(isSampleDataPresent).mockResolvedValue({ present: false });
+  vi.mocked(dataFileLocation).mockResolvedValue(null);
 });
 
 /** 弹窗开着的判据：新建任务的对话框在 DOM 里。 */
