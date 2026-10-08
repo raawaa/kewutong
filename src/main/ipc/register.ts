@@ -13,6 +13,7 @@ import { AppError } from "../error.js";
 import { schemaVersion } from "../db.js";
 import type { AppState } from "../state.js";
 import * as Holiday from "../holiday/index.js";
+import * as Notification from "../notification/index.js";
 import * as Personnel from "../personnel/index.js";
 import * as Project from "../project/index.js";
 import * as Export from "../export/index.js";
@@ -56,6 +57,7 @@ export function registerAllIpc(state: AppState): void {
   registerProject(state);
   registerExport(state);
   registerRecurringTemplate(state);
+  registerNotification(state);
 }
 
 /** M1 探活 / 数据文件位置 / 托盘状态。 */
@@ -246,6 +248,34 @@ function registerRecurringTemplate(state: AppState): void {
     import("../types.js").RecurringTemplate
   >("recurring_template.set_recurring_template_enabled", (s, args) =>
     RecurringTemplate.setRecurringTemplateEnabled(s, args),
+  )(ipcMain, state);
+}
+
+/** Notification domain（ticket #51）。 */
+function registerNotification(state: AppState): void {
+  handleVoid<import("../notification/index.js").NotificationRow[]>(
+    "notification.list_unread_notifications",
+    (s) => Notification.listUnreadNotifications(s),
+  )(ipcMain, state);
+
+  handleVoid<import("../notification/index.js").NotificationRow[]>(
+    "notification.list_notifications",
+    (s) => Notification.listNotifications(s),
+  )(ipcMain, state);
+
+  handle<import("../notification/index.js").MarkReadArgs, boolean>(
+    "notification.mark_notification_read",
+    (s, args) => Notification.markNotificationRead(s, args),
+  )(ipcMain, state);
+
+  handleVoid<number>(
+    "notification.mark_all_notifications_read",
+    (s) => Notification.markAllNotificationsRead(s),
+  )(ipcMain, state);
+
+  handle<import("../notification/index.js").GetNotificationArgs, import("../notification/index.js").NotificationRow>(
+    "notification.get_notification",
+    (s, args) => Notification.getNotification(s, args),
   )(ipcMain, state);
 }
 

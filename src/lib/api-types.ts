@@ -43,6 +43,11 @@ import type {
   UpdateSubTeamArgs,
   UpsertRecurringTemplateArgs,
 } from "@/main/types";
+import type {
+  GetNotificationArgs,
+  MarkReadArgs,
+  NotificationRow,
+} from "@/main/notification/index";
 
 import type {
   ClearHolidayOverrideArgs,
@@ -87,7 +92,9 @@ export type {
   ClearHolidayOverrideArgs,
   LoadHolidayCalendarArgs,
   HolidayLoadResult,
-};
+  NotificationRow,
+  MarkReadArgs,
+  GetNotificationArgs,};
 
 // ---------------------------------------------------------------------------
 // 探活 / 数据文件位置 / 托盘（tickets #38 / #40 + 后续 #54）
@@ -269,3 +276,26 @@ export function setHolidayOverride(args: SetHolidayOverrideArgs): Promise<void> 
 export function clearHolidayOverride(args: ClearHolidayOverrideArgs): Promise<void> {
   return window.api.holiday.clearHolidayOverride(args);
 }
+
+// ---------------------------------------------------------------------------
+// 通知（ticket #51）
+// ---------------------------------------------------------------------------
+
+export function listUnreadNotifications(): Promise<NotificationRow[]> {
+  return window.api.notification.listUnreadNotifications();
+}
+
+export function listNotifications(): Promise<NotificationRow[]> {
+  return window.api.notification.listNotifications();
+}
+
+export function markNotificationRead(args: MarkReadArgs): Promise<boolean> {
+  return window.api.notification.markNotificationRead(args);
+}
+
+export function markAllNotificationsRead(): Promise<number> {
+  return window.api.notification.markAllNotificationsRead();
+}
+
+export function getNotification(args: GetNotificationArgs): Promise<NotificationRow> {
+  return window.api.notification.getNotification(args);}

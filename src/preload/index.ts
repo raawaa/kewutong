@@ -52,6 +52,11 @@ import type {
   LoadHolidayCalendarArgs,
   SetHolidayOverrideArgs,
 } from "@/main/holiday/index";
+import type {
+  GetNotificationArgs,
+  MarkReadArgs,
+  NotificationRow,
+} from "@/main/notification/index";
 
 /** 渲染进程只能看到这一份 typed API。 */
 const api = {
@@ -140,6 +145,20 @@ const api = {
       ipcRenderer.invoke("holiday.set_holiday_override", args),
     clearHolidayOverride: (args: ClearHolidayOverrideArgs): Promise<void> =>
       ipcRenderer.invoke("holiday.clear_holiday_override", args),
+  },
+
+  // 通知（ticket #51）
+  notification: {
+    listUnreadNotifications: (): Promise<NotificationRow[]> =>
+      ipcRenderer.invoke("notification.list_unread_notifications"),
+    listNotifications: (): Promise<NotificationRow[]> =>
+      ipcRenderer.invoke("notification.list_notifications"),
+    markNotificationRead: (args: MarkReadArgs): Promise<boolean> =>
+      ipcRenderer.invoke("notification.mark_notification_read", args),
+    markAllNotificationsRead: (): Promise<number> =>
+      ipcRenderer.invoke("notification.mark_all_notifications_read"),
+    getNotification: (args: GetNotificationArgs): Promise<NotificationRow> =>
+      ipcRenderer.invoke("notification.get_notification", args),
   },
 };
 
