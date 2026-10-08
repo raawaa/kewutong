@@ -548,7 +548,10 @@ function formatDays(mask: number): string {
   const bits = [byday.MO, byday.TU, byday.WE, byday.TH, byday.FR, byday.SA, byday.SU];
   const out: string[] = [];
   for (let i = 0; i < bits.length; i += 1) {
-    if ((mask & bits[i]) !== 0) out.push(labels[i]);
+    const bit = bits[i];
+    const label = labels[i];
+    if (bit === undefined || label === undefined) continue;
+    if ((mask & bit) !== 0) out.push(label);
   }
   return out.length === 0 ? "（无）" : " " + out.join("、");
 }

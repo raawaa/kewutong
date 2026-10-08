@@ -178,7 +178,7 @@ describe("project / CRUD（#20）", () => {
       Project.deleteProject(ctx.state, { id: p.id });
 
       const task = ctx.state.db
-        .prepare<[number], { project_id: number | null }>("SELECT project_id FROM task WHERE title = ?")
+        .prepare<[string], { project_id: number | null }>("SELECT project_id FROM task WHERE title = ?")
         .get("t1");
       expect(task?.project_id).toBeNull();
     } finally {

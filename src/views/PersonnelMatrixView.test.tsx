@@ -147,13 +147,13 @@ function matrixFor(_includeDeactivated: boolean): PersonnelMatrix {
         ...makeSegment(1, "暖通"),
         people: [
           {
-            person: ROSTER[0],
+            person: ROSTER[0]!,
             inFlightCount: 2,
             blockedCount: 1,
             tasks: [张三的任务, 张三的另一条任务],
           },
           {
-            person: ROSTER[1],
+            person: ROSTER[1]!,
             inFlightCount: 0,
             blockedCount: 0,
             tasks: [],
@@ -164,7 +164,7 @@ function matrixFor(_includeDeactivated: boolean): PersonnelMatrix {
         ...makeSegment(2, "电气"),
         people: [
           {
-            person: ROSTER[2],
+            person: ROSTER[2]!,
             inFlightCount: 1,
             blockedCount: 0,
             tasks: [王五的任务],
@@ -226,13 +226,13 @@ describe("PersonnelMatrixView", () => {
           ...makeSegment(1, "暖通"),
           people: [
             {
-              person: ROSTER[0],
+              person: ROSTER[0]!,
               inFlightCount: 1,
               blockedCount: 1,
               tasks: [张三的另一条任务],
             },
             {
-              person: ROSTER[1],
+              person: ROSTER[1]!,
               inFlightCount: 0,
               blockedCount: 0,
               tasks: [],
@@ -243,7 +243,7 @@ describe("PersonnelMatrixView", () => {
           ...makeSegment(2, "电气"),
           people: [
             {
-              person: ROSTER[2],
+              person: ROSTER[2]!,
               inFlightCount: 1,
               blockedCount: 0,
               tasks: [王五的任务],
@@ -374,7 +374,9 @@ describe("PersonnelMatrixView", () => {
       if (!args.includeDeactivated) return matrixFor(false);
       const matrix = matrixFor(true);
       // 多挂一位离岗的"赵六"
-      matrix.segments[0].people.push({
+      const firstSegment = matrix.segments[0];
+      if (!firstSegment) throw new Error("matrix.segments[0] 缺失");
+      firstSegment.people.push({
         person: {
           id: 10,
           name: "赵六",

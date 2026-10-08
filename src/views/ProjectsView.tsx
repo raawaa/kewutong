@@ -95,7 +95,8 @@ export function ProjectsView({
   // 默认选第一个项目
   useEffect(() => {
     if (selectedProjectId == null && projects.length > 0) {
-      setSelectedProjectId(projects[0].id);
+      const first = projects[0];
+      if (first) setSelectedProjectId(first.id);
     }
   }, [projects, selectedProjectId]);
 

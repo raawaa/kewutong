@@ -10,13 +10,13 @@
 import type { Database } from "better-sqlite3";
 
 /** 命令层与仓储层统一的 Result。 */
-export type Result<T> = T extends never ? never : { ok: true; value: T } | { ok: false; error: AppError };
+export type Result<T> = { ok: true; value: T } | { ok: false; error: AppError };
 
-export function ok<T>(value: T): Result<T> {
+export function ok<T>(value: T): { ok: true; value: T } {
   return { ok: true, value };
 }
 
-export function err(error: AppError): Result<never> {
+export function err(error: AppError): { ok: false; error: AppError } {
   return { ok: false, error };
 }
 

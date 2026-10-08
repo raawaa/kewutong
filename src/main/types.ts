@@ -6,7 +6,13 @@
  * re-export 出去（编译期保证两端一致）。
  */
 
-export type AppErrorCode = "DATABASE" | "MIGRATION" | "IO" | "INTERNAL" | "INVALID_ARGUMENT";
+export type AppErrorCode =
+  | "DATABASE"
+  | "MIGRATION"
+  | "IO"
+  | "INTERNAL"
+  | "INVALID_ARGUMENT"
+  | "UNKNOWN";
 
 export interface AppErrorDto {
   code: AppErrorCode;

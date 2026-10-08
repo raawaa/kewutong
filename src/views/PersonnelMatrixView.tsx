@@ -219,9 +219,9 @@ export function PersonnelMatrixView({
 
       {/* 命令面板（ticket #28）选中人员时滚到对应卡片——按 ref 找 */}
       <PersonLocator
-        pendingPersonId={pendingPersonId}
+        {...(pendingPersonId !== undefined && { pendingPersonId })}
         peopleById={peopleById}
-        onLocated={onPersonLocated}
+        {...(onPersonLocated !== undefined && { onLocated: onPersonLocated })}
       />
     </div>
   );

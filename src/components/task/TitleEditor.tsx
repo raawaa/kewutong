@@ -171,9 +171,11 @@ export function TitleEditor({
         case "Tab":
           event.preventDefault();
           if (hasAssignee) {
-            selectAssignee(assigneeCandidates[activeAssigneeIndex]);
+            const candidate = assigneeCandidates[activeAssigneeIndex];
+            if (candidate) selectAssignee(candidate);
           } else {
-            selectProject(projectCandidates[activeProjectIndex]);
+            const candidate = projectCandidates[activeProjectIndex];
+            if (candidate) selectProject(candidate);
           }
           return;
         case "Escape":
