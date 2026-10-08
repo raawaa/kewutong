@@ -14,6 +14,7 @@ import { schemaVersion } from "../db.js";
 import type { AppState } from "../state.js";
 import * as Holiday from "../holiday/index.js";
 import * as Notification from "../notification/index.js";
+import * as Scheduler from "../notification/scheduler.js";
 import * as Personnel from "../personnel/index.js";
 import * as Project from "../project/index.js";
 import * as Task from "../task/index.js";
@@ -347,7 +348,7 @@ function registerMaterialization(state: AppState): void {
   )(ipcMain, state);
 }
 
-/** Notification domain（ticket #51）。 */
+/** Notification domain（tickets #51 / #56）。 */
 function registerNotification(state: AppState): void {
   handleVoid<import("../notification/index.js").NotificationRow[]>(
     "notification.list_unread_notifications",
@@ -372,6 +373,13 @@ function registerNotification(state: AppState): void {
   handle<import("../notification/index.js").GetNotificationArgs, import("../notification/index.js").NotificationRow>(
     "notification.get_notification",
     (s, args) => Notification.getNotification(s, args),
+  )(ipcMain, state);
+
+  // 显式触发一次调度（ticket #56）。后台 tick 接入前的「手动跑一遍」
+  // 入口；返回值按 kind 分桶,前端拿到后各自 emit OS 通知。
+  handleVoid<import("../notification/scheduler.js").NotificationRunSummary>(
+    "notification.run_scheduler",
+    (s) => Scheduler.runAll(s),
   )(ipcMain, state);
 }
 

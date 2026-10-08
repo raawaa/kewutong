@@ -11,34 +11,25 @@
  * 标记已读走「id + viewed_at IS NULL」——重复调不报错、不更新，返回
  * `false` 表示本次没写。
  *
- * 命令层不负责写入 `notification_log`——那是通知引擎（`notifications.rs`
- * 中的 due_24h / blocked_3d / weekly_digest 三规则，平迁待后续 ticket）
- * 的事。本文件只承接读路径 + 标记已读。
+ * 命令层不负责写入 `notification_log`——那是通知引擎
+ * [`./scheduler.ts`]（due_24h / blocked_3d / weekly_digest 三规则）的
+ * 事。本文件只承接读路径 + 标记已读。
+ *
+ * 行映射助手（`rowToNotification` / `fetchNotification` / `parsePayload`）
+ * 与调度引擎共享——两端的列名约定一致，避免漂移。
  */
-
-import type Database from "better-sqlite3";
 
 import { AppError } from "../error.js";
 import type { AppState } from "../state.js";
+import {
+  fetchNotification,
+  rowToNotification,
+  type NotificationRow,
+  type NotificationTableRow,
+} from "./scheduler.js";
 
-// ---------------------------------------------------------------------------
-// DTO
-// ---------------------------------------------------------------------------
-
-/** `notification_log.kind` 列字面量——DB `CHECK` 一一对齐。 */
-export type NotificationKind = "due_24h" | "blocked_3d" | "weekly_digest";
-
-/** 一条通知行（DB → 前端）。 */
-export interface NotificationRow {
-  id: number;
-  triggeredAt: string;
-  kind: NotificationKind;
-  relatedTaskId: number | null;
-  relatedTemplateId: number | null;
-  /** JSON 文本解析后的对象；前端按 `payload.kind` 分支渲染。 */
-  payload: Record<string, unknown>;
-  viewedAt: string | null;
-}
+// 类型从 scheduler 转发——单一权威源；外部模块仍可从 `./index.js` import。
+export type { NotificationKind, NotificationRow } from "./scheduler.js";
 
 /** `mark_notification_read` 入参。 */
 export interface MarkReadArgs {
@@ -52,59 +43,6 @@ export interface GetNotificationArgs {
 
 /** 历史通知查询上限——防 IPC 一次性塞回几千条。 */
 const LIST_HISTORY_LIMIT = 200;
-
-// ---------------------------------------------------------------------------
-// 行 → DTO 映射
-// ---------------------------------------------------------------------------
-
-interface NotificationTableRow {
-  id: number;
-  triggered_at: string;
-  kind: string;
-  related_task_id: number | null;
-  related_template_id: number | null;
-  payload: string;
-  viewed_at: string | null;
-}
-
-function rowToNotification(row: NotificationTableRow): NotificationRow {
-  const payload = parsePayload(row.payload);
-  return {
-    id: row.id,
-    triggeredAt: row.triggered_at,
-    kind: row.kind as NotificationKind,
-    relatedTaskId: row.related_task_id,
-    relatedTemplateId: row.related_template_id,
-    payload,
-    viewedAt: row.viewed_at,
-  };
-}
-
-function parsePayload(text: string): Record<string, unknown> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (cause) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
-    throw AppError.internal(`notification_log.payload 解析失败：${detail}`);
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw AppError.internal("notification_log.payload 不是 JSON 对象");
-  }
-  return parsed as Record<string, unknown>;
-}
-
-function fetchNotification(db: Database.Database, id: number): NotificationRow | null {
-  const row = db
-    .prepare<[number], NotificationTableRow>(
-      `SELECT id, triggered_at, kind, related_task_id, related_template_id,
-              payload, viewed_at
-         FROM notification_log
-        WHERE id = ?`,
-    )
-    .get(id);
-  return row ? rowToNotification(row) : null;
-}
 
 // ---------------------------------------------------------------------------
 // 命令
