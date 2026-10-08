@@ -12,6 +12,7 @@ import * as path from "node:path";
 import { AppError } from "../error.js";
 import { schemaVersion } from "../db.js";
 import type { AppState } from "../state.js";
+import * as Holiday from "../holiday/index.js";
 import * as Personnel from "../personnel/index.js";
 import * as Project from "../project/index.js";
 
@@ -48,6 +49,7 @@ export function handleVoid<TReturn>(
 /** 注册所有 IPC 处理器——每个 domain 在这里串起来。 */
 export function registerAllIpc(state: AppState): void {
   registerDiagnostics(state);
+  registerHoliday(state);
   registerPersonnel(state);
   registerProject(state);
 }
@@ -145,6 +147,29 @@ function registerPersonnel(state: AppState): void {
   handle<import("../types.js").PersonnelMatrixArgs, import("../types.js").PersonnelMatrix>(
     "personnel.personnel_matrix",
     (s, args) => Personnel.personnelMatrix(s, args),
+  )(ipcMain, state);
+}
+
+/** Holiday domain（tickets #23 / #47）。 */
+function registerHoliday(state: AppState): void {
+  handle<Holiday.LoadHolidayCalendarArgs, Holiday.HolidayLoadResult>(
+    "holiday.load_holiday_calendar",
+    (s, args) => Holiday.loadHolidayCalendar(s, args),
+  )(ipcMain, state);
+
+  handle<Holiday.HolidayCalendarArgs, Holiday.HolidayCalendarDay[]>(
+    "holiday.holiday_calendar",
+    (s, args) => Holiday.holidayCalendar(s, args),
+  )(ipcMain, state);
+
+  handle<Holiday.SetHolidayOverrideArgs, void>(
+    "holiday.set_holiday_override",
+    (s, args) => Holiday.setHolidayOverride(s, args),
+  )(ipcMain, state);
+
+  handle<Holiday.ClearHolidayOverrideArgs, void>(
+    "holiday.clear_holiday_override",
+    (s, args) => Holiday.clearHolidayOverride(s, args),
   )(ipcMain, state);
 }
 

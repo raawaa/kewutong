@@ -13,15 +13,20 @@ import type { IpcRendererEvent } from "electron";
 
 import type {
   AssigneeCandidate,
+  ClearHolidayOverrideArgs,
   CreatePersonArgs,
   CreateProjectArgs,
   CreateSubTeamArgs,
   DeleteProjectArgs,
   DeleteSubTeamArgs,
+  HolidayCalendarArgs,
+  HolidayCalendarDay,
   ListAssigneeCandidatesArgs,
   ListPeopleArgs,
   ListProjectCandidatesArgs,
   ListProjectsArgs,
+  LoadHolidayCalendarArgs,
+  HolidayLoadResult,
   PersonnelMatrix,
   PersonnelMatrixArgs,
   Person,
@@ -30,12 +35,13 @@ import type {
   Project,
   ProjectCandidate,
   ReorderSubTeamsArgs,
+  SetHolidayOverrideArgs,
   SubTeam,
   TrayStatusDto,
   UpdatePersonArgs,
   UpdateProjectArgs,
   UpdateSubTeamArgs,
-} from "@/main/types";
+} from "@/main/holiday/index";
 
 /** 渲染进程只能看到这一份 typed API。 */
 const api = {
@@ -90,6 +96,18 @@ const api = {
       ipcRenderer.invoke("project.update_project", args),
     deleteProject: (args: DeleteProjectArgs): Promise<void> =>
       ipcRenderer.invoke("project.delete_project", args),
+  },
+
+  // 节假日管理（tickets #23 / #47）
+  holiday: {
+    loadHolidayCalendar: (args: LoadHolidayCalendarArgs): Promise<HolidayLoadResult> =>
+      ipcRenderer.invoke("holiday.load_holiday_calendar", args),
+    holidayCalendar: (args: HolidayCalendarArgs): Promise<HolidayCalendarDay[]> =>
+      ipcRenderer.invoke("holiday.holiday_calendar", args),
+    setHolidayOverride: (args: SetHolidayOverrideArgs): Promise<void> =>
+      ipcRenderer.invoke("holiday.set_holiday_override", args),
+    clearHolidayOverride: (args: ClearHolidayOverrideArgs): Promise<void> =>
+      ipcRenderer.invoke("holiday.clear_holiday_override", args),
   },
 };
 

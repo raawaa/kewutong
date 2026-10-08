@@ -36,6 +36,15 @@ import type {
   UpdateSubTeamArgs,
 } from "@/main/types";
 
+import type {
+  ClearHolidayOverrideArgs,
+  HolidayCalendarArgs,
+  HolidayCalendarDay,
+  HolidayLoadResult,
+  LoadHolidayCalendarArgs,
+  SetHolidayOverrideArgs,
+} from "@/main/holiday/index";
+
 /** 与主进程 `AppError.toPayload()` 一一对应。 */
 export type AppError = AppErrorDto;
 
@@ -56,6 +65,12 @@ export type {
   ListAssigneeCandidatesArgs,
   PersonnelMatrixArgs,
   PersonnelMatrix,
+  HolidayCalendarArgs,
+  HolidayCalendarDay,
+  SetHolidayOverrideArgs,
+  ClearHolidayOverrideArgs,
+  LoadHolidayCalendarArgs,
+  HolidayLoadResult,
 };
 
 // ---------------------------------------------------------------------------
@@ -179,4 +194,24 @@ export function updateProject(args: UpdateProjectArgs): Promise<Project> {
 
 export function deleteProject(args: DeleteProjectArgs): Promise<void> {
   return window.api.project.deleteProject(args);
+}
+
+// ---------------------------------------------------------------------------
+// 节假日管理（tickets #23 / #47）
+// ---------------------------------------------------------------------------
+
+export function loadHolidayCalendar(args: LoadHolidayCalendarArgs): Promise<HolidayLoadResult> {
+  return window.api.holiday.loadHolidayCalendar(args);
+}
+
+export function holidayCalendar(args: HolidayCalendarArgs): Promise<HolidayCalendarDay[]> {
+  return window.api.holiday.holidayCalendar(args);
+}
+
+export function setHolidayOverride(args: SetHolidayOverrideArgs): Promise<void> {
+  return window.api.holiday.setHolidayOverride(args);
+}
+
+export function clearHolidayOverride(args: ClearHolidayOverrideArgs): Promise<void> {
+  return window.api.holiday.clearHolidayOverride(args);
 }
