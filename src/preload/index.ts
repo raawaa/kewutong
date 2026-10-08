@@ -52,6 +52,8 @@ import type {
   UpdateSubTeamArgs,
   UpdateTaskArgs,
   UpsertRecurringTemplateArgs,
+  WayfinderSearchArgs,
+  WayfinderSearchResults,
 } from "@/main/types";
 import type {
   ClearHolidayOverrideArgs,
@@ -207,7 +209,7 @@ const api = {
       ipcRenderer.invoke("materialization.materialize_if_new_week"),
   },
 
-  // 实例动作（tickets #26 / #49）
+// 实例动作（tickets #26 / #49）
   instance: {
     rescheduleInstance: (args: RescheduleInstanceArgs): Promise<Task> =>
       ipcRenderer.invoke("instance.reschedule_instance", args),
@@ -217,6 +219,12 @@ const api = {
       ipcRenderer.invoke("instance.update_recurring_template_zone", args),
     instanceRescheduleChain: (args: InstanceIdArgs): Promise<Task[]> =>
       ipcRenderer.invoke("instance.instance_reschedule_chain", args),
+  },
+
+  // ⌘K 全局命令面板（tickets #28 / #50）
+  wayfinder: {
+    wayfinderSearch: (args: WayfinderSearchArgs): Promise<WayfinderSearchResults> =>
+      ipcRenderer.invoke("wayfinder.wayfinder_search", args),
   },
 };
 
