@@ -45,7 +45,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // 重导出纯函数 / 常量——让 `src/main/index.ts` 等业务方只 import 一个
 // barrel 入口；测试则改 import `./dto.js` 跳过 Electron 二进制加载。
-export { TRAY_STATUS_CHANNEL, trayStatusToDto } from "./dto.js";
+// 直接 re-export 本文件的 import 绑定,避免 import + export ... from 同
+// 一行的两份解析。
+export { TRAY_STATUS_CHANNEL, trayStatusToDto };
 
 /** 默认托盘图标路径——electron-builder 把 `build/` 作为 buildResources。 */
 function defaultIconPath(): string {
