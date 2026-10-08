@@ -7,8 +7,6 @@ files:
   - out/**/*
   - package.json
   - "!**/*.map"
-asarUnpack:
-  - "**/node_modules/better-sqlite3/**/*"
 extraResources:
   - from: "./src/main/migrations"
     to: "migrations"
