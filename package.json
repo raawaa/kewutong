@@ -12,7 +12,6 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.main.json && tsc --noEmit -p tsconfig.preload.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tauri": "tauri",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
