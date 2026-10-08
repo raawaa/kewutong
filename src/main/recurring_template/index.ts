@@ -13,7 +13,7 @@
  * 所有命令入参与返回都是稳定 DTO，不透传行结构。
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 import { AppError } from "../error.js";
 import { parseSqlDate } from "../clock.js";
@@ -30,6 +30,7 @@ import type {
   StructuredRule,
   UpsertRecurringTemplateArgs,
 } from "../types.js";
+import { withTx } from "../sqlite.js";
 
 // ---------------------------------------------------------------------------
 // byday bitmask（ADR 0002）
@@ -531,7 +532,7 @@ function rowToEnds(endsOn: string | null, endsAfterN: number | null): RecurringE
 
 /** 读 `recurring_template` 行 + sanity check（ADR 0002）——instance 命令层
  *  也借这条入口（ticket #49），保证读出后 `rrule_text` 与结构化字段一致。 */
-export function fetchTemplate(db: Database.Database, id: number): RecurringTemplate | null {
+export function fetchTemplate(db: DatabaseSync, id: number): RecurringTemplate | null {
   const row = db
     .prepare<[number], RecurringTemplateRow>(
       `SELECT ${TEMPLATE_SELECT_COLUMNS} FROM recurring_template WHERE id = ?`,
@@ -614,7 +615,7 @@ export function upsertRecurringTemplate(
   // 先算 id：编辑就是 args.id；新建由 lastInsertRowid 决定。
   // 放进闭包里让事务能写，再在事务外 fetch。
   let insertedId: number | null = null;
-  const tx = state.db.transaction(() => {
+  withTx(state.db, () => {
     if (args.id !== null) {
       const result = state.db
         .prepare(
@@ -690,7 +691,6 @@ export function upsertRecurringTemplate(
   });
 
   // 进入事务取 id，再事务外 fetch（fetch 自带 sanity check）。
-  tx();
   if (insertedId === null) {
     throw AppError.internal("recurring_template upsert 后 id 未确定");
   }

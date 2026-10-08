@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { AppError } from "../error.js";
 import { freshDb } from "../test/commands/fresh_db.js";
 import * as Export from "./index.js";
+import { withTx } from "../sqlite.js";
 
 /**
  * 本地 fixture：复用项目统一的 `freshDb`——后者已经处理好「跑 migrations
@@ -116,7 +117,7 @@ describe("export / exportDatabaseJson", () => {
   it("导出非空库时记录表行 / 含 JSON 文本列（bymonthday / payload）", () => {
     const { state, db, close } = freshExportDb({ now: "2026-09-10 08:00:00" });
     try {
-      db.transaction(() => {
+      withTx(db, () => {
         db.prepare("INSERT INTO sub_team (name) VALUES (?)").run("一组");
         db.prepare(
           "INSERT INTO person (name, sub_team_id, contact) VALUES (?, ?, ?)",
@@ -142,7 +143,7 @@ describe("export / exportDatabaseJson", () => {
           JSON.stringify({ kind: "due_24h", task_id: 999 }),
           1,
         );
-      })();
+      });
 
       const result = Export.exportDatabaseJson(state);
       const parsed = JSON.parse(result.jsonText) as {
@@ -169,7 +170,7 @@ describe("export / importDatabaseJson", () => {
   it("round-trip：export → import 后 schemaVersion 一致", () => {
     const { state, db, close } = freshExportDb({ now: "2026-09-10 08:00:00" });
     try {
-      db.transaction(() => {
+      withTx(db, () => {
         db.prepare("INSERT INTO sub_team (name) VALUES (?)").run("一组");
         db.prepare(
           "INSERT INTO person (name, sub_team_id, contact) VALUES (?, ?, ?)",
@@ -177,7 +178,7 @@ describe("export / importDatabaseJson", () => {
         db.prepare(
           "INSERT INTO task (title, status, owner_person_id) VALUES (?, ?, ?)",
         ).run("待办", "Open", 1);
-      })();
+      });
 
       const exported = Export.exportDatabaseJson(state);
 
@@ -293,7 +294,7 @@ describe("export / exportTasksCsv", () => {
   it("Done / Cancelled 不在导出范围", () => {
     const { state, db, close } = freshExportDb();
     try {
-      db.transaction(() => {
+      withTx(db, () => {
         db.prepare("INSERT INTO sub_team (name) VALUES (?)").run("一组");
         db.prepare(
           "INSERT INTO person (name, sub_team_id, contact) VALUES (?, ?, ?)",
@@ -307,7 +308,7 @@ describe("export / exportTasksCsv", () => {
         db.prepare(
           "INSERT INTO task (title, status, owner_person_id) VALUES (?, ?, ?)",
         ).run("已取消", "Cancelled", 1);
-      })();
+      });
 
       const result = Export.exportTasksCsv(state);
       expect(result.rowCount).toBe(1);
@@ -322,7 +323,7 @@ describe("export / exportTasksCsv", () => {
   it("含逗号 / 双引号的字段会被 RFC 4180 转义", () => {
     const { state, db, close } = freshExportDb({ now: "2026-09-10 08:00:00" });
     try {
-      db.transaction(() => {
+      withTx(db, () => {
         db.prepare("INSERT INTO sub_team (name) VALUES (?)").run("张三,暖通组");
         db.prepare(
           "INSERT INTO person (name, sub_team_id, contact) VALUES (?, ?, ?)",
@@ -330,7 +331,7 @@ describe("export / exportTasksCsv", () => {
         db.prepare(
           "INSERT INTO task (title, status, owner_person_id, blocked_reason) VALUES (?, ?, ?, ?)",
         ).run("待办", "Blocked", 1, '他说 "明天再说"');
-      })();
+      });
 
       const result = Export.exportTasksCsv(state);
       expect(result.csvText).toContain('"张三,暖通组"');

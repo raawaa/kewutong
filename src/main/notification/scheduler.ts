@@ -28,7 +28,7 @@
  *   / `parsePayload` —— 落库与读回两端的列名约定一致，避免漂移。
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 import { AppError } from "../error.js";
 import { formatLocalDate } from "../clock.js";
@@ -158,7 +158,7 @@ export function parsePayload(text: string): Record<string, unknown> {
 
 /** 取一条通知行；不存在则返回 `null`。 */
 export function fetchNotification(
-  db: Database.Database,
+  db: DatabaseSync,
   id: number,
 ): NotificationRow | null {
   const row = db
@@ -375,7 +375,7 @@ function isMondayLocal(today: Date): boolean {
  * 命中 `idx_task_due_date` partial（`WHERE due_date IS NOT NULL`）+
  * `idx_task_in_flight_status` partial（在飞四态）。
  */
-function countOverdue(conn: Database.Database, todayStr: string): number {
+function countOverdue(conn: DatabaseSync, todayStr: string): number {
   const inFlight = IN_FLIGHT_STATUSES.map(() => "?").join(",");
   const row = conn
     .prepare<unknown[], { c: number }>(
@@ -388,7 +388,7 @@ function countOverdue(conn: Database.Database, todayStr: string): number {
 }
 
 /** 「指定日到期」任务数（状态在飞 + `due_date = day`）。 */
-function countDueOn(conn: Database.Database, dayStr: string): number {
+function countDueOn(conn: DatabaseSync, dayStr: string): number {
   const inFlight = IN_FLIGHT_STATUSES.map(() => "?").join(",");
   const row = conn
     .prepare<unknown[], { c: number }>(
@@ -401,7 +401,7 @@ function countDueOn(conn: Database.Database, dayStr: string): number {
 }
 
 /** 当前阻塞任务数（`status IN ('Blocked','Waiting-on')`）。 */
-function countBlocked(conn: Database.Database): number {
+function countBlocked(conn: DatabaseSync): number {
   const blocked = BLOCKED_STATUSES.map(() => "?").join(",");
   const row = conn
     .prepare<unknown[], { c: number }>(
@@ -470,7 +470,7 @@ export function runAll(state: AppState): NotificationRunSummary {
  * 的"同周"判定走偏。
  */
 function dedupInsert(
-  conn: Database.Database,
+  conn: DatabaseSync,
   payload: NotificationPayload,
   triggeredAt: string,
 ): NotificationRow | null {
@@ -516,7 +516,7 @@ function dedupInsert(
  * 注释。
  */
 function insertWeeklyDigest(
-  conn: Database.Database,
+  conn: DatabaseSync,
   payload: NotificationPayload,
   triggeredAt: string,
 ): NotificationRow | null {
@@ -546,7 +546,7 @@ function insertWeeklyDigest(
  * 兜底；当前 ISO 周起点 = 本周一，字符串前缀 `YYYY-MM-DD`，能唯一定位。
  */
 function findWeeklyDigestThisWeek(
-  conn: Database.Database,
+  conn: DatabaseSync,
   weekStart: string,
 ): NotificationRow | null {
   const prefix = `${weekStart}%`;

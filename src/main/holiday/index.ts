@@ -19,7 +19,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 import { AppError } from "../error.js";
 import { parseSqlDate, toSqlDate } from "../clock.js";
@@ -223,7 +223,7 @@ export class HolidayCalendar {
    * 解析层零容错：JSON 不合法 → 抛 `AppError.internal`（启动应当立即失
    * 败,而不是带着垃圾数据跑下去）。
    */
-  static load(db: Database.Database, seedDir: string, currentYear: number): HolidayCalendar {
+  static load(db: DatabaseSync, seedDir: string, currentYear: number): HolidayCalendar {
     const cal = new HolidayCalendar();
     for (const year of [currentYear, currentYear + 1]) {
       const filePath = path.join(seedDir, `cn-${year}.json`);
@@ -298,7 +298,7 @@ export class HolidayCalendar {
   // ----- override 写入 -----
 
   /** App 内"切换某一天为 Holiday/Workday"——upsert 进 `holiday_override`。 */
-  setOverride(db: Database.Database, yyyymmdd: string, kind: DayKind): void {
+  setOverride(db: DatabaseSync, yyyymmdd: string, kind: DayKind): void {
     const dateText = requireNonBlank(yyyymmdd, "覆盖日期不能为空。");
     parseIsoDate(dateText, "覆盖日期"); // 仅校验格式
     try {
@@ -313,7 +313,7 @@ export class HolidayCalendar {
   }
 
   /** 清除某天的覆盖（恢复种子/默认）。 */
-  clearOverride(db: Database.Database, yyyymmdd: string): void {
+  clearOverride(db: DatabaseSync, yyyymmdd: string): void {
     const dateText = requireNonBlank(yyyymmdd, "覆盖日期不能为空。");
     parseIsoDate(dateText, "覆盖日期");
     try {
@@ -325,7 +325,7 @@ export class HolidayCalendar {
   }
 
   /** 从 SQLite 重读全部覆盖,替换内存中的 overrides。 */
-  reloadOverridesFromDb(db: Database.Database): void {
+  reloadOverridesFromDb(db: DatabaseSync): void {
     this.overrides.clear();
     this.loadOverridesFromDb(db);
   }
@@ -349,7 +349,7 @@ export class HolidayCalendar {
   }
 
   /** 从 SQLite 读 `holiday_override` 全表,落到 `this.overrides`。 */
-  private loadOverridesFromDb(db: Database.Database): void {
+  private loadOverridesFromDb(db: DatabaseSync): void {
     let rows: { date: string; kind: string }[];
     try {
       rows = db

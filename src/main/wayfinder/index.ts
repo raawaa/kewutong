@@ -17,14 +17,14 @@
  * 与 Rust 端的关键差异（deadlock 警告承 ticket #28）：
  * - Rust 端用 std Mutex 包裹 db 连接,std Mutex 不可重入,三类查询各自
  *   acquire / release 避免 self-deadlock。
- * - TS 端 `better-sqlite3` 是**同步** API,且 DB 由 `AppState` 持有——
+ * - TS 端 `node:sqlite` 是**同步** API,且 DB 由 `AppState` 持有——
  *   不存在 Mutex 互斥问题,各 sub-query 同步串行执行即可。
  *   实现上仍然每类一次 `state.db.prepare(...).all(...)`,各自一次往返,
  *   与 Rust 端"先持有锁再去嵌套锁会自死锁"的反例同形——保留结构对位便于
  *   阅读与回归追踪。
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 import { deriveStatusSqlFragment } from "../project/index.js";
 import type { AppState } from "../state.js";
@@ -98,7 +98,7 @@ export function wayfinderSearch(
   const includeDeactivatedPeople = args.includeDeactivatedPeople ?? false;
 
   // 三类查询各自走一次 db（承 ticket #28 Rust 端"不在外层先取一次连接"
-  // 的反例同形——better-sqlite3 同步 API 不需要 Mutex,但保留结构对位便于
+  // 的反例同形——node:sqlite 同步 API 不需要 Mutex,但保留结构对位便于
   // 阅读与回归追踪）。
   const people = searchPeople(
     state.db,
@@ -128,7 +128,7 @@ export function wayfinderSearch(
  * 默认行为——命令面板不该把已经请假的人推上前几位。
  */
 function searchPeople(
-  db: Database.Database,
+  db: DatabaseSync,
   query: string,
   limit: number,
   includeDeactivated: boolean,
@@ -182,7 +182,7 @@ function searchPeople(
  * 沿用视图层的派生逻辑（[`deriveStatusSqlFragment`]）。
  */
 function searchProjects(
-  db: Database.Database,
+  db: DatabaseSync,
   query: string,
   limit: number,
 ): WayfinderProjectHit[] {
@@ -254,7 +254,7 @@ function searchTasks(
  * created_at + id"这一份 SQL——`listTasks` / `listTasksFiltered` / 这里共用同一份。
  */
 function fetchTopTasks(
-  db: Database.Database,
+  db: DatabaseSync,
   limit: number,
   includeCancelled: boolean,
   includeDeactivatedOwners: boolean,

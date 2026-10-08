@@ -1,8 +1,9 @@
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
 import { freshDb } from "../test/commands/fresh_db.js";
 import * as Sample from "./index.js";
+import { withTx } from "../sqlite.js";
 
 /**
  * 本文件不依赖 V007 迁移里的示例行——`freshDb()` 交付的是空库，示例行
@@ -11,7 +12,7 @@ import * as Sample from "./index.js";
  */
 
 /** 搭一套 FK 齐全的示例图，可选带上真实行（`is_sample = 0`）。 */
-function seedSampleGraphAndRealRows(db: Database.Database, withRealRows = true): void {
+function seedSampleGraphAndRealRows(db: DatabaseSync, withRealRows = true): void {
   const realRows = withRealRows
     ? `
     -- 真实侧（is_sample = 0）先落——示例任务有 owner 挂在真实人员下。
@@ -71,7 +72,7 @@ function seedSampleGraphAndRealRows(db: Database.Database, withRealRows = true):
   `);
 }
 
-function countRows(db: Database.Database, table: string): number {
+function countRows(db: DatabaseSync, table: string): number {
   return db.prepare<[], { n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).get()?.n ?? -1;
 }
 
@@ -240,9 +241,9 @@ describe("sample / clearSampleData（#31）", () => {
       ).toBe(1);
 
       expect(() =>
-        db.transaction(() => {
+        withTx(db, () => {
           db.prepare("DELETE FROM project WHERE is_sample = 1").run();
-        })(),
+        }),
       ).toThrow(/FOREIGN KEY constraint failed/);
     } finally {
       close();

@@ -7,9 +7,12 @@
  * DROP，避免重跑 CREATE 报错。
  */
 
-import Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 import * as fs from "node:fs";
 import * as path from "node:path";
+// 副作用导入：补上 `node:sqlite` 的泛型 `prepare`。
+import "../sqlite.js";
+import { withTx } from "../sqlite.js";
 
 const MIGRATIONS_DIR_GLOB = /^V(\d+)__(.+)\.sql$/;
 
@@ -18,7 +21,7 @@ const MIGRATIONS_DIR_GLOB = /^V(\d+)__(.+)\.sql$/;
  *
  * 幂等——重跑不会重复应用。
  */
-export function runMigrations(db: Database.Database, dir: string): void {
+export function runMigrations(db: DatabaseSync, dir: string): void {
   // 1. 建 _migrations 表（如不存在）。
   db.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
@@ -64,10 +67,10 @@ export function runMigrations(db: Database.Database, dir: string): void {
     const version = Number(match[1]);
     if (applied.has(version)) continue;
     const text = fs.readFileSync(path.join(dir, file), "utf8");
-    db.transaction(() => {
+    withTx(db, () => {
       db.exec(text);
       db.prepare("INSERT INTO _migrations(version, name) VALUES (?, ?)").run(version, file);
-    })();
+    });
   }
 
   // 6. 同步 PRAGMA user_version 为 _migrations 最大 version（sanity）。
@@ -75,7 +78,8 @@ export function runMigrations(db: Database.Database, dir: string): void {
     .prepare<[], { v: number | null }>("SELECT MAX(version) AS v FROM _migrations")
     .get();
   if (maxApplied?.v != null) {
-    db.pragma(`user_version = ${maxApplied.v}`);
+    // `node:sqlite` 没有 `db.pragma()` setter——用 exec 写。
+    db.exec(`PRAGMA user_version = ${maxApplied.v}`);
   }
 }
 
@@ -86,22 +90,22 @@ export function runMigrations(db: Database.Database, dir: string): void {
  * execution_time INTEGER。`version` 列与 `_migrations.version` 都是
  * INTEGER，无精度问题。
  */
-function bootstrapFromTauriRefineryHistory(db: Database.Database): void {
+function bootstrapFromTauriRefineryHistory(db: DatabaseSync): void {
   const tauriApplied = db
     .prepare<[], { version: number; name: string }>(
       "SELECT version, name FROM refinery_schema_history ORDER BY version",
     )
     .all();
-  db.transaction(() => {
+  withTx(db, () => {
     const insert = db.prepare("INSERT OR IGNORE INTO _migrations(version, name) VALUES (?, ?)");
     for (const row of tauriApplied) {
       insert.run(row.version, row.name);
     }
-  })();
+  });
 }
 
 /** 已应用的最高迁移版本；一条都没跑过则为 `null`。 */
-export function schemaVersion(db: Database.Database): number | null {
+export function schemaVersion(db: DatabaseSync): number | null {
   const row = db
     .prepare<[], { v: number | null }>("SELECT MAX(version) AS v FROM _migrations")
     .get();
