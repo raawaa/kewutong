@@ -21,10 +21,13 @@ import { newAppState, type AppState } from "../../state.js";
 const __filename = url.fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-/** 从测试文件位置回溯到 repo 根的 migrations 目录。 */
+/** 从测试文件位置回溯到 migrations 目录。
+ *
+ * `__dirname` = `<repo>/src/main/test/commands/`；目标 = `<repo>/src/
+ * main/migrations/`。需要向上两级（去掉 `commands/` + `test/`）。
+ */
 function resolveMigrationsDir(): string {
-  // src/main/test/commands/fresh_db.ts → ../../../../src/main/migrations
-  return path.resolve(__dirname, "../../../migrations");
+  return path.resolve(__dirname, "../../migrations");
 }
 
 /** `now` = 当前时刻字符串（UTC）；`null` = 用 epoch 起点 1970-01-01。 */
@@ -42,6 +45,16 @@ export interface FreshDb {
 
 export function freshDb(options: FreshDbOptions = {}): FreshDb {
   const db = openInMemoryDatabase(resolveMigrationsDir());
+  // V007 在 migration 里塞了示例数据（is_sample = 1）——测试用例假设的
+  // 「空库」语义是「无任何行」,所以 fixture 末尾清一遍。FK 子 → 父顺序
+  // 与 `clearSampleData` 命令同源。
+  db.transaction(() => {
+    db.exec("DELETE FROM task WHERE is_sample = 1");
+    db.exec("DELETE FROM recurring_template WHERE is_sample = 1");
+    db.exec("DELETE FROM project WHERE is_sample = 1");
+    db.exec("DELETE FROM person WHERE is_sample = 1");
+    db.exec("DELETE FROM sub_team WHERE is_sample = 1");
+  })();
   const clock = options.now ? FixedClock.at(options.now) : new FixedClock(new Date(0));
   const state = newAppState(db, clock);
   return {
