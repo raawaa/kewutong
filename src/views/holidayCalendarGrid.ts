@@ -23,12 +23,8 @@ export interface HolidayCell {
   date: string;
   /** 月内日号（1..31），用于格子右下角的小数字。 */
   dayOfMonth: number;
-  /** 该天所在的月份号（1..12），用于格子左上角"换月"小标。 */
-  month: number;
   /** 周内下标 0 = Monday, 6 = Sunday。 */
   weekdayIndex: number;
-  /** 是否属于窗口起始那一周；用于"上一周 / 下一周"语义。 */
-  isFirstWeek: boolean;
   kind: DayKind;
   /** 节日 / 调休名称（如 "春节"）；null = 默认日无名称。 */
   name: string | null;
@@ -110,9 +106,6 @@ export function isWeekendIso(yyyymmdd: string): boolean {
  * `calendarResponse` 里的 `date` 一定是 `YYYY-MM-DD`（主进程返回已校
  * 验）。缺失日按"周末 = holiday / 工作日 = workday、source = default"
  * 填——见 ADR 0003 §跨年加载 + ticket #62 设计决策 §2。
- *
- * `today` 用于判定"当前周"——`isFirstWeek` 标记窗口第一行,便于后续
- * 加"上一周 / 下一周"导航时复用。
  */
 export function buildHolidayGrid({
   today,
@@ -138,9 +131,7 @@ export function buildHolidayGrid({
         row.push({
           date: yyyymmdd,
           dayOfMonth: dayDate.getDate(),
-          month: dayDate.getMonth() + 1,
           weekdayIndex,
-          isFirstWeek: weekIndex === 0,
           kind: seed.kind,
           name: seed.name,
           source: seed.source,
@@ -149,9 +140,7 @@ export function buildHolidayGrid({
         row.push({
           date: yyyymmdd,
           dayOfMonth: dayDate.getDate(),
-          month: dayDate.getMonth() + 1,
           weekdayIndex,
-          isFirstWeek: weekIndex === 0,
           kind: isWeekend ? "holiday" : "workday",
           name: null,
           source: "default",
@@ -171,17 +160,14 @@ export function buildHolidayGrid({
  * - workday（调休 / 默认工作日）：蓝绿底
  * - override（App 内覆盖）：紫底,带"app 内覆盖"徽章
  *
- * 视图层不写 Tailwind 调色,全部走这个映射——便于 ADR 0006 §前端 seam
- * "前端不含业务逻辑,只调命令、显示 DTO"的归口。
+ * 视图层不写 Tailwind 调色,全部走这个映射——便于 ADR 0008 §渲染进程
+ * seam "前端不含业务逻辑,只调命令、显示 DTO"的归口。
  */
 export function cellStyleOf(kind: DayKind, source: DaySource): HolidayCellStyle {
   if (source === "override") {
     return {
       backgroundClass: "bg-violet-200 text-violet-950",
       showOverrideBadge: true,
-      // override 永远 name=null——主进程 setOverride 不带 name；show
-      // name chip 永远为 false,但保留字段方便未来若 override 也带
-      // name 时一行改完。
       showNameChip: false,
     };
   }

@@ -50,7 +50,10 @@ export function HolidayCalendarView({
 }: {
   /** 父层保存任务 / 切换 tab 后 +1,触发重新拉取。 */
   refreshToken: number;
-  /** 测试用——生产环境不传,组件内自己 `new Date()`。 */
+  /** 测试用——生产环境不传,组件内自己 `new Date()`。
+   *  写成 `now?: Date`（不是 `Date | undefined`）——生产调用点要省略
+   *  prop,不能用 `now={undefined}`。两者在 `exactOptionalPropertyTypes: true`
+   *  下语义不同;此处省略语义才是预期的。 */
   now?: Date;
 }) {
   const [calendarResponse, setCalendarResponse] = useState<HolidayCalendarDay[]>(

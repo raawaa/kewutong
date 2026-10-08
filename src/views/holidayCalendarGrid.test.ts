@@ -206,15 +206,6 @@ describe("holidayCalendarGrid", () => {
       expect(grid[3]![6]!.date).toBe("2027-01-10");
     });
 
-    it("isFirstWeek 只在第一行 true,用于将来导航定位当前周", () => {
-      const today = new Date(2026, 9, 7);
-      const grid = buildHolidayGrid({ today, calendarResponse: [] });
-      expect(grid[0]!.every((c) => c.isFirstWeek)).toBe(true);
-      expect(grid[1]!.every((c) => !c.isFirstWeek)).toBe(true);
-      expect(grid[2]!.every((c) => !c.isFirstWeek)).toBe(true);
-      expect(grid[3]!.every((c) => !c.isFirstWeek)).toBe(true);
-    });
-
     it("weekdayIndex 按 Mon=0..Sun=6 排列", () => {
       const today = new Date(2026, 9, 7);
       const grid = buildHolidayGrid({ today, calendarResponse: [] });
