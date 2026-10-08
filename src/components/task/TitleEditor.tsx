@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { AssigneeCandidate, ProjectCandidate } from "@/lib/ipc";
+import type { AssigneeCandidate, ProjectCandidate } from "@/lib/api";
 import { findInlineTrigger } from "./inlineTrigger";
 
 /**

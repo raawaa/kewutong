@@ -21,7 +21,7 @@ import {
   type WayfinderPersonHit,
   type WayfinderProjectHit,
   type WayfinderSearchResults,
-} from "@/lib/ipc";
+} from "@/lib/api";
 
 /**
  * 选中一条候选后,通知外层"接下来要做什么"。

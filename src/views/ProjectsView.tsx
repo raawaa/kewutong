@@ -18,7 +18,7 @@ import {
   type SubTeam,
   type Task,
   type TaskStatus,
-} from "@/lib/ipc";
+} from "@/lib/api";
 import { STATUS_STYLE } from "@/lib/taskStatusStyle";
 
 /**

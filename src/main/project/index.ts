@@ -14,6 +14,9 @@ import type Database from "better-sqlite3";
 import { AppError } from "../error.js";
 import { parseSqlDate } from "../clock.js";
 import type { AppState } from "../state.js";
+import { escapeLike } from "../util/sql.js";
+import { requireNonBlank, trimToOption } from "../util/strings.js";
+import { ensurePersonExists, ensureSubTeamExists } from "../util/fk.js";
 import type {
   CreateProjectArgs,
   DeleteProjectArgs,
@@ -111,20 +114,8 @@ function fetchProject(db: Database.Database, id: number): Project | null {
 }
 
 // ---------------------------------------------------------------------------
-// 入参校验
+// 入参校验（已上提到 util/strings.ts）
 // ---------------------------------------------------------------------------
-
-function requireNonBlank(value: string, message: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) throw AppError.invalid(message);
-  return trimmed;
-}
-
-function trimToOption(value: string | null | undefined): string | null {
-  if (value === null || value === undefined) return null;
-  const trimmed = value.trim();
-  return trimmed.length === 0 ? null : trimmed;
-}
 
 function parseOptionalDate(value: string | null, label: string): string | null {
   const text = trimToOption(value);
@@ -134,25 +125,6 @@ function parseOptionalDate(value: string | null, label: string): string | null {
     throw AppError.invalid(`${label}格式不对,应形如 2026-09-10。`);
   }
   return text;
-}
-
-function escapeLike(raw: string): string {
-  let escaped = "";
-  for (const ch of raw) {
-    if (ch === "\\" || ch === "%" || ch === "_") escaped += "\\";
-    escaped += ch;
-  }
-  return escaped;
-}
-
-function ensurePersonExists(db: Database.Database, id: number): void {
-  const row = db.prepare<[number], { id: number }>("SELECT id FROM person WHERE id = ?").get(id);
-  if (!row) throw AppError.invalid("项目负责人不存在,请先在人员管理里录入。");
-}
-
-function ensureSubTeamExists(db: Database.Database, id: number): void {
-  const row = db.prepare<[number], { id: number }>("SELECT id FROM sub_team WHERE id = ?").get(id);
-  if (!row) throw AppError.invalid("所属子组不存在。");
 }
 
 // ---------------------------------------------------------------------------

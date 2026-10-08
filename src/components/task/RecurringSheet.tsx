@@ -8,7 +8,7 @@ import {
   type RecurringFreq,
   type RecurringHolidayBehavior,
   type StructuredRule,
-} from "@/lib/ipc";
+} from "@/lib/api";
 
 /**
  * 侧抽屉：周期性规则编辑器（ticket #24，决策变体 A「频率向导」）。

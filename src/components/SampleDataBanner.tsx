@@ -23,7 +23,7 @@ import {
   toAppError,
   type AppError,
   type ClearSampleSummary,
-} from "@/lib/ipc";
+} from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
 export function SampleDataBanner({

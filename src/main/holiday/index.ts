@@ -23,7 +23,8 @@ import type Database from "better-sqlite3";
 
 import { AppError } from "../error.js";
 import { parseSqlDate, toSqlDate } from "../clock.js";
-import type { AppState, HolidayCalendarLike } from "../state.js";
+import type { AppState } from "../state.js";
+import { requireNonBlank } from "../util/strings.js";
 
 // ---------------------------------------------------------------------------
 // DTO / 枚举
@@ -93,14 +94,8 @@ interface HolidayFileJson {
 const MAX_CALENDAR_SPAN_DAYS = 92;
 
 // ---------------------------------------------------------------------------
-// 入参校验与字符串处理
+// 入参校验与字符串处理（已上提到 util/strings.ts）
 // ---------------------------------------------------------------------------
-
-function requireNonBlank(value: string, message: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) throw AppError.invalid(message);
-  return trimmed;
-}
 
 /** 把 `YYYY-MM-DD` 文本解析为 `Date`。非此格式抛中文 `INVALID_ARGUMENT`。 */
 function parseIsoDate(text: string, label: string): Date {
@@ -209,11 +204,10 @@ function* expandDays(start: string, end: string): Generator<string> {
 /**
  * 加载完的日历视图：当年 + 下一年的种子合并进 `seed*`，override 单独存。
  *
- * 实现 [`HolidayCalendarLike`]（即只暴露 `kindOf()`）。命令层需要更
- * 强 API（`setOverride` / `clearOverride` 等）时,通过显式类型断言拿到
- * 完整类能力。
+ * 状态在 [`state.calendar`] 上由 [`loadHolidayCalendar`] 启动时一次性挂
+ * 上（空库时挂占位 [`placeholderCalendar`]）。
  */
-export class HolidayCalendar implements HolidayCalendarLike {
+export class HolidayCalendar {
   private seedHolidays = new Map<string, string>();
   private seedWorkdays = new Map<string, string>();
   private overrides = new Map<string, DayKind>();
@@ -250,8 +244,7 @@ export class HolidayCalendar implements HolidayCalendarLike {
   // ----- 公共查询接口 -----
 
   /**
-   * 给定日期的有效类别。**满足 [`HolidayCalendarLike`] 接口**——物化层与
-   * 日历视图之外的所有调用都通过这一个入口。
+   * 给定日期的有效类别——物化层与日历视图之外的所有调用都通过这一个入口。
    *
    * 返回字面量集合 `"holiday" | "makeup" | "workday"`：默认周末归
    * `holiday`，调休工作日（seed workday 或 override workday）归
@@ -446,10 +439,9 @@ export function holidayCalendar(
   const startStr = toSqlDate(startDate);
   const endStr = toSqlDate(endDate);
 
-  // state.calendar 一定是 HolidayCalendar（启动时 loadHolidayCalendar 已挂）;
-  // 占位实现 emptyCalendar 也满足 HolidayCalendarLike,这里显式断言以访问
-  // iterRange()。
-  const calendar = state.calendar as HolidayCalendar;
+  // state.calendar 由 state.ts 类型为 HolidayCalendar——启动时
+  // loadHolidayCalendar 已挂占位/真实实例。
+  const calendar = state.calendar;
   const days: HolidayCalendarDay[] = [];
   for (const day of calendar.iterRange(startStr, endStr)) {
     // 只列 Seed / Override 的 Holiday/Workday——默认工作日(含周末)
@@ -481,12 +473,12 @@ export function setHolidayOverride(state: AppState, args: SetHolidayOverrideArgs
   if (args.kind !== "holiday" && args.kind !== "workday") {
     throw AppError.invalid("覆盖类别应为「holiday」或「workday」。");
   }
-  const calendar = state.calendar as HolidayCalendar;
+  const calendar = state.calendar;
   calendar.setOverride(state.db, args.date, args.kind);
 }
 
 /** 清除 App 内某天的覆盖——回到种子/默认。 */
 export function clearHolidayOverride(state: AppState, args: ClearHolidayOverrideArgs): void {
-  const calendar = state.calendar as HolidayCalendar;
+  const calendar = state.calendar;
   calendar.clearOverride(state.db, args.date);
 }

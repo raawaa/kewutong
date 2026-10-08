@@ -19,7 +19,7 @@ import {
   type AssigneeCandidate,
   type Task,
   type TaskStatus,
-} from "@/lib/ipc";
+} from "@/lib/api";
 
 const STATUSES: TaskStatus[] = [
   "Open",

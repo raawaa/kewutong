@@ -18,6 +18,8 @@ import type Database from "better-sqlite3";
 import { AppError } from "../error.js";
 import { parseSqlDate } from "../clock.js";
 import type { AppState } from "../state.js";
+import { requireNonBlank, trimToOption } from "../util/strings.js";
+import { ensureProjectExists, ensureSubTeamExists } from "../util/fk.js";
 import type {
   ListRecurringTemplatesArgs,
   RecurringEnds,
@@ -83,10 +85,6 @@ function freqAsDb(freq: RecurringFreq): string {
     case "yearly":
       return "YEARLY";
   }
-}
-
-function freqAsRrule(freq: RecurringFreq): string {
-  return freqAsDb(freq);
 }
 
 function parseFreqDb(text: string): RecurringFreq {
@@ -277,7 +275,7 @@ export function deriveRrule(rule: StructuredRule): string {
   validateEnds(rule.ends);
 
   const parts: string[] = [];
-  parts.push(`FREQ=${freqAsRrule(rule.freq)}`);
+  parts.push(`FREQ=${freqAsDb(rule.freq)}`);
 
   if (rule.freq === "weekly") {
     parts.push(`BYDAY=${bydayTokensOf(rule.bydayMask)}`);
@@ -581,34 +579,8 @@ function sanityCheckRruleMatchesStructured(template: RecurringTemplate): void {
 }
 
 // ---------------------------------------------------------------------------
-// 入参归一化
+// 入参归一化（已上提到 util/strings.ts）
 // ---------------------------------------------------------------------------
-
-function requireNonBlank(value: string, message: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) throw AppError.invalid(message);
-  return trimmed;
-}
-
-function trimToOption(value: string | null | undefined): string | null {
-  if (value === null || value === undefined) return null;
-  const trimmed = value.trim();
-  return trimmed.length === 0 ? null : trimmed;
-}
-
-function ensureProjectExists(db: Database.Database, id: number): void {
-  const row = db
-    .prepare<[number], { id: number }>("SELECT id FROM project WHERE id = ?")
-    .get(id);
-  if (!row) throw AppError.invalid("所属项目不存在。");
-}
-
-function ensureSubTeamExists(db: Database.Database, id: number): void {
-  const row = db
-    .prepare<[number], { id: number }>("SELECT id FROM sub_team WHERE id = ?")
-    .get(id);
-  if (!row) throw AppError.invalid("所属子组不存在。");
-}
 
 // ---------------------------------------------------------------------------
 // 命令

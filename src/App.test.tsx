@@ -17,10 +17,10 @@ import {
   listTasks,
   todayWeek,
   trayStatus,
-} from "@/lib/ipc";
+} from "@/lib/api";
 
-vi.mock("@/lib/ipc", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/ipc")>()),
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
   listDueDateOptions: vi.fn(),
   listAssigneeCandidates: vi.fn(),
   listTasks: vi.fn(),

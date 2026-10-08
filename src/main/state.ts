@@ -8,6 +8,7 @@
 
 import type Database from "better-sqlite3";
 import type { Clock } from "./clock.js";
+import type { HolidayCalendar } from "./holiday/index.js";
 
 /** 托盘可达性（ticket #29）。 */
 export type TrayStatus =
@@ -28,8 +29,12 @@ export const DEFAULT_TRAY_STATUS: TrayStatus = {
 export interface AppState {
   readonly db: Database.Database;
   readonly clock: Clock;
-  /** 启动时调一次，后续 override 写命令原地刷新。 */
-  calendar: HolidayCalendarLike;
+  /**
+   * 启动时调一次 [`loadHolidayCalendar`] 挂上 [`HolidayCalendar`];
+   * 在挂上之前由 [`placeholderCalendar`] 占位（kindOf 一律返回 "workday"）。
+   * 命令层需要 `iterRange` 等更强 API 时直接读类方法即可——不用断言。
+   */
+  calendar: HolidayCalendar;
   /** 托盘可达性。 */
   trayStatus: TrayStatus;
   /** 数据库文件绝对路径——`data_file_location` 命令返回此值。 */
@@ -37,29 +42,22 @@ export interface AppState {
 }
 
 /**
- * 节假日日历最小接口（实现见 `src/main/holiday/calendar.ts`）。
- *
- * 这里只暴露命令层需要的方法，避免 calendar 内部状态泄漏到 state 类型
- * 上。M2 阶段（ticket #47）把 calendar 实现补齐。
+ * 还没装真 calendar 时的占位——所有日期都按 workday 处理。实现
+ * [`HolidayCalendar`] 的最小 surface（仅 `kindOf`）——足以满足
+ * `notification.runWeeklyDigest` 等只在 kindOf 上跑的命令。
  */
-export interface HolidayCalendarLike {
-  /** 给定日期是否节假日（含调休工作日的反向判断）。 */
-  kindOf(yyyymmdd: string): "holiday" | "makeup" | "workday";
+function placeholderCalendar(): HolidayCalendar {
+  return { kindOf: () => "workday" } as unknown as HolidayCalendar;
 }
 
 export function newAppState(db: Database.Database, clock: Clock): AppState {
   return {
     db,
     clock,
-    calendar: emptyCalendar(),
+    calendar: placeholderCalendar(),
     trayStatus: DEFAULT_TRAY_STATUS,
     dbPath: null,
   };
-}
-
-/** 还没装 calendar 时的占位——所有日期都按 workday 处理。 */
-function emptyCalendar(): HolidayCalendarLike {
-  return { kindOf: () => "workday" };
 }
 
 /** 取一个可入库的 UTC 时间戳文本——业务代码用这个，不要直接 `clock.now()`。 */

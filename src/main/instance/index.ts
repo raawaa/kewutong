@@ -44,9 +44,10 @@ import {
   resolveOwner,
   type TemplateMaterializeInput,
 } from "../materialization/index.js";
-import { fetchTemplate } from "../recurring_template/index.js";
+import { fetchTemplate, validateIanaZone } from "../recurring_template/index.js";
 import { setTaskStatus, fetchTask as fetchTaskInternal } from "../task/index.js";
 import type { AppState } from "../state.js";
+import { parseSqlTimestamp } from "../clock.js";
 import type {
   InstanceIdArgs,
   OverrideInstanceScheduledAtArgs,
@@ -67,9 +68,6 @@ import type {
  */
 export const RESCHEDULE_CHAIN_MAX_DEPTH = 32;
 
-/** 入库格式 UTC 时间戳文本正则——`'%Y-%m-%d %H:%M:%S'`。 */
-const TS_REGEX = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/;
-
 // ---------------------------------------------------------------------------
 // 命令
 // ---------------------------------------------------------------------------
@@ -89,7 +87,7 @@ export function rescheduleInstance(
   state: AppState,
   args: RescheduleInstanceArgs,
 ): Task {
-  parseSqlTimestamp(args.newScheduledAt);
+  ensureValidSqlTimestamp(args.newScheduledAt);
 
   // 第一段：读 instance 行 + 模板，做预校验。
   const { template, originalScheduledAt, status } = loadInstanceRow(
@@ -169,7 +167,7 @@ export function overrideInstanceScheduledAt(
   state: AppState,
   args: OverrideInstanceScheduledAtArgs,
 ): Task {
-  parseSqlTimestamp(args.newScheduledAt);
+  ensureValidSqlTimestamp(args.newScheduledAt);
 
   const { template, originalScheduledAt, status } = loadInstanceRow(
     state.db,
@@ -229,14 +227,7 @@ export function updateRecurringTemplateZone(
   args: UpdateTemplateZoneArgs,
 ): RecurringTemplate {
   // IANA zone 校验：v1 不引 chrono-tz，只允许 Asia/Shanghai。
-  if (args.ianaZone.trim().length === 0) {
-    throw AppError.invalid("时区不能为空。");
-  }
-  if (args.ianaZone !== "Asia/Shanghai") {
-    throw AppError.invalid(
-      "本票仅支持 Asia/Shanghai 时区,跨时区场景归后续票。",
-    );
-  }
+  validateIanaZone(args.ianaZone);
 
   const result = state.db
     .prepare("UPDATE recurring_template SET iana_zone = ? WHERE id = ?")
@@ -384,8 +375,8 @@ function parseStatus(text: string): TaskStatus {
 }
 
 /** 解析入库格式 UTC 时间戳——格式不对直接给科长中文提示。 */
-function parseSqlTimestamp(value: string): void {
-  if (!TS_REGEX.test(value)) {
+function ensureValidSqlTimestamp(value: string): void {
+  if (parseSqlTimestamp(value) === null) {
     throw AppError.invalid(
       "时间格式不对,应形如 2026-09-16 14:00:00(UTC)。",
     );
@@ -398,13 +389,8 @@ function parseSqlTimestamp(value: string): void {
  * 日期」，不用「改期后的日期」，让 cancelled 与 shifted 两行标题对齐）。
  */
 function originalScheduledAtLocal(utcSql: string): string {
-  const match = TS_REGEX.exec(utcSql);
-  if (match === null) return utcSql;
-  const [, y, mo, d, h, mi, s] = match;
-  const utc = new Date(
-    Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)),
-  );
-  if (Number.isNaN(utc.getTime())) return utcSql;
+  const utc = parseSqlTimestamp(utcSql);
+  if (utc === null) return utcSql;
   // Asia/Shanghai 固定偏移 + 8h（不引 chrono-tz：中国自 1991 年起不实行
   // 夏令时，固定偏移与 IANA 规则等价）。
   const local = new Date(utc.getTime() + 8 * 3600 * 1000);

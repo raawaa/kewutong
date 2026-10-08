@@ -16,6 +16,8 @@ import type Database from "better-sqlite3";
 import { AppError } from "../error.js";
 import { parseSqlDate, toSqlDate } from "../clock.js";
 import type { AppState } from "../state.js";
+import { requireNonBlank, trimToOption } from "../util/strings.js";
+import { ensurePersonExists, ensureProjectExists } from "../util/fk.js";
 import type {
   CreateTaskArgs,
   DueDateChip,
@@ -45,7 +47,7 @@ export const TASK_STATUSES: readonly TaskStatus[] = [
 ];
 
 /** 在飞 = 排除 Done / Cancelled。 */
-const IN_FLIGHT_STATUSES: readonly TaskStatus[] = [
+export const IN_FLIGHT_STATUSES: readonly TaskStatus[] = [
   "Open",
   "In-progress",
   "Blocked",
@@ -53,7 +55,7 @@ const IN_FLIGHT_STATUSES: readonly TaskStatus[] = [
 ];
 
 /** 阻塞 / 等待三态——瓦片「Blocked」用。 */
-const BLOCKED_STATUSES: readonly TaskStatus[] = ["Blocked", "Waiting-on"];
+export const BLOCKED_STATUSES: readonly TaskStatus[] = ["Blocked", "Waiting-on"];
 
 /** 命令面板搜索默认上限。封顶在命令层，前端按这个数字决定下拉高度。 */
 export const SEARCH_TASKS_LIMIT = 50;
@@ -137,23 +139,8 @@ export function rowToTask(row: TaskRow): Task {
 }
 
 // ---------------------------------------------------------------------------
-// 入参校验与字符串处理
+// 入参校验与字符串处理（已上提到 util/strings.ts）
 // ---------------------------------------------------------------------------
-
-function requireNonBlank(value: string | null | undefined, message: string): string {
-  if (value === null || value === undefined) {
-    throw AppError.invalid(message);
-  }
-  const trimmed = value.trim();
-  if (trimmed.length === 0) throw AppError.invalid(message);
-  return trimmed;
-}
-
-function trimToOption(value: string | null | undefined): string | null {
-  if (value === null || value === undefined) return null;
-  const trimmed = value.trim();
-  return trimmed.length === 0 ? null : trimmed;
-}
 
 /** 阻塞 / 等待原因长度上限 500 字符（ADR 0003 §D3）。注意用 `chars().count()` 风格
  *  按码点计数——汉字算 1 个字符。 */
@@ -239,22 +226,8 @@ export function fetchInFlightTasksForPerson(
 }
 
 // ---------------------------------------------------------------------------
-// 预检查助手
+// 预检查助手（已上提到 util/fk.ts）
 // ---------------------------------------------------------------------------
-
-function ensurePersonExists(db: Database.Database, id: number): void {
-  const row = db
-    .prepare<[number], { id: number }>("SELECT id FROM person WHERE id = ?")
-    .get(id);
-  if (!row) throw AppError.invalid("负责人不存在,请先在人员管理里录入。");
-}
-
-function ensureProjectExists(db: Database.Database, id: number): void {
-  const row = db
-    .prepare<[number], { id: number }>("SELECT id FROM project WHERE id = ?")
-    .get(id);
-  if (!row) throw AppError.invalid("所属项目不存在。");
-}
 
 // ---------------------------------------------------------------------------
 // 在飞排序片段（pub(crate) 等价）

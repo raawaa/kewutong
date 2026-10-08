@@ -32,6 +32,7 @@ import type Database from "better-sqlite3";
 
 import { AppError } from "../error.js";
 import { formatLocalDate } from "../clock.js";
+import { BLOCKED_STATUSES, IN_FLIGHT_STATUSES } from "../task/index.js";
 import type { AppState } from "../state.js";
 
 // ---------------------------------------------------------------------------
@@ -172,19 +173,10 @@ export function fetchNotification(
 }
 
 // ---------------------------------------------------------------------------
-// 在飞 / 阻塞 状态字面量（与 task 层 `TASK_STATUSES` 对齐）
+// 在飞 / 阻塞 状态字面量由 [`../task/index.js`] 单源导出
+// (IN_FLIGHT_STATUSES / BLOCKED_STATUSES / TASK_STATUSES)——不再在调度
+// 层留私有副本,避免类型从 TaskStatus[] 漂成 readonly string[]。
 // ---------------------------------------------------------------------------
-
-/** 在飞四态——`due_24h` / `blocked_3d` / `weekly_digest` 计数都用。 */
-const IN_FLIGHT_STATUSES: readonly string[] = [
-  "Open",
-  "In-progress",
-  "Blocked",
-  "Waiting-on",
-];
-
-/** 阻塞 / 等待三态——`blocked_3d` 扫描对象 + `weekly_digest.blocked_count`。 */
-const BLOCKED_STATUSES: readonly string[] = ["Blocked", "Waiting-on"];
 
 // ---------------------------------------------------------------------------
 // 三条规则
@@ -435,30 +427,31 @@ export interface NotificationRunSummary {
  *
  * 各自独立：任何一个抛错不影响其它的写入（partial success）。错误累
  * 积后调用方决定怎么走（建议 `console.error` 不 panic，通知是后台能力）。
+ *
+ * 由 (rule_name, runner) 元组驱动——避免每条规则写一份重复 try/catch。
  */
 export function runAll(state: AppState): NotificationRunSummary {
-  let due24h: NotificationRow[] = [];
-  let blocked3d: NotificationRow[] = [];
-  let weeklyDigest: NotificationRow[] = [];
-  try {
-    due24h = runDue24h(state);
-  } catch (cause) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
-    console.error(`[notification] runDue24h 失败：${detail}`);
+  const rules: ReadonlyArray<readonly [string, (s: AppState) => NotificationRow[]]> = [
+    ["due24h", runDue24h],
+    ["blocked3d", runBlocked3d],
+    ["weeklyDigest", runWeeklyDigest],
+  ];
+  const summary = {
+    due24h: [] as NotificationRow[],
+    blocked3d: [] as NotificationRow[],
+    weeklyDigest: [] as NotificationRow[],
+  };
+  for (const [name, runner] of rules) {
+    try {
+      const rows = runner(state);
+      // 把键名映射回 summary 字段（rule 名 == summary 字段名）。
+      (summary as Record<string, NotificationRow[]>)[name] = rows;
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      console.error(`[notification] ${name} 失败：${detail}`);
+    }
   }
-  try {
-    blocked3d = runBlocked3d(state);
-  } catch (cause) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
-    console.error(`[notification] runBlocked3d 失败：${detail}`);
-  }
-  try {
-    weeklyDigest = runWeeklyDigest(state);
-  } catch (cause) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
-    console.error(`[notification] runWeeklyDigest 失败：${detail}`);
-  }
-  return { due24h, blocked3d, weeklyDigest };
+  return summary;
 }
 
 // ---------------------------------------------------------------------------

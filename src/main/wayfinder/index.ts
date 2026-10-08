@@ -34,6 +34,7 @@ import {
   rowToTask,
   searchTasksBlocking,
 } from "../task/index.js";
+import { escapeLike } from "../util/sql.js";
 import type {
   Task,
   WayfinderMatchKind,
@@ -317,16 +318,6 @@ export function classifyMatch(
 }
 
 /**
- * LIKE 元字符（`%` / `_` / 反斜杠本身）转义, 配合 SQL `ESCAPE '\\'` 使用。
- *
- * 与 personnel / project 模块同源——本文件内一份拷贝, 不引入跨文件依赖,
- * 维持 wayfinder 模块的独立性。
+ * LIKE 元字符（`%` / `_` / 反斜杠本身）转义由 [`../util/sql.ts`] 单源提供——
+ * 原 wayfinder 模块内一份拷贝是为维持模块独立性,统一抽到 util 后不再保留。
  */
-function escapeLike(raw: string): string {
-  let escaped = "";
-  for (const ch of raw) {
-    if (ch === "\\" || ch === "%" || ch === "_") escaped += "\\";
-    escaped += ch;
-  }
-  return escaped;
-}

@@ -9,7 +9,7 @@
 - **Node.js 20 LTS**（与 Electron 内嵌 Node 版本对齐到主版本号 20.x；具体 patch 随 Electron release notes 锁定）。
 - **TypeScript 严格模式**（`strict: true`、`noUncheckedIndexedAccess: true`、`exactOptionalPropertyTypes: true`），继承 Tauri 端的纪律（DTO 是契约、严格 null）。
 - **`better-sqlite3`** 作为 SQLite 客户端。同步 API（不引连接池；单写者本机场景与原来 `Mutex<Connection>` 同形）、自带 FTS5 + trigram 表落 `tokenize = 'trigram'` 直接可用、bundled SQLite 与原来 `rusqlie bundled` 都是 SQLite3 主流版本，schema 兼容。
-- 主进程入口 = `src/main/main.ts`；命令层 = `src/main/commands/<entity>/<sub>.ts`；测试 = `vitest`，fixture 在 `src/main/test/commands/fresh_db.ts`。
+- 主进程入口 = `src/main/index.ts`；命令层 = `src/main/<entity>/index.ts`；测试 = `vitest`，fixture 在 `src/main/test/commands/fresh_db.ts`。
 
 ## 上下文
 
@@ -45,31 +45,42 @@
 
 ```
 src/main/
-├── main.ts                    Electron app 入口；初始化 db、IPC handlers、tray / window / globalShortcut
+├── index.ts                   Electron app 入口；初始化 db、IPC handlers、tray / window / globalShortcut、materialization tick
 ├── db.ts                      `openDatabase(filePath)` → Connection + 4 条 PRAGMA
 ├── clock.ts                   可注入 Clock 接口 + SystemClock + FixedClock（与 Rust 端 FixedClock 同 API）
-├── state.ts                   AppState（Clock + Connection + scheduleArrivals mutex）
+├── state.ts                   AppState（Clock + Connection + HolidayCalendar + trayStatus + dbPath）
+├── error.ts                   AppError → 序列化为 { code, message, detail }
+├── util/
+│   ├── sql.ts                 escapeLike() 单源
+│   ├── strings.ts             requireNonBlank() / trimToOption() 单源
+│   └── fk.ts                  ensurePersonExists / ensureSubTeamExists / ensureProjectExists 单源
 ├── ipc/
-│   ├── register.ts            ipcMain.handle 的注册中心（按 domain 拆 registerPersonnel、registerTask ...）
-│   └── error.ts               AppError → 序列化为 { code, message, detail }（与 src/lib/ipc.ts AppError 同形）
-├── commands/
-│   ├── personnel/             子组 / 人员 CRUD
-│   ├── task/                  任务 CRUD + set_status
-│   ├── project/               项目 CRUD
-│   ├── recurring_template/    模板 CRUD + enable toggle
-│   ├── instance/              reschedule / override / chain
-│   ├── wayfinder/             全局命令面板 search
-│   ├── materialization/       物化触发 + 12 周窗口
-│   ├── holiday/               节假日查询 / 加载
-│   ├── notification/          三规则扫描 + 已读标记
-│   ├── tray/                  tray 状态查询
-│   ├── sample/                示例数据 seed / 清除
-│   ├── export/                JSON / CSV / data file location
-│   └── search/                FTS5 复合筛选
+│   └── register.ts            ipcMain.handle 的注册中心（按 domain 拆 registerPersonnel、registerTask ...）
+├── personnel/                 子组 / 人员 CRUD + 矩阵视图
+├── project/                   项目 CRUD + 派生 status
+├── task/                      任务 CRUD + 6 状态机 + search + today/week + due chips
+├── recurring_template/        模板 CRUD + enable toggle + RRULE 派生/解析
+├── instance/                  reschedule / override / chain / 模板级 zone 更新
+├── wayfinder/                 全局命令面板 search
+├── materialization/           物化触发 + 12 周窗口 + 跨周 gate
+├── holiday/                   节假日查询 / 加载 / override
+├── notification/              三规则扫描 + 已读标记 + NotificationRunSummary
+├── tray/                      tray 状态查询（dto.ts 剥 Electron 依赖）
+├── sample/                    示例数据 seed / 清除
+├── export/                    JSON / CSV / data file location
+├── shortcut/                  ⌘K / Ctrl+K 全局快捷键
 └── test/
-    ├── setup.ts               vitest 全局 setup
+    ├── ping.test.ts           IPC ping 端到端
+    ├── smoke.test.ts          5 核心场景（人员 / 任务 / 项目 / 模板 / 物化）
+    ├── startup-tick.test.ts   materialization + scheduler 启动 + 跨周 tick 接线
     └── commands/fresh_db.ts    fresh_db()：开 mem + 跑 migrations + PRAGMA + 注入 AppState
 ```
+
+注：原 spec §ADR 0006 起草的布局是 `src/main/commands/<entity>/<sub>.ts`——
+实操时 12 个 domain 全部走单文件 `index.ts` 已经够薄,无需再开多一层
+`<sub>.ts`,且测试 fixture 同步简化为 `src/main/test/commands/`。
+本 ADR 实际落地布局如上,与 spec 文字表述存在偏差——M3 复审时把
+这条偏差纳入决定。
 
 ### 测试 seam
 
@@ -83,9 +94,9 @@ src/main/
 
 ### 行为契约
 
-- 命令入参 / 返回值 = DTO（camelCase JSON）—— 与 Rust 端 DTO 同形；契约文档在 `src/main/commands/<entity>/types.ts`。
+- 命令入参 / 返回值 = DTO（camelCase JSON）—— 与 Rust 端 DTO 同形；契约文档在 `src/main/types.ts`。
 - `AppError` shape = `{ code, message, detail }`（与 Rust `AppError` 同）；renderer 端 `toAppError(thrown)` helper 继续生效。
-- 6 状态 `TaskStatus` = `'Open' | 'In-progress' | 'Blocked' | 'Waiting-on' | 'Done' | 'Cancelled'`（与现有 `src/lib/ipc.ts` 完全相同）。
+- 6 状态 `TaskStatus` = `'Open' | 'In-progress' | 'Blocked' | 'Waiting-on' | 'Done' | 'Cancelled'`（与原 `src/lib/ipc.ts` 表面完全相同,现在从 `src/lib/api.ts` 暴露）。
 
 ## ADR 衔接链
 

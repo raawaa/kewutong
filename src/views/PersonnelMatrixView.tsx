@@ -18,7 +18,7 @@ import {
   type Project,
   type SubTeam,
   type Task,
-} from "@/lib/ipc";
+} from "@/lib/api";
 
 /**
  * 「人员矩阵」视图（ticket #22）。

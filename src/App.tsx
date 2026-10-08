@@ -27,7 +27,7 @@ import {
   type SubTeam,
   type Task,
   type TrayStatusDto,
-} from "@/lib/ipc";
+} from "@/lib/api";
 
 /**
  * 顶层 tab——spec #15 user story 60-66：四个主视图平级。

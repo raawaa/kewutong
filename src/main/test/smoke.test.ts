@@ -495,7 +495,7 @@ describe("smoke / 场景 3：项目 + 任务关联 + status 派生（#20）", ()
           ownerPersonId: 9999,
           subTeamId: w.teamId,
         }),
-      ).toThrow(/项目负责人不存在/);
+      ).toThrow(/负责人不存在/);
 
       expect(() =>
         Project.createProject(w.state, {
@@ -736,7 +736,8 @@ describe("smoke / 场景 5：物化 — materializeFromState（#25 / #48）", ()
 
       // 2) 调 materializeFromState（= IPC `materialize_now` 的等价命令）。
       //    freshDb 默认装载的是空日历（workday 占位），SKIP 路径只走
-      //    `calendar.kindOf()`，兼容 HolidayCalendarLike 接口。
+      //    `calendar.kindOf()`（state.calendar 在 freshDb 里就是占位
+//    HolidayCalendar）。
       const totals = Materialization.materializeFromState(w.state);
 
       // 3) 物化 totals：12 周 × 每周一 = 12 条（SKIP 路径下没有 skipped，
