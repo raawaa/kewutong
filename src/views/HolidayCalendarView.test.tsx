@@ -16,17 +16,29 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
-import { screen, waitFor } from "@testing-library/dom";
+import { screen, waitFor, within } from "@testing-library/dom";
+import userEvent from "@testing-library/user-event";
 import { HolidayCalendarView } from "./HolidayCalendarView";
-import { holidayCalendar, type HolidayCalendarDay } from "@/lib/api";
+import {
+  holidayCalendar,
+  setHolidayOverride,
+  clearHolidayOverride,
+  type HolidayCalendarDay,
+} from "@/lib/api";
 
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   holidayCalendar: vi.fn(),
+  setHolidayOverride: vi.fn(),
+  clearHolidayOverride: vi.fn(),
 }));
 
 beforeEach(() => {
   vi.mocked(holidayCalendar).mockReset();
+  vi.mocked(setHolidayOverride).mockReset();
+  vi.mocked(clearHolidayOverride).mockReset();
+  vi.mocked(setHolidayOverride).mockResolvedValue(undefined);
+  vi.mocked(clearHolidayOverride).mockResolvedValue(undefined);
 });
 
 /** 测试基准日期：2026-10-07 周三。窗口 = 2026-10-05..2026-11-01。 */
@@ -165,6 +177,184 @@ describe("HolidayCalendarView", () => {
     rerender(<HolidayCalendarView refreshToken={1} now={NOW_OCT} />);
     await waitFor(() =>
       expect(vi.mocked(holidayCalendar)).toHaveBeenCalledTimes(2),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 覆盖菜单（ticket #63）：
+// - 点格子弹 3 项菜单（切换为节假日 / 切换为工作日 / 清除覆盖）
+// - 点菜单项 → 触发对应 IPC + 立即关菜单 + 触发重拉（localRevision）
+// - 清除覆盖仅在该日已有 override 时可用
+// - 点击外部 / Esc 关闭菜单
+// ---------------------------------------------------------------------------
+
+describe("HolidayCalendarView / 覆盖菜单 (#63)", () => {
+  it("点日期格弹出 3 个动作的菜单", async () => {
+    vi.mocked(holidayCalendar).mockResolvedValue([
+      entry("2026-10-08", { kind: "holiday", name: null, source: "override" }),
+    ]);
+
+    const user = userEvent.setup();
+    render(<HolidayCalendarView refreshToken={0} now={NOW_OCT} />);
+
+    // 默认没有 menu
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+    const thu = await screen.findByRole("gridcell", { name: /2026-10-08/ });
+    await user.click(thu);
+
+    const menu = await screen.findByRole("menu", { name: /2026-10-08/ });
+    expect(within(menu).getByRole("menuitem", { name: "切换为节假日" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "切换为工作日" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "清除覆盖" })).toBeInTheDocument();
+  });
+
+  it("「切换为节假日」→ setHolidayOverride(holiday) + 立即重拉 + 关菜单", async () => {
+    vi.mocked(holidayCalendar).mockResolvedValue([
+      entry("2026-10-09", { kind: "workday", name: null, source: "seed" }),
+    ]);
+
+    const user = userEvent.setup();
+    render(<HolidayCalendarView refreshToken={0} now={NOW_OCT} />);
+
+    const fri = await screen.findByRole("gridcell", { name: /2026-10-09/ });
+    await user.click(fri);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "切换为节假日" }),
+    );
+
+    await waitFor(() =>
+      expect(setHolidayOverride).toHaveBeenCalledWith({
+        date: "2026-10-09",
+        kind: "holiday",
+      }),
+    );
+    // 关菜单
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+    // 成功 → localRevision +1 → 触发重拉（连续刷新同一区间）
+    await waitFor(() =>
+      expect(vi.mocked(holidayCalendar)).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  it("「切换为工作日」→ setHolidayOverride(workday) + 立即重拉 + 关菜单", async () => {
+    vi.mocked(holidayCalendar).mockResolvedValue([
+      entry("2026-10-10", { kind: "holiday", name: "国庆", source: "seed" }),
+    ]);
+
+    const user = userEvent.setup();
+    render(<HolidayCalendarView refreshToken={0} now={NOW_OCT} />);
+
+    const sat = await screen.findByRole("gridcell", { name: /2026-10-10/ });
+    await user.click(sat);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "切换为工作日" }),
+    );
+
+    await waitFor(() =>
+      expect(setHolidayOverride).toHaveBeenCalledWith({
+        date: "2026-10-10",
+        kind: "workday",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(vi.mocked(holidayCalendar)).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  it("「清除覆盖」→ clearHolidayOverride(date) + 立即重拉 + 关菜单", async () => {
+    vi.mocked(holidayCalendar).mockResolvedValue([
+      entry("2026-10-08", { kind: "holiday", name: null, source: "override" }),
+    ]);
+
+    const user = userEvent.setup();
+    render(<HolidayCalendarView refreshToken={0} now={NOW_OCT} />);
+
+    const thu = await screen.findByRole("gridcell", { name: /2026-10-08/ });
+    await user.click(thu);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "清除覆盖" }),
+    );
+
+    await waitFor(() =>
+      expect(clearHolidayOverride).toHaveBeenCalledWith({ date: "2026-10-08" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(vi.mocked(holidayCalendar)).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  it("「清除覆盖」仅在该日已有 override 时可用——非 override 日禁用", async () => {
+    // 2026-10-10 是 seed holiday（source=seed）——「清除覆盖」应禁用
+    vi.mocked(holidayCalendar).mockResolvedValue([
+      entry("2026-10-10", { kind: "holiday", name: "国庆", source: "seed" }),
+    ]);
+
+    const user = userEvent.setup();
+    render(<HolidayCalendarView refreshToken={0} now={NOW_OCT} />);
+
+    const sat = await screen.findByRole("gridcell", { name: /2026-10-10/ });
+    await user.click(sat);
+
+    const menu = await screen.findByRole("menu", { name: /2026-10-10/ });
+    expect(
+      within(menu).getByRole("menuitem", { name: "切换为节假日" }),
+    ).not.toBeDisabled();
+    expect(
+      within(menu).getByRole("menuitem", { name: "切换为工作日" }),
+    ).not.toBeDisabled();
+    expect(
+      within(menu).getByRole("menuitem", { name: "清除覆盖" }),
+    ).toBeDisabled();
+  });
+
+  it("点菜单外部关菜单", async () => {
+    vi.mocked(holidayCalendar).mockResolvedValue([
+      entry("2026-10-08", { kind: "holiday", name: null, source: "override" }),
+    ]);
+
+    const user = userEvent.setup();
+    render(
+      <div>
+        <span data-testid="outside">outside</span>
+        <HolidayCalendarView refreshToken={0} now={NOW_OCT} />
+      </div>,
+    );
+
+    const thu = await screen.findByRole("gridcell", { name: /2026-10-08/ });
+    await user.click(thu);
+    expect(screen.queryByRole("menu")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("outside"));
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("Esc 关菜单", async () => {
+    vi.mocked(holidayCalendar).mockResolvedValue([
+      entry("2026-10-08", { kind: "holiday", name: null, source: "override" }),
+    ]);
+
+    const user = userEvent.setup();
+    render(<HolidayCalendarView refreshToken={0} now={NOW_OCT} />);
+
+    const thu = await screen.findByRole("gridcell", { name: /2026-10-08/ });
+    await user.click(thu);
+    expect(screen.queryByRole("menu")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
     );
   });
 });
