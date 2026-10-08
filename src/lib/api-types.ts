@@ -22,6 +22,7 @@ import type {
   DeleteSubTeamArgs,
   DueDateOption,
   ImportDatabaseJsonArgs,
+  InstanceIdArgs,
   ListAssigneeCandidatesArgs,
   ListPeopleArgs,
   ListProjectCandidatesArgs,
@@ -29,6 +30,7 @@ import type {
   ListRecurringTemplatesArgs,
   ListTasksArgs,
   ListTasksFilteredArgs,
+  OverrideInstanceScheduledAtArgs,
   PersonnelMatrix,
   PersonnelMatrixArgs,
   Person,
@@ -38,6 +40,7 @@ import type {
   ProjectCandidate,
   ReorderSubTeamsArgs,
   RecurringTemplate,
+  RescheduleInstanceArgs,
   SearchTasksArgs,
   SetRecurringTemplateEnabledArgs,
   SetTaskStatusArgs,
@@ -50,6 +53,7 @@ import type {
   UpdateProjectArgs,
   UpdateSubTeamArgs,
   UpdateTaskArgs,
+  UpdateTemplateZoneArgs,
   UpsertRecurringTemplateArgs,
 } from "@/main/types";
 import type {
@@ -109,6 +113,10 @@ export type {
   ListRecurringTemplatesArgs,
   UpsertRecurringTemplateArgs,
   SetRecurringTemplateEnabledArgs,
+  RescheduleInstanceArgs,
+  OverrideInstanceScheduledAtArgs,
+  UpdateTemplateZoneArgs,
+  InstanceIdArgs,
   HolidayCalendarArgs,
   HolidayCalendarDay,
   SetHolidayOverrideArgs,
@@ -375,4 +383,36 @@ export function materializeNow(): Promise<MaterializeTotals> {
 /** 后台 tick 调用——只在跨入新 ISO 周时跑物化。`materialized = false`
  *  表示本次没真跑（前端不弹提示）。 */
 export function materializeIfNewWeek(): Promise<MaterializeIfNewWeekResult> {
-  return window.api.materialization.materializeIfNewWeek();}
+  return window.api.materialization.materializeIfNewWeek();
+}
+
+// ---------------------------------------------------------------------------
+// 实例动作（tickets #26 / #49）
+// ---------------------------------------------------------------------------
+
+/** 手工改期单次 instance——原 instance → `Cancelled` + 新 instance →
+ *  `Open`，`rescheduled_from_id` 串起来（与 SHIFT 路径同形）。 */
+export function rescheduleInstance(args: RescheduleInstanceArgs): Promise<Task> {
+  return window.api.instance.rescheduleInstance(args);
+}
+
+/** 仅覆盖单 instance 的 `scheduled_at`——不取消、不挂
+ *  `rescheduled_from_id`。出差场景的轻量手势。 */
+export function overrideInstanceScheduledAt(
+  args: OverrideInstanceScheduledAtArgs,
+): Promise<Task> {
+  return window.api.instance.overrideInstanceScheduledAt(args);
+}
+
+/** 整体改模板的 `iana_zone`。v1 仅允许 `Asia/Shanghai`。 */
+export function updateRecurringTemplateZone(
+  args: UpdateTemplateZoneArgs,
+): Promise<RecurringTemplate> {
+  return window.api.instance.updateRecurringTemplateZone(args);
+}
+
+/** 沿 `rescheduled_from_id` 一路回溯，返回整条链（含自身，自身在最前）。
+ *  深度上限 32——防同步漂移引入的环路。 */
+export function instanceRescheduleChain(args: InstanceIdArgs): Promise<Task[]> {
+  return window.api.instance.instanceRescheduleChain(args);
+}

@@ -18,6 +18,7 @@ import * as Personnel from "../personnel/index.js";
 import * as Project from "../project/index.js";
 import * as Task from "../task/index.js";
 import * as Export from "../export/index.js";
+import * as Instance from "../instance/index.js";
 import * as Materialization from "../materialization/index.js";
 import * as RecurringTemplate from "../recurring_template/index.js";
 
@@ -60,6 +61,7 @@ export function registerAllIpc(state: AppState): void {
   registerTask(state);
   registerExport(state);
   registerRecurringTemplate(state);
+  registerInstance(state);
   registerMaterialization(state);
   registerNotification(state);
 }
@@ -296,6 +298,37 @@ function registerRecurringTemplate(state: AppState): void {
     import("../types.js").RecurringTemplate
   >("recurring_template.set_recurring_template_enabled", (s, args) =>
     RecurringTemplate.setRecurringTemplateEnabled(s, args),
+  )(ipcMain, state);
+}
+
+/** Instance domain（tickets #26 / #49）。 */
+function registerInstance(state: AppState): void {
+  handle<
+    import("../types.js").RescheduleInstanceArgs,
+    import("../types.js").Task
+  >("instance.reschedule_instance", (s, args) =>
+    Instance.rescheduleInstance(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").OverrideInstanceScheduledAtArgs,
+    import("../types.js").Task
+  >("instance.override_instance_scheduled_at", (s, args) =>
+    Instance.overrideInstanceScheduledAt(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").UpdateTemplateZoneArgs,
+    import("../types.js").RecurringTemplate
+  >("instance.update_recurring_template_zone", (s, args) =>
+    Instance.updateRecurringTemplateZone(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").InstanceIdArgs,
+    import("../types.js").Task[]
+  >("instance.instance_reschedule_chain", (s, args) =>
+    Instance.instanceRescheduleChain(s, args),
   )(ipcMain, state);
 }
 

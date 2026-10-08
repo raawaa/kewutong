@@ -737,7 +737,7 @@ export function materializeTemplate(
       );
       const targetTitle = instanceTitle(template.name, original);
       // 走共享 INSERT 体——与手工 reschedule 路径同形。
-      const newId = insertRescheduledInstanceImpl(
+      const newId = insertRescheduledInstance(
         db,
         template,
         targetUtc,
@@ -1145,8 +1145,10 @@ function insertInstanceReturningId(
 }
 
 /**
- * 写一条新的「改期后」instance 行。SHIFT 路径（[`materializeTemplate`]
- * 里节假日顺延）与手工改期路径**共用**这一段 INSERT 体——验收点 #26 AC：
+ * 写一条新的「改期后」instance 行（公开版，ticket #26 / #49）。
+ *
+ * SHIFT 路径（[`materializeTemplate`] 里节假日顺延）与手工改期路径
+ * [`rescheduleInstance`] **共用**这一段 INSERT 体——验收点 #26 AC：
  * 两条路径产出的数据形状一致。
  *
  * 与 [`insertInstance`] 的差别：本函数由调用方传完整时间戳（不再
@@ -1158,7 +1160,7 @@ function insertInstanceReturningId(
  * WHERE recurring_template_id IS NOT NULL`——同 `(template, scheduledAt)`
  * 重复调会被 `INSERT OR IGNORE` 静默吃掉。
  */
-function insertRescheduledInstanceImpl(
+export function insertRescheduledInstance(
   db: Database.Database,
   template: TemplateMaterializeInput,
   newScheduledAtUtc: string,

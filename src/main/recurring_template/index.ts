@@ -531,7 +531,9 @@ function rowToEnds(endsOn: string | null, endsAfterN: number | null): RecurringE
   throw AppError.internal("recurring_template.ends_on/ends_after_n 同时为空或同时非空");
 }
 
-function fetchTemplate(db: Database.Database, id: number): RecurringTemplate | null {
+/** 读 `recurring_template` 行 + sanity check（ADR 0002）——instance 命令层
+ *  也借这条入口（ticket #49），保证读出后 `rrule_text` 与结构化字段一致。 */
+export function fetchTemplate(db: Database.Database, id: number): RecurringTemplate | null {
   const row = db
     .prepare<[number], RecurringTemplateRow>(
       `SELECT ${TEMPLATE_SELECT_COLUMNS} FROM recurring_template WHERE id = ?`,

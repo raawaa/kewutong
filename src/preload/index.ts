@@ -70,6 +70,12 @@ import type {
   MaterializeIfNewWeekResult,
   MaterializeTotals,
 } from "@/main/materialization/index";
+import type {
+  InstanceIdArgs,
+  OverrideInstanceScheduledAtArgs,
+  RescheduleInstanceArgs,
+  UpdateTemplateZoneArgs,
+} from "@/main/types";
 
 /** 渲染进程只能看到这一份 typed API。 */
 const api = {
@@ -199,6 +205,18 @@ const api = {
       ipcRenderer.invoke("materialization.materialize_now"),
     materializeIfNewWeek: (): Promise<MaterializeIfNewWeekResult> =>
       ipcRenderer.invoke("materialization.materialize_if_new_week"),
+  },
+
+  // 实例动作（tickets #26 / #49）
+  instance: {
+    rescheduleInstance: (args: RescheduleInstanceArgs): Promise<Task> =>
+      ipcRenderer.invoke("instance.reschedule_instance", args),
+    overrideInstanceScheduledAt: (args: OverrideInstanceScheduledAtArgs): Promise<Task> =>
+      ipcRenderer.invoke("instance.override_instance_scheduled_at", args),
+    updateRecurringTemplateZone: (args: UpdateTemplateZoneArgs): Promise<RecurringTemplate> =>
+      ipcRenderer.invoke("instance.update_recurring_template_zone", args),
+    instanceRescheduleChain: (args: InstanceIdArgs): Promise<Task[]> =>
+      ipcRenderer.invoke("instance.instance_reschedule_chain", args),
   },
 };
 
