@@ -16,8 +16,11 @@ import type {
   CreatePersonArgs,
   CreateProjectArgs,
   CreateSubTeamArgs,
+  DatabaseExport,
+  DatabaseImportSummary,
   DeleteProjectArgs,
   DeleteSubTeamArgs,
+  ImportDatabaseJsonArgs,
   ListAssigneeCandidatesArgs,
   ListPeopleArgs,
   ListProjectCandidatesArgs,
@@ -31,6 +34,7 @@ import type {
   ProjectCandidate,
   ReorderSubTeamsArgs,
   SubTeam,
+  TasksCsvExport,
   TrayStatusDto,
   UpdatePersonArgs,
   UpdateProjectArgs,
@@ -90,6 +94,16 @@ const api = {
       ipcRenderer.invoke("project.update_project", args),
     deleteProject: (args: DeleteProjectArgs): Promise<void> =>
       ipcRenderer.invoke("project.delete_project", args),
+  },
+
+  // 导出（ticket #53）
+  export: {
+    exportDatabaseJson: (): Promise<DatabaseExport> =>
+      ipcRenderer.invoke("export.export_database_json"),
+    importDatabaseJson: (args: ImportDatabaseJsonArgs): Promise<DatabaseImportSummary> =>
+      ipcRenderer.invoke("export.import_database_json", args),
+    exportTasksCsv: (): Promise<TasksCsvExport> =>
+      ipcRenderer.invoke("export.export_tasks_csv"),
   },
 };
 

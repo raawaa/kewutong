@@ -15,8 +15,11 @@ import type {
   CreatePersonArgs,
   CreateProjectArgs,
   CreateSubTeamArgs,
+  DatabaseExport,
+  DatabaseImportSummary,
   DeleteProjectArgs,
   DeleteSubTeamArgs,
+  ImportDatabaseJsonArgs,
   ListAssigneeCandidatesArgs,
   ListPeopleArgs,
   ListProjectCandidatesArgs,
@@ -30,6 +33,7 @@ import type {
   ProjectCandidate,
   ReorderSubTeamsArgs,
   SubTeam,
+  TasksCsvExport,
   TrayStatusDto,
   UpdatePersonArgs,
   UpdateProjectArgs,
@@ -56,6 +60,10 @@ export type {
   ListAssigneeCandidatesArgs,
   PersonnelMatrixArgs,
   PersonnelMatrix,
+  DatabaseExport,
+  DatabaseImportSummary,
+  TasksCsvExport,
+  ImportDatabaseJsonArgs,
 };
 
 // ---------------------------------------------------------------------------
@@ -179,4 +187,20 @@ export function updateProject(args: UpdateProjectArgs): Promise<Project> {
 
 export function deleteProject(args: DeleteProjectArgs): Promise<void> {
   return window.api.project.deleteProject(args);
+}
+
+// ---------------------------------------------------------------------------
+// 导出（ticket #53）
+// ---------------------------------------------------------------------------
+
+export function exportDatabaseJson(): Promise<DatabaseExport> {
+  return window.api.export.exportDatabaseJson();
+}
+
+export function importDatabaseJson(args: ImportDatabaseJsonArgs): Promise<DatabaseImportSummary> {
+  return window.api.export.importDatabaseJson(args);
+}
+
+export function exportTasksCsv(): Promise<TasksCsvExport> {
+  return window.api.export.exportTasksCsv();
 }
