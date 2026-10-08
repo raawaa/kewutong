@@ -16,12 +16,16 @@ import type {
   CreatePersonArgs,
   CreateProjectArgs,
   CreateSubTeamArgs,
+  CreateTaskArgs,
   DeleteProjectArgs,
   DeleteSubTeamArgs,
+  DueDateOption,
   ListAssigneeCandidatesArgs,
   ListPeopleArgs,
   ListProjectCandidatesArgs,
   ListProjectsArgs,
+  ListTasksArgs,
+  ListTasksFilteredArgs,
   PersonnelMatrix,
   PersonnelMatrixArgs,
   Person,
@@ -30,11 +34,15 @@ import type {
   Project,
   ProjectCandidate,
   ReorderSubTeamsArgs,
+  SetTaskStatusArgs,
   SubTeam,
+  Task,
+  TodayWeek,
   TrayStatusDto,
   UpdatePersonArgs,
   UpdateProjectArgs,
   UpdateSubTeamArgs,
+  UpdateTaskArgs,
 } from "@/main/types";
 
 /** 渲染进程只能看到这一份 typed API。 */
@@ -90,6 +98,23 @@ const api = {
       ipcRenderer.invoke("project.update_project", args),
     deleteProject: (args: DeleteProjectArgs): Promise<void> =>
       ipcRenderer.invoke("project.delete_project", args),
+  },
+
+  // 任务管理（tickets #43 / #44）
+  task: {
+    createTask: (args: CreateTaskArgs): Promise<Task> =>
+      ipcRenderer.invoke("task.create_task", args),
+    updateTask: (args: UpdateTaskArgs): Promise<Task> =>
+      ipcRenderer.invoke("task.update_task", args),
+    setTaskStatus: (args: SetTaskStatusArgs): Promise<Task> =>
+      ipcRenderer.invoke("task.set_task_status", args),
+    listTasks: (args: ListTasksArgs): Promise<Task[]> =>
+      ipcRenderer.invoke("task.list_tasks", args),
+    listTasksFiltered: (args: ListTasksFilteredArgs): Promise<Task[]> =>
+      ipcRenderer.invoke("task.list_tasks_filtered", args),
+    todayWeek: (): Promise<TodayWeek> => ipcRenderer.invoke("task.today_week"),
+    listDueDateOptions: (): Promise<DueDateOption[]> =>
+      ipcRenderer.invoke("task.list_due_date_options"),
   },
 };
 

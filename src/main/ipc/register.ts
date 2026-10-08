@@ -14,6 +14,7 @@ import { schemaVersion } from "../db.js";
 import type { AppState } from "../state.js";
 import * as Personnel from "../personnel/index.js";
 import * as Project from "../project/index.js";
+import * as Task from "../task/index.js";
 
 /**
  * 把命令函数包装成 ipcMain.handle 的 handler。
@@ -50,6 +51,7 @@ export function registerAllIpc(state: AppState): void {
   registerDiagnostics(state);
   registerPersonnel(state);
   registerProject(state);
+  registerTask(state);
 }
 
 /** M1 探活 / 数据文件位置 / 托盘状态。 */
@@ -175,6 +177,45 @@ function registerProject(state: AppState): void {
   handle<import("../types.js").DeleteProjectArgs, void>(
     "project.delete_project",
     (s, args) => Project.deleteProject(s, args),
+  )(ipcMain, state);
+}
+
+/** Task domain（tickets #43 / #44）。 */
+function registerTask(state: AppState): void {
+  handle<import("../types.js").CreateTaskArgs, import("../types.js").Task>(
+    "task.create_task",
+    (s, args) => Task.createTask(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").UpdateTaskArgs, import("../types.js").Task>(
+    "task.update_task",
+    (s, args) => Task.updateTask(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").SetTaskStatusArgs, import("../types.js").Task>(
+    "task.set_task_status",
+    (s, args) => Task.setTaskStatus(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").ListTasksArgs, import("../types.js").Task[]>(
+    "task.list_tasks",
+    (s, args) => Task.listTasks(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").ListTasksFilteredArgs,
+    import("../types.js").Task[]
+  >("task.list_tasks_filtered", (s, args) => Task.listTasksFiltered(s, args))(
+    ipcMain,
+    state,
+  );
+
+  handleVoid<import("../types.js").TodayWeek>("task.today_week", (s) =>
+    Task.todayWeek(s),
+  )(ipcMain, state);
+
+  handleVoid<import("../types.js").DueDateOption[]>("task.list_due_date_options", (s) =>
+    Task.listDueDateOptions(s),
   )(ipcMain, state);
 }
 
