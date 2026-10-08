@@ -11,6 +11,9 @@ import { AppError } from "../error.js";
 //   - `kind` ∈ {'due_24h','blocked_3d','weekly_digest'}
 //   - `payload` 是合法 JSON 文本
 //   - kind = 'weekly_digest' OR related_task_id 不空 OR related_template_id 不空
+//   - `related_task_id` / `related_template_id` 是 FK,FK 检查在 `PRAGMA
+//     foreign_keys = ON` 下强制——helper 会按需插一条 person / task 占位
+//     行,确保插入不炸。
 // ---------------------------------------------------------------------------
 
 interface InsertArgs {
@@ -22,10 +25,42 @@ interface InsertArgs {
   viewedAt?: string | null;
 }
 
+/** FK 占位已建好就跳过,反之插一条 person + task 顶住外键。 */
+function ensureTaskFixture(
+  db: import("better-sqlite3").Database,
+  taskId: number,
+): void {
+  const exists = db
+    .prepare<[number], { id: number }>("SELECT id FROM task WHERE id = ?")
+    .get(taskId);
+  if (exists) return;
+
+  const hasTeam = db
+    .prepare<[], { c: number }>("SELECT COUNT(*) AS c FROM sub_team")
+    .get();
+  if ((hasTeam?.c ?? 0) === 0) {
+    db.prepare(`INSERT INTO sub_team (id, name, sort_order) VALUES (1, '一组', 0)`).run();
+  }
+  const hasPerson = db
+    .prepare<[], { c: number }>("SELECT COUNT(*) AS c FROM person")
+    .get();
+  if ((hasPerson?.c ?? 0) === 0) {
+    db.prepare(
+      `INSERT INTO person (id, name, sub_team_id, contact) VALUES (1, '张三', 1, '123')`,
+    ).run();
+  }
+  db.prepare(
+    `INSERT INTO task (id, title, status, owner_person_id) VALUES (?, '占位', 'Open', 1)`,
+  ).run(taskId);
+}
+
 function insertNotification(
   state: { db: import("better-sqlite3").Database },
   args: InsertArgs,
 ): number {
+  if (args.relatedTaskId != null) {
+    ensureTaskFixture(state.db, args.relatedTaskId);
+  }
   const result = state.db
     .prepare(
       `INSERT INTO notification_log
@@ -159,7 +194,8 @@ describe("notification / listNotifications（#51）", () => {
       });
       const all = Notification.listNotifications(state);
       expect(all.length).toBe(2);
-      expect(all.map((n) => n.viewedAt)).toEqual([null, "2026-09-09 10:00:00"]);
+      // 按 triggered_at DESC 倒序：09-09 在前 → 已读；08-08 在后 → 未读。
+      expect(all.map((n) => n.viewedAt)).toEqual(["2026-09-09 10:00:00", null]);
     } finally {
       close();
     }
@@ -168,7 +204,18 @@ describe("notification / listNotifications（#51）", () => {
   it("封顶 LIST_HISTORY_LIMIT（200）", () => {
     const { state, close } = freshDb();
     try {
+      // FK：task.owner_person_id → person；notification_log.related_task_id → task。
+      // 一次性插好 sub_team / person / 250 条 task,再批量写 notification_log。
       state.db.transaction(() => {
+        state.db.prepare(`INSERT INTO sub_team (id, name, sort_order) VALUES (1, '一组', 0)`).run();
+        state.db.prepare(
+          `INSERT INTO person (id, name, sub_team_id, contact) VALUES (1, '张三', 1, '123')`,
+        ).run();
+        const taskStmt = state.db.prepare(
+          `INSERT INTO task (id, title, status, owner_person_id)
+           VALUES (?, '占位', 'Open', 1)`,
+        );
+        for (let i = 1; i <= 250; i++) taskStmt.run(i);
         const stmt = state.db.prepare(
           `INSERT INTO notification_log
              (triggered_at, kind, related_task_id, payload)
