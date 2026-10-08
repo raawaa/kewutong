@@ -21,6 +21,10 @@ import { SystemClock } from "./clock.js";
 import { newAppState, DEFAULT_TRAY_STATUS, type AppState } from "./state.js";
 import { registerAllIpc, resolveMigrationsDir } from "./ipc/register.js";
 import { createTray, pushTrayStatus, showMainWindow } from "./tray/index.js";
+import {
+  bindWillQuitUnregister,
+  registerGlobalShortcut,
+} from "./shortcut/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -140,6 +144,15 @@ if (!gotTheLock) {
       if (mainWindow) pushTrayStatus(mainWindow, state);
       console.error(`[tray] 托盘初始化失败：${detail}`);
     }
+
+    // ⌘K / Ctrl+K 全局快捷键(ticket #55)。失败(Wayland / 被占用 /
+    // 抛异常)时仅 warn,不 panic;`registerGlobalShortcut` 自己 log。
+    if (mainWindow) {
+      registerGlobalShortcut(mainWindow);
+    }
+    // 全局快捷键挂在 `will-quit` 唯一注销——避免 dev 重启时残留
+    // 「ghost shortcut」(Electron 文档明确要求)。
+    bindWillQuitUnregister();
 
     // 托盘可达：所有窗口关掉后保留 app（托盘常驻，进程不退）。
     // 托盘不可用：窗口关掉 = 没有 UI 也没有托盘 = 直接退——下次启动
