@@ -20,6 +20,7 @@ import * as Task from "../task/index.js";
 import * as Export from "../export/index.js";
 import * as Materialization from "../materialization/index.js";
 import * as RecurringTemplate from "../recurring_template/index.js";
+import * as Wayfinder from "../wayfinder/index.js";
 
 /**
  * 把命令函数包装成 ipcMain.handle 的 handler。
@@ -62,6 +63,7 @@ export function registerAllIpc(state: AppState): void {
   registerRecurringTemplate(state);
   registerMaterialization(state);
   registerNotification(state);
+  registerWayfinder(state);
 }
 
 /** M1 探活 / 数据文件位置 / 托盘状态。 */
@@ -338,6 +340,17 @@ function registerNotification(state: AppState): void {
     "notification.get_notification",
     (s, args) => Notification.getNotification(s, args),
   )(ipcMain, state);
+}
+
+/** Wayfinder domain（tickets #28 / #50）。⌘K 全局命令面板：人员 / 项目 / 任务一次拉回。 */
+function registerWayfinder(state: AppState): void {
+  handle<
+    import("../types.js").WayfinderSearchArgs,
+    import("../types.js").WayfinderSearchResults
+  >("wayfinder.wayfinder_search", (s, args) => Wayfinder.wayfinderSearch(s, args))(
+    ipcMain,
+    state,
+  );
 }
 
 /** dev 模式下解析 migrations 目录位置。 */

@@ -51,6 +51,8 @@ import type {
   UpdateSubTeamArgs,
   UpdateTaskArgs,
   UpsertRecurringTemplateArgs,
+  WayfinderSearchArgs,
+  WayfinderSearchResults,
 } from "@/main/types";
 import type {
   GetNotificationArgs,
@@ -119,7 +121,9 @@ export type {
   MarkReadArgs,
   GetNotificationArgs,
   MaterializeTotals,
-  MaterializeIfNewWeekResult,};
+  MaterializeIfNewWeekResult,
+  WayfinderSearchArgs,
+  WayfinderSearchResults,};
 
 // ---------------------------------------------------------------------------
 // 探活 / 数据文件位置 / 托盘（tickets #38 / #40 + 后续 #54）
@@ -375,4 +379,19 @@ export function materializeNow(): Promise<MaterializeTotals> {
 /** 后台 tick 调用——只在跨入新 ISO 周时跑物化。`materialized = false`
  *  表示本次没真跑（前端不弹提示）。 */
 export function materializeIfNewWeek(): Promise<MaterializeIfNewWeekResult> {
-  return window.api.materialization.materializeIfNewWeek();}
+  return window.api.materialization.materializeIfNewWeek();
+}
+
+// ---------------------------------------------------------------------------
+// ⌘K 全局命令面板（tickets #28 / #50）
+// ---------------------------------------------------------------------------
+
+/**
+ * ⌘K 命令面板搜索——一次拉回三类候选（人员 / 项目 / 任务）。
+ *
+ * `query` 空 = 默认候选；非空 = 子串 / FTS5 搜索。
+ * 命令层是候选列表的权威,前端不再二次过滤 / 排序 / 截断。
+ */
+export function wayfinderSearch(args: WayfinderSearchArgs): Promise<WayfinderSearchResults> {
+  return window.api.wayfinder.wayfinderSearch(args);
+}

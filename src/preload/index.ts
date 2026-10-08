@@ -52,6 +52,8 @@ import type {
   UpdateSubTeamArgs,
   UpdateTaskArgs,
   UpsertRecurringTemplateArgs,
+  WayfinderSearchArgs,
+  WayfinderSearchResults,
 } from "@/main/types";
 import type {
   ClearHolidayOverrideArgs,
@@ -199,6 +201,12 @@ const api = {
       ipcRenderer.invoke("materialization.materialize_now"),
     materializeIfNewWeek: (): Promise<MaterializeIfNewWeekResult> =>
       ipcRenderer.invoke("materialization.materialize_if_new_week"),
+  },
+
+  // ⌘K 全局命令面板（tickets #28 / #50）
+  wayfinder: {
+    wayfinderSearch: (args: WayfinderSearchArgs): Promise<WayfinderSearchResults> =>
+      ipcRenderer.invoke("wayfinder.wayfinder_search", args),
   },
 };
 
