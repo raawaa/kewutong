@@ -577,4 +577,42 @@ describe("holiday / override 命令", () => {
       fx.cleanup();
     }
   });
+
+  it("依次 3 个动作（set holiday → set workday → clear）后 holidayCalendar 反映最新 DayKind", () => {
+    // ticket #63 集成点：3 个动作后必须能看到当日 effective kind 切到
+    // 新值——即前端菜单动作 → 主进程命令 → 同区间再次查 holidayCalendar
+    // 闭环。这是 #63 AC「执行 3 个动作后相同区间再查 holidayCalendar 返
+    // 回新 DayKind」在主进程层的硬约束。
+    const { state, close } = freshDb();
+    const fx = seedDir();
+    try {
+      fx.write(2026, { holidays: [], workdays: [] });
+      Holiday.loadHolidayCalendar(state, { year: 2026, seedDir: fx.dir });
+
+      const range = { startInclusive: "2026-09-14", endInclusive: "2026-09-14" };
+      const query = () => Holiday.holidayCalendar(state, range);
+
+      // 默认 09-14 周一：workday,不返（holidayCalendar 命令只列 Seed/Override）。
+      expect(query()).toEqual([]);
+
+      // 1) 切换为节假日
+      Holiday.setHolidayOverride(state, { date: "2026-09-14", kind: "holiday" });
+      expect(query()).toEqual([
+        { date: "2026-09-14", kind: "holiday", name: null, source: "override" },
+      ]);
+
+      // 2) 切换为工作日
+      Holiday.setHolidayOverride(state, { date: "2026-09-14", kind: "workday" });
+      expect(query()).toEqual([
+        { date: "2026-09-14", kind: "workday", name: null, source: "override" },
+      ]);
+
+      // 3) 清除覆盖：回到默认,09-14 周一 workday → 不返
+      Holiday.clearHolidayOverride(state, { date: "2026-09-14" });
+      expect(query()).toEqual([]);
+    } finally {
+      close();
+      fx.cleanup();
+    }
+  });
 });
