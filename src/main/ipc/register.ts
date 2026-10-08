@@ -17,6 +17,7 @@ import * as Notification from "../notification/index.js";
 import * as Scheduler from "../notification/scheduler.js";
 import * as Personnel from "../personnel/index.js";
 import * as Project from "../project/index.js";
+import * as Sample from "../sample/index.js";
 import * as Task from "../task/index.js";
 import * as Export from "../export/index.js";
 import * as Instance from "../instance/index.js";
@@ -60,6 +61,7 @@ export function registerAllIpc(state: AppState): void {
   registerHoliday(state);
   registerPersonnel(state);
   registerProject(state);
+  registerSample(state);
   registerTask(state);
   registerExport(state);
   registerRecurringTemplate(state);
@@ -215,6 +217,24 @@ function registerProject(state: AppState): void {
   handle<import("../types.js").DeleteProjectArgs, void>(
     "project.delete_project",
     (s, args) => Project.deleteProject(s, args),
+  )(ipcMain, state);
+}
+
+/** 示例数据 domain（ticket #31）。 */
+function registerSample(state: AppState): void {
+  handleVoid<import("../types.js").SamplePresence>(
+    "sample.is_sample_data_present",
+    (s) => Sample.isSampleDataPresent(s),
+  )(ipcMain, state);
+
+  handleVoid<import("../types.js").ClearSampleSummary>(
+    "sample.clear_sample_data",
+    (s) => Sample.clearSampleData(s),
+  )(ipcMain, state);
+
+  handleVoid<import("../types.js").RealTeamsSeedSummary>(
+    "sample.seed_real_teams",
+    (s) => Sample.seedRealTeams(s),
   )(ipcMain, state);
 }
 
