@@ -1,0 +1,140 @@
+# Release pipeline for 科室任务管理 (kewutong).
+#
+# ticket #58: 从 Tauri (tauri-apps/tauri-action@v1) 切到 Electron
+# (electron-builder) 后的 4-runner 矩阵 release workflow。
+# 详见 docs/adr/0009-electron-builder-distribution.md §1 / §2 / §3 与
+# docs/adr/0004-distribution-pipeline.md(沿用的 4-runner 矩阵与触发约定)。
+#
+# 触发: 推送形如 `app-v1.2.3` 的 git tag。CI 会以 draft 形式建一个
+# GitHub Release 并上传 4 个原生安装包(.deb / .AppImage / .msi / .dmg × 2 arch);
+# Reviewer 在 GitHub Web 上点 "Publish release" 后,普通用户即可下载。
+#
+# 重跑: 删除 draft release → 重新打 tag → 重推。
+#
+# 测试 gating: 本 workflow 不跑 cargo test / vitest / typecheck。
+# 这些门已在 push-to-master / PR 阶段跑过;tag 触发的目的是出货,
+# 不是重新测。electron-builder 编译失败 / 链接失败会直接退出,
+# 等价于一次"干跑"。
+
+name: release
+
+on:
+  push:
+    tags:
+      - "app-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  # 同一 tag 反复推送时,取消上一轮 build,避免重复 draft
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    # macOS runner 配额紧;矩阵打 tag 才跑,不是 PR 触发的预演
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      # 一个 runner 挂掉不连带取消其它 runner(尤其是 macOS 偶发排队)
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+          - platform: windows-latest
+          - platform: macos-latest
+          - platform: macos-15-intel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          # `npm ci` 要有 package-lock.json;项目走 npm,不要换成 pnpm/yarn
+          cache: npm
+
+      - name: Install dependencies
+        # electron-builder 需要原 node_modules(postinstall 会跑
+        # electron-builder install-app-deps 重编 native 模块)
+        run: npm ci --legacy-peer-deps
+
+      # electron-builder 需要 renderer + main + preload 三份 bundle;
+      # electron-vite 在 `npm run build:app` 里 build 三者,electron-builder
+      # 再据此打包。typecheck 在 PR 阶段已 gate,tag 触发出货不再跑。
+      - name: Build renderer + main + preload
+        run: npm run build:app
+
+      # 公证按 ADR 0009 §4 关闭:v1 macOS 走 ad-hoc(`mac.identity: "-"`)
+      # 无 Apple ID、零成本;`-p never` 关掉 electron-builder 的 publish
+      # 流程,release 由后置 softprops/action-gh-release@v2 接管。
+      - name: Package (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: npx electron-builder --linux --x64 -p never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: npx electron-builder --win --x64 -p never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package (macOS arm64)
+        if: matrix.platform == 'macos-latest'
+        run: npx electron-builder --mac --arm64 -p never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package (macOS x64)
+        if: matrix.platform == 'macos-15-intel'
+        run: npx electron-builder --mac --x64 -p never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kewutong-${{ matrix.platform }}
+          # electron-builder 按 `directories.output: release/${version}`
+          # 写产物;抓 release/ 下所有原生格式 + 备选 zip(Windows 自动发布用)
+          path: |
+            release/*.deb
+            release/*.AppImage
+            release/*.msi
+            release/*.dmg
+            release/*.zip
+          if-no-files-found: warn
+
+  release:
+    name: draft release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          # draft: true 等价 ADR 0004 §2 的 releaseDraft;Reviewer 在
+          # Web 上点 "Publish release" 后普通用户即可下载。
+          draft: true
+          generate_release_notes: true
+          # glob 匹配 4 个 runner 上传的 .deb / .AppImage / .msi /
+          # .dmg(arm64 + x64)/ .zip;zip 由 Windows runner 的
+          # electron-builder 自动生成,squirrel 等备选用。
+          files: |
+            artifacts/**/*.deb
+            artifacts/**/*.AppImage
+            artifacts/**/*.msi
+            artifacts/**/*.dmg
+            artifacts/**/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -21,7 +21,7 @@ import {
   type Task,
   type TaskStatus,
   type TodayWeek as TodayWeekDto,
-} from "@/lib/ipc";
+} from "@/lib/api";
 import { STATUS_STYLE } from "@/lib/taskStatusStyle";
 
 /**

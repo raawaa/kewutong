@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DueDateChipRow } from "./DueDateChipRow";
-import type { DueDateOption } from "@/lib/ipc";
+import type { DueDateOption } from "@/lib/api";
 
 /** 命令层在 2026-09-10 这天会返回的 chip 行。 */
 const OPTIONS: DueDateOption[] = [

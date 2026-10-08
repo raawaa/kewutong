@@ -1,0 +1,431 @@
+/**
+ * 主进程 IPC 注册中心（ADR 0008 §主进程注册）。
+ *
+ * 每个 domain 一个 registerXxx 模块，channel 名与命令名一一对应
+ * （如 `personnel.list_sub_teams`）。错误统一收敛成 AppError
+ * 形状（`{ code, message, detail }`）抛给 renderer。
+ */
+
+import { app, ipcMain } from "electron";
+import type { IpcMain } from "electron";
+import * as path from "node:path";
+import { AppError } from "../error.js";
+import { schemaVersion } from "../db.js";
+import type { AppState } from "../state.js";
+import * as Holiday from "../holiday/index.js";
+import * as Notification from "../notification/index.js";
+import * as Scheduler from "../notification/scheduler.js";
+import * as Personnel from "../personnel/index.js";
+import * as Project from "../project/index.js";
+import * as Sample from "../sample/index.js";
+import * as Task from "../task/index.js";
+import * as Export from "../export/index.js";
+import * as Instance from "../instance/index.js";
+import * as Materialization from "../materialization/index.js";
+import * as RecurringTemplate from "../recurring_template/index.js";
+import * as Wayfinder from "../wayfinder/index.js";
+
+/**
+ * 把命令函数包装成 ipcMain.handle 的 handler。
+ */
+export function handle<TArgs, TReturn>(
+  channel: string,
+  command: (state: AppState, args: TArgs) => TReturn | Promise<TReturn>,
+): (ipc: IpcMain, state: AppState) => void {
+  return (ipc, state) => {
+    ipc.handle(channel, async (_event, args: TArgs) => {
+      try {
+        return await command(state, args);
+      } catch (cause) {
+        if (cause instanceof AppError) {
+          throw cause.toPayload();
+        }
+        const detail = cause instanceof Error ? cause.message : String(cause);
+        throw AppError.internal(detail).toPayload();
+      }
+    });
+  };
+}
+
+/** 一个无入参命令。 */
+export function handleVoid<TReturn>(
+  channel: string,
+  command: (state: AppState) => TReturn | Promise<TReturn>,
+): (ipc: IpcMain, state: AppState) => void {
+  return handle<undefined, TReturn>(channel, async (state, _args) => command(state));
+}
+
+/** 注册所有 IPC 处理器——每个 domain 在这里串起来。 */
+export function registerAllIpc(state: AppState): void {
+  registerDiagnostics(state);
+  registerHoliday(state);
+  registerPersonnel(state);
+  registerProject(state);
+  registerSample(state);
+  registerTask(state);
+  registerExport(state);
+  registerRecurringTemplate(state);
+  registerInstance(state);
+  registerMaterialization(state);
+  registerNotification(state);
+  registerWayfinder(state);
+}
+
+/** M1 探活 / 数据文件位置 / 托盘状态。 */
+function registerDiagnostics(state: AppState): void {
+  handle<string | null | undefined, import("../types.js").PingReply>(
+    "ping",
+    async (_state, echo) => {
+      if (echo !== undefined && echo !== null && echo.trim().length === 0) {
+        throw AppError.invalid("回声内容不能为空。");
+      }
+      return {
+        message: "pong",
+        now: state.clock.nowSql(),
+        schemaVersion: schemaVersion(state.db),
+        echo: echo ?? null,
+      };
+    },
+  )(ipcMain, state);
+
+  handleVoid<string | null>("dataFileLocation", (s) => s.dbPath)(ipcMain, state);
+
+  handleVoid<import("../types.js").TrayStatusDto>("trayStatus", (s) => {
+    const status = s.trayStatus;
+    return status.kind === "available"
+      ? { available: true, reason: "" }
+      : { available: false, reason: status.reason };
+  })(ipcMain, state);
+}
+
+/** Personnel domain（tickets #17 / #19 / #22）。 */
+function registerPersonnel(state: AppState): void {
+  handleVoid<import("../types.js").SubTeam[]>("personnel.list_sub_teams", (s) =>
+    Personnel.listSubTeams(s),
+  )(ipcMain, state);
+
+  handle<import("../types.js").CreateSubTeamArgs, import("../types.js").SubTeam>(
+    "personnel.create_sub_team",
+    (s, args) => Personnel.createSubTeam(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").UpdateSubTeamArgs, import("../types.js").SubTeam>(
+    "personnel.update_sub_team",
+    (s, args) => Personnel.updateSubTeam(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").DeleteSubTeamArgs, void>(
+    "personnel.delete_sub_team",
+    (s, args) => Personnel.deleteSubTeam(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").ReorderSubTeamsArgs, void>(
+    "personnel.reorder_sub_teams",
+    (s, args) => Personnel.reorderSubTeams(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").ListPeopleArgs, import("../types.js").Person[]>(
+    "personnel.list_people",
+    (s, args) => Personnel.listPeople(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").CreatePersonArgs, import("../types.js").Person>(
+    "personnel.create_person",
+    (s, args) => Personnel.createPerson(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").UpdatePersonArgs, import("../types.js").Person>(
+    "personnel.update_person",
+    (s, args) => Personnel.updatePerson(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").PersonIdArgs, import("../types.js").Person>(
+    "personnel.deactivate_person",
+    (s, args) => Personnel.deactivatePerson(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").PersonIdArgs, import("../types.js").Person>(
+    "personnel.reactivate_person",
+    (s, args) => Personnel.reactivatePerson(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").PersonIdArgs, void>(
+    "personnel.delete_person",
+    (s, args) => Personnel.deletePerson(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").ListAssigneeCandidatesArgs,
+    import("../types.js").AssigneeCandidate[]
+  >("personnel.list_assignee_candidates", (s, args) =>
+    Personnel.listAssigneeCandidates(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").PersonnelMatrixArgs, import("../types.js").PersonnelMatrix>(
+    "personnel.personnel_matrix",
+    (s, args) => Personnel.personnelMatrix(s, args),
+  )(ipcMain, state);
+}
+
+/** Holiday domain（tickets #23 / #47）。 */
+function registerHoliday(state: AppState): void {
+  handle<Holiday.LoadHolidayCalendarArgs, Holiday.HolidayLoadResult>(
+    "holiday.load_holiday_calendar",
+    (s, args) => Holiday.loadHolidayCalendar(s, args),
+  )(ipcMain, state);
+
+  handle<Holiday.HolidayCalendarArgs, Holiday.HolidayCalendarDay[]>(
+    "holiday.holiday_calendar",
+    (s, args) => Holiday.holidayCalendar(s, args),
+  )(ipcMain, state);
+
+  handle<Holiday.SetHolidayOverrideArgs, void>(
+    "holiday.set_holiday_override",
+    (s, args) => Holiday.setHolidayOverride(s, args),
+  )(ipcMain, state);
+
+  handle<Holiday.ClearHolidayOverrideArgs, void>(
+    "holiday.clear_holiday_override",
+    (s, args) => Holiday.clearHolidayOverride(s, args),
+  )(ipcMain, state);
+}
+
+/** Project domain（ticket #20）。 */
+function registerProject(state: AppState): void {
+  handle<import("../types.js").ListProjectsArgs, import("../types.js").Project[]>(
+    "project.list_projects",
+    (s, args) => Project.listProjects(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").ListProjectCandidatesArgs,
+    import("../types.js").ProjectCandidate[]
+  >("project.list_project_candidates", (s, args) =>
+    Project.listProjectCandidates(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").CreateProjectArgs, import("../types.js").Project>(
+    "project.create_project",
+    (s, args) => Project.createProject(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").UpdateProjectArgs, import("../types.js").Project>(
+    "project.update_project",
+    (s, args) => Project.updateProject(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").DeleteProjectArgs, void>(
+    "project.delete_project",
+    (s, args) => Project.deleteProject(s, args),
+  )(ipcMain, state);
+}
+
+/** 示例数据 domain（ticket #31）。 */
+function registerSample(state: AppState): void {
+  handleVoid<import("../types.js").SamplePresence>(
+    "sample.is_sample_data_present",
+    (s) => Sample.isSampleDataPresent(s),
+  )(ipcMain, state);
+
+  handleVoid<import("../types.js").ClearSampleSummary>(
+    "sample.clear_sample_data",
+    (s) => Sample.clearSampleData(s),
+  )(ipcMain, state);
+
+  handleVoid<import("../types.js").RealTeamsSeedSummary>(
+    "sample.seed_real_teams",
+    (s) => Sample.seedRealTeams(s),
+  )(ipcMain, state);
+}
+
+/** Task domain（tickets #43 / #44）。 */
+function registerTask(state: AppState): void {
+  handle<import("../types.js").CreateTaskArgs, import("../types.js").Task>(
+    "task.create_task",
+    (s, args) => Task.createTask(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").UpdateTaskArgs, import("../types.js").Task>(
+    "task.update_task",
+    (s, args) => Task.updateTask(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").SetTaskStatusArgs, import("../types.js").Task>(
+    "task.set_task_status",
+    (s, args) => Task.setTaskStatus(s, args),
+  )(ipcMain, state);
+
+  handle<import("../types.js").ListTasksArgs, import("../types.js").Task[]>(
+    "task.list_tasks",
+    (s, args) => Task.listTasks(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").ListTasksFilteredArgs,
+    import("../types.js").Task[]
+  >("task.list_tasks_filtered", (s, args) => Task.listTasksFiltered(s, args))(
+    ipcMain,
+    state,
+  );
+
+  handleVoid<import("../types.js").TodayWeek>("task.today_week", (s) =>
+    Task.todayWeek(s),
+  )(ipcMain, state);
+
+  handleVoid<import("../types.js").DueDateOption[]>("task.list_due_date_options", (s) =>
+    Task.listDueDateOptions(s),
+  )(ipcMain, state);
+
+  handle<import("../types.js").SearchTasksArgs, import("../types.js").Task[]>(
+    "task.search_tasks",
+    (s, args) => Task.searchTasks(s, args),
+  )(ipcMain, state);
+}
+
+/** Export domain（ticket #53）。 */
+function registerExport(state: AppState): void {
+  handleVoid<import("../types.js").DatabaseExport>(
+    "export.export_database_json",
+    (s) => Export.exportDatabaseJson(s),
+  )(ipcMain, state);
+
+  handle<Export.ImportDatabaseJsonArgs, import("../types.js").DatabaseImportSummary>(
+    "export.import_database_json",
+    (s, args) => Export.importDatabaseJson(s, args),
+  )(ipcMain, state);
+
+  handleVoid<import("../types.js").TasksCsvExport>(
+    "export.export_tasks_csv",
+    (s) => Export.exportTasksCsv(s),
+  )(ipcMain, state);
+}
+
+/** Recurring template domain（tickets #24 / #46）。 */
+function registerRecurringTemplate(state: AppState): void {
+  handle<
+    import("../types.js").UpsertRecurringTemplateArgs,
+    import("../types.js").RecurringTemplate
+  >("recurring_template.upsert_recurring_template", (s, args) =>
+    RecurringTemplate.upsertRecurringTemplate(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").ListRecurringTemplatesArgs,
+    import("../types.js").RecurringTemplate[]
+  >("recurring_template.list_recurring_templates", (s, args) =>
+    RecurringTemplate.listRecurringTemplates(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").SetRecurringTemplateEnabledArgs,
+    import("../types.js").RecurringTemplate
+  >("recurring_template.set_recurring_template_enabled", (s, args) =>
+    RecurringTemplate.setRecurringTemplateEnabled(s, args),
+  )(ipcMain, state);
+}
+
+/** Instance domain（tickets #26 / #49）。 */
+function registerInstance(state: AppState): void {
+  handle<
+    import("../types.js").RescheduleInstanceArgs,
+    import("../types.js").Task
+  >("instance.reschedule_instance", (s, args) =>
+    Instance.rescheduleInstance(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").OverrideInstanceScheduledAtArgs,
+    import("../types.js").Task
+  >("instance.override_instance_scheduled_at", (s, args) =>
+    Instance.overrideInstanceScheduledAt(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").UpdateTemplateZoneArgs,
+    import("../types.js").RecurringTemplate
+  >("instance.update_recurring_template_zone", (s, args) =>
+    Instance.updateRecurringTemplateZone(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").InstanceIdArgs,
+    import("../types.js").Task[]
+  >("instance.instance_reschedule_chain", (s, args) =>
+    Instance.instanceRescheduleChain(s, args),
+  )(ipcMain, state);
+}
+
+/** Materialization domain（tickets #25 / #48）。 */
+function registerMaterialization(state: AppState): void {
+  handleVoid<import("../materialization/index.js").MaterializeTotals>(
+    "materialization.materialize_now",
+    (s) => Materialization.materializeFromState(s),
+  )(ipcMain, state);
+
+  handleVoid<import("../materialization/index.js").MaterializeIfNewWeekResult>(
+    "materialization.materialize_if_new_week",
+    (s) => Materialization.materializeIfNewWeek(s),
+  )(ipcMain, state);
+}
+
+/** Notification domain（tickets #51 / #56）。 */
+function registerNotification(state: AppState): void {
+  handleVoid<import("../notification/index.js").NotificationRow[]>(
+    "notification.list_unread_notifications",
+    (s) => Notification.listUnreadNotifications(s),
+  )(ipcMain, state);
+
+  handleVoid<import("../notification/index.js").NotificationRow[]>(
+    "notification.list_notifications",
+    (s) => Notification.listNotifications(s),
+  )(ipcMain, state);
+
+  handle<import("../notification/index.js").MarkReadArgs, boolean>(
+    "notification.mark_notification_read",
+    (s, args) => Notification.markNotificationRead(s, args),
+  )(ipcMain, state);
+
+  handleVoid<number>(
+    "notification.mark_all_notifications_read",
+    (s) => Notification.markAllNotificationsRead(s),
+  )(ipcMain, state);
+
+  handle<import("../notification/index.js").GetNotificationArgs, import("../notification/index.js").NotificationRow>(
+    "notification.get_notification",
+    (s, args) => Notification.getNotification(s, args),
+  )(ipcMain, state);
+
+  // 显式触发一次调度（ticket #56）。后台 tick 接入前的「手动跑一遍」
+  // 入口；返回值按 kind 分桶,前端拿到后各自 emit OS 通知。
+  handleVoid<import("../notification/scheduler.js").NotificationRunSummary>(
+    "notification.run_scheduler",
+    (s) => Scheduler.runAll(s),
+  )(ipcMain, state);
+}
+
+/** Wayfinder domain（tickets #28 / #50）。⌘K 全局命令面板：人员 / 项目 / 任务一次拉回。 */
+function registerWayfinder(state: AppState): void {
+  handle<
+    import("../types.js").WayfinderSearchArgs,
+    import("../types.js").WayfinderSearchResults
+  >("wayfinder.wayfinder_search", (s, args) => Wayfinder.wayfinderSearch(s, args))(
+    ipcMain,
+    state,
+  );
+}
+
+/** dev 模式下解析 migrations 目录位置。 */
+export function resolveMigrationsDir(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "migrations");
+  }
+  return path.join(app.getAppPath(), "src/main/migrations");
+}
+
+/** dev 模式下解析 holidays 目录。 */
+export function resolveHolidaysDir(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "holidays");
+  }
+  return path.join(app.getAppPath(), "holidays");
+}

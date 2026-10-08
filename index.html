@@ -3,6 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- CSP（ADR 0008 §CSP）：renderer 加载本地 bundle，无远程脚本。
+         'unsafe-inline' 仅限 style（Tailwind v4 注入需要）；script 不开放。 -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:;"
+    />
     <title>科室任务管理</title>
   </head>
 

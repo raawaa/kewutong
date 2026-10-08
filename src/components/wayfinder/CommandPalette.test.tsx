@@ -10,10 +10,10 @@ import {
   type Person,
   type SubTeam,
   type Project,
-} from "@/lib/ipc";
+} from "@/lib/api";
 
-vi.mock("@/lib/ipc", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/ipc")>()),
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
   wayfinderSearch: vi.fn(),
 }));
 

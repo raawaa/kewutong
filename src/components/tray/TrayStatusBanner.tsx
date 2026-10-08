@@ -14,7 +14,7 @@
  *   出错了」比「reason 是空串就啥也不说」更安全,但显示一个保底文案,
  *   让科长看到「托盘不可用」这条事实。
  */
-import type { TrayStatusDto } from "@/lib/ipc";
+import type { TrayStatusDto } from "@/lib/api";
 
 /** 后端不可用 + reason 空串时给科长看的兜底文案。 */
 const FALLBACK_REASON = "托盘不可用，关闭主窗口会直接退出应用。";

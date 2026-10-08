@@ -10,6 +10,7 @@ import {
   type CommandPaletteTarget,
 } from "@/components/wayfinder/CommandPalette";
 import { TrayStatusBanner } from "@/components/tray/TrayStatusBanner";
+import { SampleDataBanner } from "@/components/SampleDataBanner";
 import { PersonnelMatrixView } from "@/views/PersonnelMatrixView";
 import { PersonnelView } from "@/views/PersonnelView";
 import { ProjectsView } from "@/views/ProjectsView";
@@ -26,7 +27,7 @@ import {
   type SubTeam,
   type Task,
   type TrayStatusDto,
-} from "@/lib/ipc";
+} from "@/lib/api";
 
 /**
  * 顶层 tab——spec #15 user story 60-66：四个主视图平级。
@@ -85,6 +86,11 @@ export default function App() {
   const closeDialog = useCallback(() => setDialog(null), []);
   const onTaskSaved = useCallback(() => {
     setDialog(null);
+    setRefreshToken((token) => token + 1);
+  }, []);
+  // 横幅清除示例后也得刷——views 按 refreshToken 拉数据,不清的话
+  // Today/矩阵/项目/人员 视图继续展示已删的示例任务。
+  const onSampleCleared = useCallback(() => {
     setRefreshToken((token) => token + 1);
   }, []);
 
@@ -250,6 +256,10 @@ export default function App() {
       </header>
 
       <TrayStatusBanner status={trayStatusDto} />
+      <SampleDataBanner
+        refreshToken={refreshToken}
+        onCleared={onSampleCleared}
+      />
 
       {tab === "today" ? (
         <TodayWeekView

@@ -8,53 +8,38 @@
 
 ## 环境要求
 
-- Rust stable（`rustup` 装即可；`rusqlite` 走 `bundled`，会用 `cc` 编一次 SQLite，首次冷构建慢是正常的）
 - Node 20+ 与 npm
-- 各平台的 Tauri 系统依赖：<https://tauri.app/start/prerequisites/>
+- Electron 33 的原生模块（`better-sqlite3`）由 `electron-builder install-app-deps`
+  自动按当前 Electron 的 ABI 重新构建（`postinstall` 钩子已配好）
 
 ## 常用命令
 
 ```bash
-npm install              # 装前端依赖（含 @tauri-apps/cli）
-npm run tauri dev        # 起 app（前端 Vite dev server + Rust 端热重载）
-npm run tauri build      # 出安装包
-
-npm run typecheck        # 前端类型检查
-npm run build            # 前端构建产物到 dist/
-npm test                 # 前端组件级测试（vitest + testing-library）
-
-cd src-tauri && cargo test    # Rust 全量测试
-cd src-tauri && cargo clippy --all-targets
+npm install              # 装前端 + Electron 依赖（postinstall 会跑 install-app-deps）
+npm run dev              # 起 app（electron-vite：主进程 + preload + renderer 三段热重载）
+npm run build            # electron-vite 产物 + electron-builder 出安装包
+npm run typecheck        # 三段 tsc --noEmit（node / web / main / preload）
+npm test                 # vitest 全量（主进程 .test.ts + renderer .test.tsx）
 ```
 
-想直接用 `cargo tauri dev` 而不是 `npm run tauri dev`，先装一次 CLI：
+想直接出可分发的安装包：
 
 ```bash
-cargo install tauri-cli --version "^2" --locked
+npm run build:app        # 仅 electron-vite 三段打包（不调 electron-builder）
 ```
-
-> `cargo test` 会编译 `tauri::generate_context!`，它要求 `dist/` 存在。全新克隆后先跑一次 `npm run build`。
 
 ## 目录
 
 ```
-├── src/                    前端（React + TypeScript + Tailwind v4 + shadcn/ui）
-│   ├── components/task/    新建 / 编辑任务弹窗及其零件
-│   ├── components/ui/      shadcn 组件
+├── src/                    前端 + 主进程（TypeScript，electron-vite 三段产物）
+│   ├── main/               主进程：db、migrations runner、领域命令、IPC 注册
+│   ├── preload/            contextBridge 暴露 window.api 给 renderer
+│   ├── lib/                renderer 共享：api-types（IPC typed wrapper）、utils、...
+│   ├── components/         React 组件（task 弹窗、ui 基础件、wayfinder、tray、...）
 │   ├── views/              各 tab 的界面
-│   ├── test/setup.ts       vitest 全局 setup
-│   └── lib/ipc.ts          调 Rust 命令的唯一入口（带类型）
-├── src-tauri/
-│   ├── migrations/         refinery 的 .sql 迁移（forward-only，无 down）
-│   ├── src/
-│   │   ├── clock.rs        可注入时钟
-│   │   ├── commands/       命令层，按领域分子模块
-│   │   ├── db.rs           连接、运行时 PRAGMA、迁移
-│   │   ├── error.rs        统一错误类型
-│   │   ├── state.rs        注入 tauri::State 的应用状态
-│   │   └── testing.rs      测试 fixture（fresh_db）
-│   └── tests/              命令层集成测试
-├── prototype/              交互原型（视觉与交互的权威参考）
+│   └── test/setup.ts       vitest 全局 setup
+├── electron-builder.yml   多平台打包配置（mac/win/linux + portable）
+├── electron.vite.config.ts
 └── research/               选型调研
 ```
 
@@ -62,25 +47,25 @@ cargo install tauri-cli --version "^2" --locked
 
 这些惯例由 [#16](https://github.com/raawaa/kewutong/issues/16) 确立，后续每一票沿用。
 
-**业务逻辑全在 Rust。** 前端不算派生状态、不判节假日、不拼 SQL；它只调命令、显示 DTO。命令一律经 `src/lib/ipc.ts` 包一层带类型的函数，组件不直接 `invoke`。
+**业务逻辑全在主进程。** renderer 不算派生状态、不判节假日、不拼 SQL；它只调命令、显示 DTO。命令一律经 `src/lib/api-types.ts`（或兼容 shim `src/lib/ipc.ts`）包一层带类型的函数，组件不直接写 `window.api.*`。
 
-**命令层是唯一的测试缝。** 行为测试直接调 `#[tauri::command]` 标注的 Rust 函数（绕过 IPC 传输但走完整业务路径），配一个真实的临时 SQLite。只断言外部可观察行为：给定 DB 状态 + 一次命令调用，断言返回的 DTO 与库里可查询到的后果。不断言私有函数、不断言 SQL 文本。
+**命令层是唯一的测试缝。** 行为测试直接调 `src/main/<domain>/index.ts` 里的命令函数（绕过 IPC 传输但走完整业务路径），配一个真实的临时 SQLite。只断言外部可观察行为：给定 DB 状态 + 一次命令调用，断言返回的 DTO 与库里可查询到的后果。不断言私有函数、不断言 SQL 文本。
 
-**`fresh_db()` 建库。** 内存库 + 跑真实 migrations + 设 4 条运行时 PRAGMA，一行拿到可注入 `tauri::State` 的连接。不 mock 数据库。要断言 WAL 这类只在真实文件上成立的行为，用 `fresh_db_file(path)`。
+**`freshDb()` 建库。** 内存库 + 跑真实 migrations + 设 4 条运行时 PRAGMA，一行拿到可注入的连接。不 mock 数据库。要断言 WAL 这类只在真实文件上成立的行为，用 `freshDbFile(path)`。
 
-```rust
-let app = mock_app(fresh_db());
-let reply = ping(app.state(), None)?;
+```typescript
+const state = freshDb();
+const reply = ping(state, null);
 ```
 
-**时间只从时钟来。** 业务代码不直接读宿主时间，一律走 `AppState::now()` / `now_sql()`。测试用 `FixedClock` 把「现在」钉在任意时刻，再拨到任意时刻：
+**时间只从时钟来。** 业务代码不直接读宿主时间，一律走 `AppState.clock.now()` / `nowSql()`。测试用 `FixedClock` 把「现在」钉在任意时刻，再拨到任意时刻：
 
-```rust
-let clock = Arc::new(FixedClock::at("2026-09-10 08:00:00"));
-let app = mock_app(fresh_db_with_clock(clock.clone()));
-clock.advance(TimeDelta::days(4));   // 验「阻塞超过 3 天」这类逻辑
+```typescript
+const clock = new FixedClock("2026-09-10T08:00:00Z");
+const state = freshDbWithClock(clock);
+clock.advance(TimeDelta.days(4));   // 验「阻塞超过 3 天」这类逻辑
 ```
 
-**错误只有一个类型。** 命令返回 `Result<T, AppError>`；`AppError` 序列化成 `{ code, message, detail }`——`code` 给前端分支，`message` 是能直接展示给科长的中文，`detail` 给维护者排查。
+**错误只有一个类型。** 命令返回 `Result<T, AppError>`（`neverthrow` 风格手写 `Result` / 直接抛 `AppError`）；`AppError` 序列化成 `{ code, message, detail }`——`code` 给前端分支，`message` 是能直接展示给科长的中文，`detail` 给维护者排查。
 
-**DTO 是契约。** 命令的入参与返回值都是 `serde` 结构，`#[serde(rename_all = "camelCase")]` 上线，不透传行结构。
+**DTO 是契约。** 命令的入参与返回值都是 TS interface，`@/main/types.ts` 是唯一的契约源；IPC 通道名（`personnel.list_sub_teams` 等）在 `src/main/ipc/register.ts` 里集中注册，preload typed wrapper 在 `src/preload/index.ts` 同步定义。

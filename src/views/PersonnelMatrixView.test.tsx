@@ -15,17 +15,17 @@ import type {
   PersonnelMatrix,
   PersonnelMatrixSegment,
   Task,
-} from "@/lib/ipc";
+} from "@/lib/api";
 import {
   listPeople,
   listProjects,
   listSubTeams,
   personnelMatrix,
   setTaskStatus,
-} from "@/lib/ipc";
+} from "@/lib/api";
 
-vi.mock("@/lib/ipc", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/ipc")>()),
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
   listPeople: vi.fn(),
   listProjects: vi.fn(),
   listSubTeams: vi.fn(),

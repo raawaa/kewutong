@@ -3,23 +3,23 @@
  *
  * 盯的是验收点里跨组件的那几条：新建与编辑字段一致、改期走同一 chip 行、
  * 存下去的入参是命令层能直接消费的形状。命令层本身在 Rust 侧有集成测试，
- * 这里把 `@/lib/ipc` 整个换掉，只看前端交出去了什么。
+ * 这里把 `@/lib/api` 整个换掉，只看前端交出去了什么。
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TaskDialog } from "./TaskDialog";
-import type { AssigneeCandidate, DueDateOption, Task } from "@/lib/ipc";
+import type { AssigneeCandidate, DueDateOption, Task } from "@/lib/api";
 import {
   createTask,
   listAssigneeCandidates,
   listDueDateOptions,
   updateTask,
   upsertRecurringTemplate,
-} from "@/lib/ipc";
+} from "@/lib/api";
 
-vi.mock("@/lib/ipc", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/ipc")>()),
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
   listDueDateOptions: vi.fn(),
   listAssigneeCandidates: vi.fn(),
   createTask: vi.fn(),

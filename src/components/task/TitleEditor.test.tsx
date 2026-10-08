@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TitleEditor } from "./TitleEditor";
-import type { AssigneeCandidate, ProjectCandidate } from "@/lib/ipc";
+import type { AssigneeCandidate, ProjectCandidate } from "@/lib/api";
 
 const 张三: AssigneeCandidate = { personId: 1, name: "张三", subTeamName: "暖通" };
 const 张小五: AssigneeCandidate = { personId: 2, name: "张小五", subTeamName: "暖通" };

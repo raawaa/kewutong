@@ -1,4 +1,4 @@
-import type { DueDateOption } from "@/lib/ipc";
+import type { DueDateOption } from "@/lib/api";
 
 /**
  * 截止 chip 行（ticket #19）。
