@@ -12,12 +12,17 @@ import * as path from "node:path";
 import { AppError } from "./error.js";
 import { runMigrations, schemaVersion } from "./migrations/runner.js";
 
-/** ADR 0001 §运行时 PRAGMA：每次 `new Database(...)` 后立即执行。 */
+/** ADR 0001 §运行时 PRAGMA：每次 `new Database(...)` 后立即执行。
+ *
+ * 注意 better-sqlite3 v13 的 `db.pragma(source)` 会自动在前面拼
+ * `PRAGMA ` 关键字——这里**不要**再写 `PRAGMA ` 前缀,否则会变成
+ * `PRAGMA PRAGMA journal_mode = ...`,SQLite 报 syntax error。
+ */
 const RUNTIME_PRAGMAS = [
-  "PRAGMA journal_mode = WAL",
-  "PRAGMA synchronous = NORMAL",
-  "PRAGMA foreign_keys = ON",
-  "PRAGMA busy_timeout = 5000",
+  "journal_mode = WAL",
+  "synchronous = NORMAL",
+  "foreign_keys = ON",
+  "busy_timeout = 5000",
 ] as const;
 
 /** 打开（必要时新建）数据库文件，设好 PRAGMA 并把迁移跑到最新。 */
