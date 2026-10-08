@@ -13,20 +13,15 @@ import type { IpcRendererEvent } from "electron";
 
 import type {
   AssigneeCandidate,
-  ClearHolidayOverrideArgs,
   CreatePersonArgs,
   CreateProjectArgs,
   CreateSubTeamArgs,
   DeleteProjectArgs,
   DeleteSubTeamArgs,
-  HolidayCalendarArgs,
-  HolidayCalendarDay,
   ListAssigneeCandidatesArgs,
   ListPeopleArgs,
   ListProjectCandidatesArgs,
   ListProjectsArgs,
-  LoadHolidayCalendarArgs,
-  HolidayLoadResult,
   PersonnelMatrix,
   PersonnelMatrixArgs,
   Person,
@@ -35,12 +30,19 @@ import type {
   Project,
   ProjectCandidate,
   ReorderSubTeamsArgs,
-  SetHolidayOverrideArgs,
   SubTeam,
   TrayStatusDto,
   UpdatePersonArgs,
   UpdateProjectArgs,
   UpdateSubTeamArgs,
+} from "@/main/types";
+import type {
+  ClearHolidayOverrideArgs,
+  HolidayCalendarArgs,
+  HolidayCalendarDay,
+  HolidayLoadResult,
+  LoadHolidayCalendarArgs,
+  SetHolidayOverrideArgs,
 } from "@/main/holiday/index";
 
 /** 渲染进程只能看到这一份 typed API。 */
