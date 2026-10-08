@@ -44,6 +44,14 @@ import type {
   UpdateSubTeamArgs,
   UpsertRecurringTemplateArgs,
 } from "@/main/types";
+import type {
+  ClearHolidayOverrideArgs,
+  HolidayCalendarArgs,
+  HolidayCalendarDay,
+  HolidayLoadResult,
+  LoadHolidayCalendarArgs,
+  SetHolidayOverrideArgs,
+} from "@/main/holiday/index";
 
 /** 渲染进程只能看到这一份 typed API。 */
 const api = {
@@ -120,6 +128,18 @@ const api = {
       args: SetRecurringTemplateEnabledArgs,
     ): Promise<RecurringTemplate> =>
       ipcRenderer.invoke("recurring_template.set_recurring_template_enabled", args),
+  },
+
+  // 节假日管理（tickets #23 / #47）
+  holiday: {
+    loadHolidayCalendar: (args: LoadHolidayCalendarArgs): Promise<HolidayLoadResult> =>
+      ipcRenderer.invoke("holiday.load_holiday_calendar", args),
+    holidayCalendar: (args: HolidayCalendarArgs): Promise<HolidayCalendarDay[]> =>
+      ipcRenderer.invoke("holiday.holiday_calendar", args),
+    setHolidayOverride: (args: SetHolidayOverrideArgs): Promise<void> =>
+      ipcRenderer.invoke("holiday.set_holiday_override", args),
+    clearHolidayOverride: (args: ClearHolidayOverrideArgs): Promise<void> =>
+      ipcRenderer.invoke("holiday.clear_holiday_override", args),
   },
 };
 
