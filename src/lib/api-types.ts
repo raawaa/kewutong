@@ -12,6 +12,7 @@
 import type {
   AppErrorDto,
   AssigneeCandidate,
+  ClearSampleSummary,
   CreatePersonArgs,
   CreateProjectArgs,
   CreateSubTeamArgs,
@@ -28,7 +29,9 @@ import type {
   PingReply,
   Project,
   ProjectCandidate,
+  RealTeamsSeedSummary,
   ReorderSubTeamsArgs,
+  SamplePresence,
   SubTeam,
   TrayStatusDto,
   UpdatePersonArgs,
@@ -56,6 +59,9 @@ export type {
   ListAssigneeCandidatesArgs,
   PersonnelMatrixArgs,
   PersonnelMatrix,
+  SamplePresence,
+  ClearSampleSummary,
+  RealTeamsSeedSummary,
 };
 
 // ---------------------------------------------------------------------------
@@ -179,4 +185,23 @@ export function updateProject(args: UpdateProjectArgs): Promise<Project> {
 
 export function deleteProject(args: DeleteProjectArgs): Promise<void> {
   return window.api.project.deleteProject(args);
+}
+
+// ---------------------------------------------------------------------------
+// 示例数据（ticket #31）
+// ---------------------------------------------------------------------------
+
+/** 横幅查询：库里是否还有 `is_sample = 1` 的示例行。 */
+export function isSampleDataPresent(): Promise<SamplePresence> {
+  return window.api.sample.isSampleDataPresent();
+}
+
+/** 一键清除所有示例数据，返回每张表的删除条数。 */
+export function clearSampleData(): Promise<ClearSampleSummary> {
+  return window.api.sample.clearSampleData();
+}
+
+/** 首启种子：库里没有真实子组时灌入 4 子组 + 20 人，否则跳过。 */
+export function seedRealTeams(): Promise<RealTeamsSeedSummary> {
+  return window.api.sample.seedRealTeams();
 }

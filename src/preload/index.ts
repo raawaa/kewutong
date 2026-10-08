@@ -13,6 +13,7 @@ import type { IpcRendererEvent } from "electron";
 
 import type {
   AssigneeCandidate,
+  ClearSampleSummary,
   CreatePersonArgs,
   CreateProjectArgs,
   CreateSubTeamArgs,
@@ -29,7 +30,9 @@ import type {
   PingReply,
   Project,
   ProjectCandidate,
+  RealTeamsSeedSummary,
   ReorderSubTeamsArgs,
+  SamplePresence,
   SubTeam,
   TrayStatusDto,
   UpdatePersonArgs,
@@ -90,6 +93,16 @@ const api = {
       ipcRenderer.invoke("project.update_project", args),
     deleteProject: (args: DeleteProjectArgs): Promise<void> =>
       ipcRenderer.invoke("project.delete_project", args),
+  },
+
+  // 示例数据（ticket #31）
+  sample: {
+    isSampleDataPresent: (): Promise<SamplePresence> =>
+      ipcRenderer.invoke("sample.is_sample_data_present"),
+    clearSampleData: (): Promise<ClearSampleSummary> =>
+      ipcRenderer.invoke("sample.clear_sample_data"),
+    seedRealTeams: (): Promise<RealTeamsSeedSummary> =>
+      ipcRenderer.invoke("sample.seed_real_teams"),
   },
 };
 

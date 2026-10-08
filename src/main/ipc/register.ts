@@ -14,6 +14,7 @@ import { schemaVersion } from "../db.js";
 import type { AppState } from "../state.js";
 import * as Personnel from "../personnel/index.js";
 import * as Project from "../project/index.js";
+import * as Sample from "../sample/index.js";
 
 /**
  * 把命令函数包装成 ipcMain.handle 的 handler。
@@ -50,6 +51,7 @@ export function registerAllIpc(state: AppState): void {
   registerDiagnostics(state);
   registerPersonnel(state);
   registerProject(state);
+  registerSample(state);
 }
 
 /** M1 探活 / 数据文件位置 / 托盘状态。 */
@@ -175,6 +177,24 @@ function registerProject(state: AppState): void {
   handle<import("../types.js").DeleteProjectArgs, void>(
     "project.delete_project",
     (s, args) => Project.deleteProject(s, args),
+  )(ipcMain, state);
+}
+
+/** 示例数据 domain（ticket #31）。 */
+function registerSample(state: AppState): void {
+  handleVoid<import("../types.js").SamplePresence>(
+    "sample.is_sample_data_present",
+    (s) => Sample.isSampleDataPresent(s),
+  )(ipcMain, state);
+
+  handleVoid<import("../types.js").ClearSampleSummary>(
+    "sample.clear_sample_data",
+    (s) => Sample.clearSampleData(s),
+  )(ipcMain, state);
+
+  handleVoid<import("../types.js").RealTeamsSeedSummary>(
+    "sample.seed_real_teams",
+    (s) => Sample.seedRealTeams(s),
   )(ipcMain, state);
 }
 
