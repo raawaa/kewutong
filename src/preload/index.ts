@@ -25,6 +25,7 @@ import type {
   ListPeopleArgs,
   ListProjectCandidatesArgs,
   ListProjectsArgs,
+  ListRecurringTemplatesArgs,
   PersonnelMatrix,
   PersonnelMatrixArgs,
   Person,
@@ -33,12 +34,15 @@ import type {
   Project,
   ProjectCandidate,
   ReorderSubTeamsArgs,
+  RecurringTemplate,
+  SetRecurringTemplateEnabledArgs,
   SubTeam,
   TasksCsvExport,
   TrayStatusDto,
   UpdatePersonArgs,
   UpdateProjectArgs,
   UpdateSubTeamArgs,
+  UpsertRecurringTemplateArgs,
 } from "@/main/types";
 
 /** 渲染进程只能看到这一份 typed API。 */
@@ -104,6 +108,18 @@ const api = {
       ipcRenderer.invoke("export.import_database_json", args),
     exportTasksCsv: (): Promise<TasksCsvExport> =>
       ipcRenderer.invoke("export.export_tasks_csv"),
+  },
+
+  // 周期性模板（tickets #24 / #46）
+  recurringTemplate: {
+    upsertRecurringTemplate: (args: UpsertRecurringTemplateArgs): Promise<RecurringTemplate> =>
+      ipcRenderer.invoke("recurring_template.upsert_recurring_template", args),
+    listRecurringTemplates: (args: ListRecurringTemplatesArgs): Promise<RecurringTemplate[]> =>
+      ipcRenderer.invoke("recurring_template.list_recurring_templates", args),
+    setRecurringTemplateEnabled: (
+      args: SetRecurringTemplateEnabledArgs,
+    ): Promise<RecurringTemplate> =>
+      ipcRenderer.invoke("recurring_template.set_recurring_template_enabled", args),
   },
 };
 

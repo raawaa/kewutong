@@ -15,6 +15,7 @@ import type { AppState } from "../state.js";
 import * as Personnel from "../personnel/index.js";
 import * as Project from "../project/index.js";
 import * as Export from "../export/index.js";
+import * as RecurringTemplate from "../recurring_template/index.js";
 
 /**
  * 把命令函数包装成 ipcMain.handle 的 handler。
@@ -52,6 +53,7 @@ export function registerAllIpc(state: AppState): void {
   registerPersonnel(state);
   registerProject(state);
   registerExport(state);
+  registerRecurringTemplate(state);
 }
 
 /** M1 探活 / 数据文件位置 / 托盘状态。 */
@@ -195,6 +197,30 @@ function registerExport(state: AppState): void {
   handleVoid<import("../types.js").TasksCsvExport>(
     "export.export_tasks_csv",
     (s) => Export.exportTasksCsv(s),
+  )(ipcMain, state);
+}
+
+/** Recurring template domain（tickets #24 / #46）。 */
+function registerRecurringTemplate(state: AppState): void {
+  handle<
+    import("../types.js").UpsertRecurringTemplateArgs,
+    import("../types.js").RecurringTemplate
+  >("recurring_template.upsert_recurring_template", (s, args) =>
+    RecurringTemplate.upsertRecurringTemplate(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").ListRecurringTemplatesArgs,
+    import("../types.js").RecurringTemplate[]
+  >("recurring_template.list_recurring_templates", (s, args) =>
+    RecurringTemplate.listRecurringTemplates(s, args),
+  )(ipcMain, state);
+
+  handle<
+    import("../types.js").SetRecurringTemplateEnabledArgs,
+    import("../types.js").RecurringTemplate
+  >("recurring_template.set_recurring_template_enabled", (s, args) =>
+    RecurringTemplate.setRecurringTemplateEnabled(s, args),
   )(ipcMain, state);
 }
 
