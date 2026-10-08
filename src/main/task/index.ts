@@ -47,7 +47,7 @@ export const TASK_STATUSES: readonly TaskStatus[] = [
 ];
 
 /** 在飞 = 排除 Done / Cancelled。 */
-const IN_FLIGHT_STATUSES: readonly TaskStatus[] = [
+export const IN_FLIGHT_STATUSES: readonly TaskStatus[] = [
   "Open",
   "In-progress",
   "Blocked",
@@ -55,7 +55,7 @@ const IN_FLIGHT_STATUSES: readonly TaskStatus[] = [
 ];
 
 /** 阻塞 / 等待三态——瓦片「Blocked」用。 */
-const BLOCKED_STATUSES: readonly TaskStatus[] = ["Blocked", "Waiting-on"];
+export const BLOCKED_STATUSES: readonly TaskStatus[] = ["Blocked", "Waiting-on"];
 
 /** 命令面板搜索默认上限。封顶在命令层，前端按这个数字决定下拉高度。 */
 export const SEARCH_TASKS_LIMIT = 50;
