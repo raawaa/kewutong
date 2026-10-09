@@ -36,7 +36,7 @@
  * 此权衡范围内。
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 import { AppError } from "../error.js";
 import {
@@ -57,6 +57,7 @@ import type {
   TaskStatus,
   UpdateTemplateZoneArgs,
 } from "../types.js";
+import { withTx } from "../sqlite.js";
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -138,7 +139,7 @@ export function rescheduleInstance(
   // 与 SHIFT 路径（`materializeTemplate`）语义一致。
   const newTitle = `${template.name} @ ${originalScheduledAtLocal(originalScheduledAt)}`;
   let newId = 0;
-  state.db.transaction(() => {
+  withTx(state.db, () => {
     newId = insertRescheduledInstance(
       state.db,
       template,
@@ -149,7 +150,7 @@ export function rescheduleInstance(
     state.db
       .prepare("UPDATE task SET rescheduled_from_id = ? WHERE id = ?")
       .run(args.taskId, newId);
-  })();
+  });
 
   const newTask = fetchTaskById(state.db, newId);
   if (newTask === null) {
@@ -281,7 +282,7 @@ export function instanceRescheduleChain(
  * `recurring_template_id` 为 `null` 表示一次性 task，两条命令都拒。
  */
 function loadInstanceRow(
-  db: Database.Database,
+  db: DatabaseSync,
   taskId: number,
 ): {
   template: TemplateMaterializeInput;
@@ -324,7 +325,7 @@ function loadInstanceRow(
  * 不重复 match。
  */
 function loadTemplateMaterializeInput(
-  db: Database.Database,
+  db: DatabaseSync,
   templateId: number,
 ): TemplateMaterializeInput {
   const tmpl = fetchTemplate(db, templateId);
@@ -399,6 +400,6 @@ function originalScheduledAtLocal(utcSql: string): string {
 
 /** 取一条 task + 映射成 DTO；不存在则 `null`。委托给 [`task.fetchTask`]
  *  ——共享 SELECT 列清单与 `TASK_COLUMNS` 派生字段，避免漂移。 */
-function fetchTaskById(db: Database.Database, id: number): Task | null {
+function fetchTaskById(db: DatabaseSync, id: number): Task | null {
   return fetchTaskInternal(db, id);
 }

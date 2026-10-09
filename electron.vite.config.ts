@@ -56,7 +56,7 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: path.resolve(import.meta.dirname, "index.html"),
+          index: path.resolve(import.meta.dirname, "src/index.html"),
         },
       },
     },

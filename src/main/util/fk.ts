@@ -6,11 +6,11 @@
  * 一处定义,新增域只要 import + 调一行。
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 /** 给「项目负责人不存在」一类业务专属中文消息留扩展点——错误码是统一的 `INVALID_ARGUMENT`。 */
 function ensureExists(
-  db: Database.Database,
+  db: DatabaseSync,
   table: string,
   id: number,
   message: string,
@@ -25,16 +25,16 @@ function ensureExists(
 import { AppError } from "../error.js";
 
 /** 项目负责人（person 表）必须已存在；不存在 → 中文错误。 */
-export function ensurePersonExists(db: Database.Database, id: number): void {
+export function ensurePersonExists(db: DatabaseSync, id: number): void {
   ensureExists(db, "person", id, "负责人不存在,请先在人员管理里录入。");
 }
 
 /** 子组（sub_team 表）必须已存在；不存在 → 中文错误。 */
-export function ensureSubTeamExists(db: Database.Database, id: number): void {
+export function ensureSubTeamExists(db: DatabaseSync, id: number): void {
   ensureExists(db, "sub_team", id, "所属子组不存在。");
 }
 
 /** 项目（project 表）必须已存在；不存在 → 中文错误。 */
-export function ensureProjectExists(db: Database.Database, id: number): void {
+export function ensureProjectExists(db: DatabaseSync, id: number): void {
   ensureExists(db, "project", id, "所属项目不存在。");
 }

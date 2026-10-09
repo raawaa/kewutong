@@ -22,7 +22,7 @@
  * IANA 规则等价），不引 `chrono-tz`。
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 import { AppError } from "../error.js";
 import { parseSqlDate, toSqlTimestamp } from "../clock.js";
@@ -34,6 +34,7 @@ import type {
 } from "../types.js";
 import { HolidayCalendar } from "../holiday/index.js";
 import type { AppState } from "../state.js";
+import { withTx } from "../sqlite.js";
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -578,7 +579,7 @@ export function isoWeekFromDate(date: NaiveDate): IsoWeek {
 }
 
 /** 读 `materialization_meta` 的当前 `(year, week)`。表空 → `null`。 */
-export function readLastMaterializedWeek(db: Database.Database): IsoWeek | null {
+export function readLastMaterializedWeek(db: DatabaseSync): IsoWeek | null {
   const row = db
     .prepare<[string], { last_iso_year: number; last_iso_week: number }>(
       "SELECT last_iso_year, last_iso_week FROM materialization_meta WHERE id = ?",
@@ -589,7 +590,7 @@ export function readLastMaterializedWeek(db: Database.Database): IsoWeek | null 
 }
 
 /** 把「当前 `(year, week)`」写入 `materialization_meta`。单行 upsert。 */
-export function writeLastMaterializedWeek(db: Database.Database, week: IsoWeek): void {
+export function writeLastMaterializedWeek(db: DatabaseSync, week: IsoWeek): void {
   db.prepare(
     "INSERT INTO materialization_meta (id, last_iso_year, last_iso_week) " +
       "VALUES (?, ?, ?) " +
@@ -642,7 +643,7 @@ export function shouldMaterializeThisTick(
  * 时跳过，自然幂等。
  */
 export function materializeTemplate(
-  db: Database.Database,
+  db: DatabaseSync,
   template: TemplateMaterializeInput,
   calendar: HolidayCalendar,
   now: NaiveDate,
@@ -679,7 +680,7 @@ export function materializeTemplate(
   );
 
   const counts = emptyMaterializeCounts();
-  const tx = db.transaction(() => {
+  withTx(db, () => {
     for (const event of events) {
       if (event.kind === "skip") {
         counts.skipped += 1;
@@ -759,13 +760,12 @@ export function materializeTemplate(
       }
     }
   });
-  tx();
   return counts;
 }
 
 /** 跑全部已启用模板的物化。返回合计。 */
 export function materializeAll(
-  db: Database.Database,
+  db: DatabaseSync,
   calendar: HolidayCalendar,
   now: NaiveDate,
 ): MaterializeTotals {
@@ -862,7 +862,7 @@ interface TemplateRow {
  * 可在模板上加显式 owner 列）。
  */
 export function loadEnabledTemplates(
-  db: Database.Database,
+  db: DatabaseSync,
 ): TemplateMaterializeInput[] {
   const rows = db
     .prepare<[], TemplateRow>(
@@ -882,7 +882,7 @@ export function loadEnabledTemplates(
 }
 
 function parseTemplateRow(
-  db: Database.Database,
+  db: DatabaseSync,
   row: TemplateRow,
 ): TemplateMaterializeInput {
   const id = row.id;
@@ -1003,7 +1003,7 @@ function parseIntArray(text: string | null, label: string): number[] | null {
  * （此时物化没法给 instance 写 owner）。
  */
 export function resolveOwner(
-  db: Database.Database,
+  db: DatabaseSync,
   projectId: number | null,
   subTeamId: number | null,
 ): number {
@@ -1054,7 +1054,7 @@ export function resolveOwner(
 
 /** KEEP 路径用。返回是否实际插入了行（`INSERT OR IGNORE` 命中已有则返回 false）。 */
 function insertInstance(
-  db: Database.Database,
+  db: DatabaseSync,
   template: TemplateMaterializeInput,
   scheduledAtUtc: string,
   localDate: NaiveDate,
@@ -1098,7 +1098,7 @@ function insertInstance(
 
 /** SHIFT 路径用。返回新行 id；幂等命中时返回已有行 id。 */
 function insertInstanceReturningId(
-  db: Database.Database,
+  db: DatabaseSync,
   template: TemplateMaterializeInput,
   scheduledAtUtc: string,
   localDate: NaiveDate,
@@ -1141,7 +1141,7 @@ function insertInstanceReturningId(
  * 重复调会被 `INSERT OR IGNORE` 静默吃掉。
  */
 export function insertRescheduledInstance(
-  db: Database.Database,
+  db: DatabaseSync,
   template: TemplateMaterializeInput,
   newScheduledAtUtc: string,
   originalScheduledAtUtc: string,

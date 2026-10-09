@@ -57,7 +57,8 @@ export function PersonnelView() {
   // 默认选中第一个子组
   useEffect(() => {
     if (selectedSubTeamId == null && subTeams.length > 0) {
-      setSelectedSubTeamId(subTeams[0].id);
+      const first = subTeams[0];
+      if (first) setSelectedSubTeamId(first.id);
     }
   }, [subTeams, selectedSubTeamId]);
 
@@ -106,6 +107,7 @@ export function PersonnelView() {
     if (next < 0 || next >= subTeams.length) return;
     const ordered = [...subTeams];
     const [moved] = ordered.splice(index, 1);
+    if (!moved) return;
     ordered.splice(next, 0, moved);
     setSubTeams(ordered);
     // 乐观更新：先动 UI 让拖拽响应即时；后端拒绝时回滚到 DB 真值。

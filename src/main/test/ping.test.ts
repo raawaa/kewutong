@@ -89,8 +89,13 @@ describe("M1 基础（#38 / #39 / #40）", () => {
   });
 });
 
-import Database from "better-sqlite3";
-function openEmpty(): Database.Database {
-  const db = new Database(":memory:");
-  return db;
+import { DatabaseSync } from "node:sqlite";
+/** 跳过 `db.ts` 的 PRAGMA / migrations 流程，开一个空 `:memory:` 给 bootstrap 用例。
+ *
+ * 关键是 `enableForeignKeyConstraints: false`——`node:sqlite` 的内建
+ * 默认是 FK on；本测试只造一个孤立的 `refinery_schema_history` 表，
+ * 没有完整 FK 树，开启会触发 "no such table" 之类的边缘 case。
+ */
+function openEmpty(): DatabaseSync {
+  return new DatabaseSync(":memory:", { enableForeignKeyConstraints: false });
 }

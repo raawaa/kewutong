@@ -9,11 +9,20 @@
  */
 
 import { describe, expect, it } from "vitest";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 
-import { freshDb } from "../test/commands/fresh_db.js";
+import { freshDb, type FreshDbOptions } from "../test/commands/fresh_db.js";
 import { HolidayCalendar } from "../holiday/index.js";
 import * as Scheduler from "./scheduler.js";
+
+/**
+ * 全部 `:memory:` fixture 都关 FK——`node:sqlite` 的内建默认是 FK on,
+ * 本测试 fixture 多数只造 person + task 两条 FK 边，关掉以免漏造某行
+ * 时被 FK 静默拦截而报错信息不可读（沿用 better-sqlite3 旧默认）。
+ */
+function freshDbNoFk(opts: FreshDbOptions = {}): ReturnType<typeof freshDb> {
+  return freshDb({ ...opts, enableForeignKeyConstraints: false });
+}
 
 // ---------------------------------------------------------------------------
 // Payload 形状单源
@@ -189,7 +198,7 @@ interface PersonFixture {
 
 /** 建一名人员（sub_team 占位 + person）。 */
 function setupPerson(): PersonFixture {
-  const ctx = freshDb();
+  const ctx = freshDbNoFk();
   ctx.state.db
     .prepare(`INSERT INTO sub_team (id, name, sort_order) VALUES (1, '一组', 0)`)
     .run();
@@ -226,7 +235,7 @@ interface TaskInsertArgs {
 }
 
 function rawInsertTask(
-  db: Database.Database,
+  db: DatabaseSync,
   fields: TaskInsertArgs,
 ): number {
   // 一次性 task（recurring_template_id IS NULL）必须 scheduled_at IS NULL；
@@ -482,7 +491,7 @@ describe("notification / runBlocked3d（#56）", () => {
 
 describe("notification / runWeeklyDigest（#56）", () => {
   it("非周一不触发（任意小时都返空）", () => {
-    const { state, close } = freshDb({ now: "2026-09-08 08:00:00" }); // Tue 08:00
+    const { state, close } = freshDbNoFk({ now: "2026-09-08 08:00:00" }); // Tue 08:00
     try {
       const result = Scheduler.runWeeklyDigest(state);
       expect(result).toEqual([]);
@@ -493,21 +502,21 @@ describe("notification / runWeeklyDigest（#56）", () => {
 
   it("周一但非 8 点不触发", () => {
     // Mon 07:59 UTC = 15:59 local
-    let ctx = freshDb({ now: "2026-09-07 07:59:00" });
+    let ctx = freshDbNoFk({ now: "2026-09-07 07:59:00" });
     try {
       expect(Scheduler.runWeeklyDigest(ctx.state)).toEqual([]);
     } finally {
       ctx.close();
     }
     // Mon 09:00 UTC = 17:00 local
-    ctx = freshDb({ now: "2026-09-07 09:00:00" });
+    ctx = freshDbNoFk({ now: "2026-09-07 09:00:00" });
     try {
       expect(Scheduler.runWeeklyDigest(ctx.state)).toEqual([]);
     } finally {
       ctx.close();
     }
     // Mon 00:00 UTC = 08:00 local —— 应触发
-    ctx = freshDb({ now: "2026-09-07 00:00:00" });
+    ctx = freshDbNoFk({ now: "2026-09-07 00:00:00" });
     try {
       // 先放一个 task 阻塞，让 weekly_digest 的 blocked_count > 0
       ctx.state.db
@@ -532,7 +541,7 @@ describe("notification / runWeeklyDigest（#56）", () => {
   });
 
   it("周一 8 点且非 holiday 触发一次", () => {
-    const { state, close } = freshDb({ now: "2026-09-07 00:00:00" });
+    const { state, close } = freshDbNoFk({ now: "2026-09-07 00:00:00" });
     try {
       // state.calendar 是 emptyCalendar → 所有日期返回 "workday"
       const result = Scheduler.runWeeklyDigest(state);
@@ -552,7 +561,7 @@ describe("notification / runWeeklyDigest（#56）", () => {
   });
 
   it("周一 8 点且今天是 override holiday 不触发", () => {
-    const { state, close } = freshDb({ now: "2026-09-07 00:00:00" });
+    const { state, close } = freshDbNoFk({ now: "2026-09-07 00:00:00" });
     try {
       // 把 2026-09-07 标记为 holiday override
       state.db
@@ -572,7 +581,7 @@ describe("notification / runWeeklyDigest（#56）", () => {
   });
 
   it("周一 8 点触发后,再次触发返回同一条（dedup）", () => {
-    const { state, close } = freshDb({ now: "2026-09-07 00:00:00" });
+    const { state, close } = freshDbNoFk({ now: "2026-09-07 00:00:00" });
     try {
       const first = Scheduler.runWeeklyDigest(state);
       const second = Scheduler.runWeeklyDigest(state);
@@ -590,7 +599,7 @@ describe("notification / runWeeklyDigest（#56）", () => {
   });
 
   it("周一 8 点 + 不同 task 状态 → 4 个计数", () => {
-    const { state, close } = freshDb({ now: "2026-09-07 00:00:00" });
+    const { state, close } = freshDbNoFk({ now: "2026-09-07 00:00:00" });
     try {
       // fixture：sub_team + person
       state.db
@@ -653,7 +662,7 @@ describe("notification / runWeeklyDigest（#56）", () => {
   });
 
   it("周一 8 点,waiting-on 也计入 blocked_count", () => {
-    const { state, close } = freshDb({ now: "2026-09-07 00:00:00" });
+    const { state, close } = freshDbNoFk({ now: "2026-09-07 00:00:00" });
     try {
       state.db
         .prepare(`INSERT INTO sub_team (id, name, sort_order) VALUES (1, '一组', 0)`)

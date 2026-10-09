@@ -24,6 +24,7 @@
 
 import type { AppState } from "../state.js";
 import type { ClearSampleSummary, RealTeamsSeedSummary, SamplePresence } from "../types.js";
+import { withTx } from "../sqlite.js";
 
 // ---------------------------------------------------------------------------
 // 横幅查询
@@ -71,7 +72,7 @@ export function isSampleDataPresent(state: AppState): SamplePresence {
 export function clearSampleData(state: AppState): ClearSampleSummary {
   // 每步拿到 affected 计数——前端 banner 清除后据此提示，实际条数同时便于
   // 测试与日志排错。
-  return state.db.transaction((): ClearSampleSummary => {
+  return withTx(state.db, (): ClearSampleSummary => {
     const tasks = state.db.prepare("DELETE FROM task WHERE is_sample = 1").run().changes;
     const templates = state.db
       .prepare("DELETE FROM recurring_template WHERE is_sample = 1")
@@ -87,7 +88,7 @@ export function clearSampleData(state: AppState): ClearSampleSummary {
       tasks,
       recurringTemplates: templates,
     };
-  })();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +131,7 @@ function seedRealTeamsInner(state: AppState): RealTeamsSeedSummary {
   }
 
   // 显式 ID 与 V007 示例子组（1-2）错开，避免 rowid 重叠混淆。
-  state.db.transaction(() => {
+  withTx(state.db, () => {
     state.db
       .prepare(
         `INSERT INTO sub_team (id, name, description, sort_order, created_at, is_sample) VALUES
@@ -168,7 +169,7 @@ function seedRealTeamsInner(state: AppState): RealTeamsSeedSummary {
            (135, '郭文涛', 103, '请在人员管理补录联系方式', NULL, datetime('now'), 0)`,
       )
       .run();
-  })();
+  });
 
   return { subTeamsInserted: 4, peopleInserted: 20, seeded: true };
 }

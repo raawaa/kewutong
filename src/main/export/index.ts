@@ -21,7 +21,7 @@
  * JSON 值，导入时序列化为文本——保证 round-trip 形状对齐。
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 import { AppError } from "../error.js";
 import { schemaVersion } from "../db.js";
@@ -32,6 +32,7 @@ import type {
   ImportDatabaseJsonArgs,
   TasksCsvExport as TasksCsvExportDto,
 } from "../types.js";
+import { withTx } from "../sqlite.js";
 
 /** `importDatabaseJson` 入参——从 `@/main/types` 重新导出便于调用方 import 单一模块。 */
 export type { ImportDatabaseJsonArgs };
@@ -247,8 +248,8 @@ export function importDatabaseJson(
   let tablesImported = 0;
   let rowsImported = 0;
 
-  state.db.transaction(() => {
-    state.db.pragma("foreign_keys = OFF");
+  withTx(state.db, () => {
+    state.db.exec("PRAGMA foreign_keys = OFF");
 
     // 1) 清空——子 → 父顺序。
     for (const spec of TABLES) {
@@ -280,8 +281,8 @@ export function importDatabaseJson(
       if (count > 0) tablesImported += 1;
     }
 
-    state.db.pragma("foreign_keys = ON");
-  })();
+    state.db.exec("PRAGMA foreign_keys = ON");
+  });
 
   return { tablesImported, rowsImported };
 }
@@ -388,7 +389,7 @@ interface TaskCsvRow {
  *
  * `holiday_override` 表只有 `date` 主键，无 `id` 列；其余表都按 id 排。
  */
-function dumpTable(db: Database.Database, spec: TableSpec): Record<string, unknown>[] {
+function dumpTable(db: DatabaseSync, spec: TableSpec): Record<string, unknown>[] {
   const orderBy = spec.name === "holiday_override" ? "date" : "id";
   const sql = `SELECT ${spec.columns.join(",")} FROM ${spec.name} ORDER BY ${orderBy} ASC`;
   const stmt = db.prepare(sql);
@@ -429,7 +430,7 @@ function rowToJsonObject(
 }
 
 /**
- * JSON 值 → better-sqlite3 ToSql 兼容值。
+ * JSON 值 → node:sqlite SQLInputValue 兼容值。
  *
  * JSON `null` → SQL `NULL`；布尔 → 0/1；数字 → 整数或实数；字符串
  * → 文本；对象 / 数组 → JSON 字符串（目标列必须是 TEXT）。

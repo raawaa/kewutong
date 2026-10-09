@@ -7,8 +7,6 @@ files:
   - out/**/*
   - package.json
   - "!**/*.map"
-asarUnpack:
-  - "**/node_modules/better-sqlite3/**/*"
 extraResources:
   - from: "./src/main/migrations"
     to: "migrations"
@@ -34,10 +32,10 @@ linux:
   target:
     - target: deb
       arch:
-        - amd64
+        - x64
     - target: AppImage
       arch:
-        - amd64
+        - x64
   artifactName: ${productName}-${version}-${arch}.${ext}
   desktop:
     entry: "Name=kewutong\nComment=科室任务管理\nExec=/opt/kewutong/kewutong\nIcon=kewutong\nType=Application\nTerminal=false\nCategories=Office;\n"

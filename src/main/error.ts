@@ -7,16 +7,16 @@
  * 序列化形状 = `{ code, message, detail }`——与前端 `AppError` 类型一一对应。
  */
 
-import type { Database } from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 /** 命令层与仓储层统一的 Result。 */
-export type Result<T> = T extends never ? never : { ok: true; value: T } | { ok: false; error: AppError };
+export type Result<T> = { ok: true; value: T } | { ok: false; error: AppError };
 
-export function ok<T>(value: T): Result<T> {
+export function ok<T>(value: T): { ok: true; value: T } {
   return { ok: true, value };
 }
 
-export function err(error: AppError): Result<never> {
+export function err(error: AppError): { ok: false; error: AppError } {
   return { ok: false, error };
 }
 
@@ -67,7 +67,7 @@ export class AppError extends Error {
     return new AppError("INTERNAL", INTERNAL_MESSAGE, message);
   }
 
-  /** 从 better-sqlite3 抛错收敛。 */
+  /** 从 `node:sqlite` 抛错收敛。 */
   static fromSqlite(error: unknown): AppError {
     const detail = error instanceof Error ? error.message : String(error);
     return new AppError("DATABASE", DATABASE_MESSAGE, detail);
@@ -99,4 +99,4 @@ export class AppError extends Error {
  * 这里不强制 `Result<T>`——main IPC glue 直接 try/catch + AppError.serialize
  * 即可；测试侧也只断言 `await expect(...).rejects.toThrow(...)`。
  */
-export type { Database };
+export type { DatabaseSync };

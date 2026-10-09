@@ -234,8 +234,6 @@ describe("startup-tick wiring（#56 / spec §M4）", () => {
       // 致、materialize 落库后其它命令可正常读写。
       const firstTask = Task.listTasks(w.state, {
         includeCancelled: true,
-        ownerPersonId: undefined,
-        projectId: undefined,
       })[0];
       expect(firstTask?.isRecurring).toBe(true);
     } finally {

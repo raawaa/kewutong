@@ -67,7 +67,7 @@ describe("RecurringSheet · 频率向导", () => {
     await user.click(screen.getByRole("button", { name: "确认 →" }));
 
     expect(onConfirm).toHaveBeenCalledTimes(1);
-    const rule = onConfirm.mock.calls[0][0] as StructuredRule;
+    const rule = onConfirm.mock.calls[0]?.[0] as StructuredRule;
     expect(rule.freq).toBe("weekly");
     expect(rule.bydayMask).toBe(byday.MO | byday.WE);
     expect(rule.ends).toEqual({ kind: "on", date: "2026-12-31" });
@@ -79,7 +79,7 @@ describe("RecurringSheet · 频率向导", () => {
     await user.click(screen.getByRole("button", { name: "每月末" }));
     await user.click(screen.getByRole("button", { name: "确认 →" }));
 
-    const rule = onConfirm.mock.calls[0][0] as StructuredRule;
+    const rule = onConfirm.mock.calls[0]?.[0] as StructuredRule;
     expect(rule.freq).toBe("monthly");
     expect(rule.bymonthday).toEqual([0]);
   });
@@ -114,7 +114,7 @@ describe("RecurringSheet · 频率向导", () => {
     fireEvent.change(nInput, { target: { value: "20" } });
     await user.click(screen.getByRole("button", { name: "确认 →" }));
 
-    const rule = onConfirm.mock.calls[0][0] as StructuredRule;
+    const rule = onConfirm.mock.calls[0]?.[0] as StructuredRule;
     expect(rule.ends).toEqual({ kind: "after", n: 20 });
   });
 

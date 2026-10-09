@@ -447,10 +447,11 @@ describe("CommandPalette (⌘K 全局命令面板)", () => {
     });
     // 扁平列表顺序：index 0 是 "新建任务" 占位条目,index 1 才是人员。
     const personOption = screen.getAllByRole("option")[1];
+    if (!personOption) throw new Error("找不到人员 option");
     // name 与 subTeamName 都应被 <strong> 包裹
     const strongs = personOption.querySelectorAll("strong");
     expect(strongs.length).toBe(2);
-    expect(strongs[0].textContent).toBe("暖通甲");
-    expect(strongs[1].textContent).toBe("暖通");
+    expect(strongs[0]?.textContent).toBe("暖通甲");
+    expect(strongs[1]?.textContent).toBe("暖通");
   });
 });
