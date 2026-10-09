@@ -20,6 +20,12 @@
 
 环境：Dock 栏、系统设置 → 控制中心 → 「菜单栏额外项目」默认。
 
+> **2026-10-09 验证状态：blocked by [#75](https://github.com/raawaa/kewutong/issues/75)**
+>
+> T4 (#72) 首次在 macOS 15.6.1 arm64 上跑 dev 模式即撞上 preload (`.mjs`) 在 Chromium sandboxed preload loader 下加载失败 (`SyntaxError: Cannot use import statement outside a module`)。Renderer 三层 (`App` / `SampleDataBanner` / `TodayWeekView`) 全部 `TypeError: Cannot read properties of undefined (reading 'sample'/'task'/'personnel')` —— IPC bridge 没装上,主进程逻辑根本无法触达。本节全部 `- [ ]` 条目**未验证**,待 #75 修完重跑。
+>
+> 根因(非修复):`out/preload/index.mjs` 是真 ESM 但旁无 `package.json#type=module`;且 `src/main/index.ts:47` 的 prod 路径写的是 `index.js`,而 `electron-vite@5` 默认输出 `.mjs`,dev/prod 两边都对不上。详见 #75 完整诊断。
+
 ### 正常路径
 
 - [ ] **关窗 = 隐藏到菜单栏**。点窗口左上红钮，主窗口消失；`⌘+Tab` 看不到应用入口；**菜单栏右侧出现 kewutong 图标**；进程仍在（活动监视器能看到）。
@@ -32,6 +38,13 @@
 
 - [ ] **托盘初始化失败时**：把 `build/icon.png` 临时改名（例如 `icon.png.bak`），重新 `npm run build` → 应用启动后**主窗口可见**，点关窗直接退出进程（不卡死、不静默失活）；前端 `trayStatus` IPC（命令在 `src/lib/api.ts:198`，IPC channel 常量 `tray.status` 在 `src/main/tray/dto.ts:18`）返回 `{ available: false, reason: "系统托盘不可用，请检查系统设置。" }` 或类似中文短句（见 `src/main/index.ts:138-148` 的 try/catch）；renderer 显示 `TrayStatusBanner`（`src/components/tray/TrayStatusBanner.tsx`）。
   - 注：当前实现里 `createTray` 内部对图标缺失有兜底（`nativeImage.createEmpty()`，见 `src/main/tray/index.ts:78-88`），所以这条「触发 unavailable」的实际路径在 macOS 上**较难触发**——若本次跑通后没有触发，注记「macOS 下当前实现未触发 unavailable 路径，但降级逻辑已就位」即可，**不需要强行造一个失败**。
+
+### 验证记录
+
+| 日期 | 分支 / commit | 环境 | 结果 | 备注 |
+|---|---|---|---|---|
+| 2026-10-09 | `feat/electron-44-node-sqlite-68` @ HEAD（pre-#75） | macOS 15.6.1 arm64，`npm run dev` | ❌ blocked | preload (`.mjs`) sandbox 加载失败，详见 #72 macOS 段顶部 blockquote + [#75](https://github.com/raawaa/kewutong/issues/75) |
+| 2026-10-08 | `master` @ `118ea03` | "verified locally" commit message | ⚠️ 构建产物 | typecheck / vitest 349/349 / `npm run build` 出 `.dmg` 三件都过，但**未真跑过 GUI 行为**——#66 / #72 之前没有强约束 |
 
 ---
 
