@@ -50,4 +50,33 @@ describe("preload build output (ticket #75)", () => {
     };
     expect(pkg.type).toBe("module");
   });
+
+  it("src/main/index.ts resolvePreload agrees on the preload filename in dev and prod, and that filename exists in out/preload/", () => {
+    // 把 AC #6 另一半也挡住：单看构建产物不能保证运行时找得到文件。
+    // 如果有人把 prod 分支改回 `.js`（而 electron-vite 还在出 `.mjs`）,
+    // 前两个测试仍会全绿,但 prod preload 在 runtime 会「file not found」。
+    // 这个测试通过扫 `resolvePreload` 函数体,断言 dev / prod 两条分支
+    // 解析到的 basename 一致,以及那个文件确实在 `out/preload/` 里。
+    const src = readFileSync(
+      path.resolve(import.meta.dirname, "./index.ts"),
+      "utf-8",
+    );
+    const fnMatch = src.match(
+      /function\s+resolvePreload\s*\([^)]*\)\s*:\s*string\s*\{([\s\S]*?)\n\}/,
+    );
+    expect(fnMatch).not.toBeNull();
+    const body = fnMatch![1] ?? "";
+
+    const fileNameRegex = /path\.join\([^,]+,\s*["']([^"']+)["']\s*\)/g;
+    const fileNames = new Set<string>();
+    for (const match of body.matchAll(fileNameRegex)) {
+      const inner = match[1] ?? "";
+      if (inner.length > 0) fileNames.add(path.basename(inner));
+    }
+
+    expect(fileNames.size).toBe(1);
+    const [chosen] = [...fileNames];
+    expect(chosen).toBeDefined();
+    expect(existsSync(path.join(PRELOAD_DIR, chosen ?? ""))).toBe(true);
+  });
 });
