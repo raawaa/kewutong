@@ -129,7 +129,7 @@ export function registerAllIpc(state: AppState): void {
 ```typescript
 new BrowserWindow({
   webPreferences: {
-    preload: path.join(__dirname, '../preload/index.js'),
+    preload: path.join(__dirname, '../preload/index.mjs'),
     contextIsolation: true,
     sandbox: true,
     nodeIntegration: false,
@@ -137,6 +137,8 @@ new BrowserWindow({
   },
 });
 ```
+
+> **2026-10 更新（ticket #75）**：electron-vite@5 对 `format: "es"` 的 preload 输出强制写 `[name].mjs`（无法在 `rollupOptions.output.entryFileNames` 覆盖），所以这里改成 `.mjs`。同时在 `out/preload/` 产物目录旁写一个 `package.json` `{"type":"module"}`——Chromium 在 `sandbox: true` 下按相邻 package.json 的 `type` 决定 ESM / script，缺这个 hint 时 V8 把 `import` 当 script 解析会抛 `SyntaxError`。构建端的 `writePreloadPackageJson` rollup 插件在 `electron.vite.config.ts` 里。
 
 ### 事件总线
 
