@@ -6,7 +6,7 @@
 
 ## 决策
 
-- 桌面壳层 = **Electron**（最新稳定 major，本票落地时锁版本到 33.x）。
+- 桌面壳层 = **Electron**（最新稳定 major，本票落地时锁版本到 44.x；详见 [ADR 0010 §决策](./0010-node-sqlite.md#决策) 的 Node 24.21.0 LTS 由 Electron 44.7.0 内嵌）。
 - 工作流：业务代码迁到 Electron 主进程（Node + TypeScript），渲染进程保持现有 Vite + React + Tailwind v4 + shadcn/ui。dev 工具 = `electron-vite`。
 - 「业务逻辑全在主进程」的纪律承接原来 README「业务逻辑全在 Rust」的同一份精神——只是持有者从 Rust 改成了 TS。
 - 「命令层是唯一的测试缝」也承接，但命令函数从 `src-tauri/src/commands/*` 迁到 `src/main/commands/*`。
@@ -65,7 +65,8 @@
 
 - 上游：[spec #37](https://github.com/raawaa/kewutong/issues/37) Tauri → Electron 迁移 spec
 - 上游：[ADR 0004](./0004-distribution-pipeline.md) 三平台原生安装包 + 4-runner 矩阵（保留）
-- 下游：[ADR 0006](./0006-node-better-sqlite3.md) 后端运行时 + SQLite 库
+- 下游：[ADR 0006](./0006-node-better-sqlite3.md) 后端运行时 + SQLite 库（SQLite 客户端 + Node 运行时已被 [ADR 0010](./0010-node-sqlite.md) 部分取代）
 - 下游：[ADR 0007](./0007-sql-migrations-runner.md) raw .sql + 自写 runner
 - 下游：[ADR 0008](./0008-preload-contextbridge-ipc.md) preload + contextBridge IPC 形状
 - 下游：[ADR 0009](./0009-electron-builder-distribution.md) electron-builder + 4-runner 矩阵沿用
+- 下游：[ADR 0010](./0010-node-sqlite.md) Node 24 + `node:sqlite` 内建（Electron 44.x 锁版本的直接下游）
