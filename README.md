@@ -1,6 +1,10 @@
 # 科室任务管理
 
-给科长一个人用的本地优先桌面 app：一次性项目任务 + 周期性事务，跨 Linux / Windows / macOS，数据落在本地 SQLite，跨机器同步交给 Syncthing。
+给科长一个人用的本地优先桌面 app：一次性项目任务 + 周期性事务，数据落在一个本地 SQLite 文件里。
+
+**当前只发布 macOS 版**（Apple Silicon + Intel）。Linux / Windows 版本的构建配置已就位但不承诺可用，什么时候做另行决定。跨机器同步（原先设想交给 Syncthing）同样不在当前范围内。
+
+> **数据只有一份，注意备份。** 数据库是单个文件：`~/Library/Application Support/kewutong/kewutong.sqlite`。项目与人员的删除是**物理删除**、不保留软删记录，误删即真没了。开着 Time Machine，或定期把该文件拷一份出去——这是本机备份，不是同步。
 
 - 领域词汇表：[`CONTEXT.md`](CONTEXT.md)
 - 决策记录：[`docs/adr/`](docs/adr/)
