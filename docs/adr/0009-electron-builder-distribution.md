@@ -2,6 +2,8 @@
 
 **Status**: accepted
 
+> **现状注记（2026-10-08）**：实际发布目前**只走 macOS**（`macos-latest` arm64 + `macos-15-intel` x64）。本文的 4-runner 矩阵决策**未撤销**——`release.yml` 的矩阵与 `electron-builder.yml` 的 win / linux target 都原样保留，恢复其他平台时无需改动配置。以下决策内容保持原样，不因当前只发 macOS 而改动。
+
 承接 spec #37 与 ADR 0005（Electron 壳），把 ADR 0004 的 4-runner 矩阵从 `tauri-apps/tauri-action@v1` 切到 `electron-builder`，产物格式与三平台签名策略保留。
 
 ## 决策

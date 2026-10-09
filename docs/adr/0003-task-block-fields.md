@@ -2,6 +2,8 @@
 
 **Status**: accepted
 
+> **现状注记（2026-10-08）**：跨机器同步不在当前范围内（当前只发 macOS，数据只在本机一份）。本文涉及 Syncthing 的论证前提已不成立，但**结论均不变**——尤其 §回滚：仍是 forward-only、不引 `.down.sql`，只是「所有 Syncthing 机器都未跑 V003」这个门槛简化为「**本机**未跑 V003」即可修；跑过就接受 delta + 发新 forward migration，不需要跨机协调。§其余 Syncthing 提及（为什么不用 AUTOINCREMENT / 为什么 status ↔ blocked_at 的一致性只放 App 层）在单机下论证更简单，决策方向不变。
+
 承接 ADR 0001 §3.5（`task` 表原始定义）与 ticket #13 的 UI 决议（`prototype/task-editing`，三变体 sheet / popover / modal 已交付；状态变更走徽章菜单 + 阻塞独立字段）。本 ADR 是 ADR 0001 的 **delta**：在 `task` 表上补 3 列 + 加 1 条部分索引 + 加 migration `V003`，不修订 ADR 0001 原文（保留当时的决策判断与被拒方案）。
 
 ## 上下文

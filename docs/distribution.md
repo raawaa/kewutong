@@ -4,6 +4,8 @@
 
 ticket #32 落地决策：4-runner 矩阵 → `cargo tauri build` 原生产出 4 种格式 → draft release → 人工 publish。详见 `docs/adr/0004-distribution-pipeline.md`。
 
+> **现状（2026-10-08 起）：只发 macOS。** 本文下面的三平台说明保留为**已落地的配置基线**——`electron-builder.yml` 的 win / linux target 与 `.github/workflows/release.yml` 的 4-runner 矩阵都照旧保留，所以打 tag 时 Linux / Windows 产物**仍会照常构建并挂到 draft release 上**，但两个平台当前不承诺可用、不下载。Linux / Windows 什么时候做另行决定，届时不需要改配置。
+
 ## 安装包格式与下载入口
 
 | 平台      | 产物                       | 体积（参考） |
