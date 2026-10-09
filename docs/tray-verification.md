@@ -22,9 +22,9 @@
 
 > **2026-10-09 验证状态：blocked by [#75](https://github.com/raawaa/kewutong/issues/75)**
 >
-> T4 (#72) 首次在 macOS 15.6.1 arm64 上跑 dev 模式即撞上 preload (`.mjs`) 在 Chromium sandboxed preload loader 下加载失败 (`SyntaxError: Cannot use import statement outside a module`)。Renderer 三层 (`App` / `SampleDataBanner` / `TodayWeekView`) 全部 `TypeError: Cannot read properties of undefined (reading 'sample'/'task'/'personnel')` —— IPC bridge 没装上,主进程逻辑根本无法触达。本节全部 `- [ ]` 条目**未验证**,待 #75 修完重跑。
+> T4（#72）首次在 macOS 15.6.1 arm64 上跑 dev 模式即撞上 preload（`.mjs`）在 Chromium sandboxed preload loader 下加载失败（`SyntaxError: Cannot use import statement outside a module`）。Renderer 三层（`App` / `SampleDataBanner` / `TodayWeekView`）全部 `TypeError: Cannot read properties of undefined (reading 'sample'/'task'/'personnel')` —— IPC bridge 没装上，主进程逻辑根本无法触达。本节全部 `- [ ]` 条目**未验证**，待 #75 修完重跑。
 >
-> 根因(非修复):`out/preload/index.mjs` 是真 ESM 但旁无 `package.json#type=module`;且 `src/main/index.ts:47` 的 prod 路径写的是 `index.js`,而 `electron-vite@5` 默认输出 `.mjs`,dev/prod 两边都对不上。详见 #75 完整诊断。
+> 根因（非修复）：`out/preload/index.mjs` 是真 ESM 但旁无 `package.json#type=module`；且 `src/main/index.ts:47` 的 prod 路径写的是 `index.js`，而 `electron-vite@5` 默认输出 `.mjs`，dev/prod 两边都对不上。详见 [#75](https://github.com/raawaa/kewutong/issues/75) 完整诊断。
 
 ### 正常路径
 
@@ -41,10 +41,10 @@
 
 ### 验证记录
 
-| 日期 | 分支 / commit | 环境 | 结果 | 备注 |
+| 日期 | commit | 环境 | 结果 | 备注 |
 |---|---|---|---|---|
-| 2026-10-09 | `feat/electron-44-node-sqlite-68` @ HEAD（pre-#75） | macOS 15.6.1 arm64，`npm run dev` | ❌ blocked | preload (`.mjs`) sandbox 加载失败，详见 #72 macOS 段顶部 blockquote + [#75](https://github.com/raawaa/kewutong/issues/75) |
-| 2026-10-08 | `master` @ `118ea03` | "verified locally" commit message | ⚠️ 构建产物 | typecheck / vitest 349/349 / `npm run build` 出 `.dmg` 三件都过，但**未真跑过 GUI 行为**——#66 / #72 之前没有强约束 |
+| 2026-10-09 | `86e8190`（doc回填，含本节 blockquote 之上 commit 链） | macOS 15.6.1 arm64，`npm run dev` | ❌ blocked | preload（`.mjs`）sandbox 加载失败，详见本节顶部 blockquote + [#75](https://github.com/raawaa/kewutong/issues/75) |
+| 2026-10-08 | `118ea03`（master，#66 的 build fix） | 同 commit message 自述 | ⚠️ 仅构建产物 | typecheck / vitest 349/349 / `npm run build` 出 `.dmg` 三件都过，但**未真跑过 GUI 行为** |
 
 ---
 
