@@ -1,8 +1,8 @@
 # 后端运行时 + SQLite 库：Node + better-sqlite3
 
-**Status**: accepted
+**Status**: superseded by [ADR 0010](./0010-node-sqlite.md)
 
-承接 spec #37 与 ADR 0005（Electron 壳），定义 Electron 主进程侧的运行时与 SQLite 客户端。
+承接 spec #37 与 ADR 0005（Electron 壳），定义 Electron 主进程侧的运行时与 SQLite 客户端。**SQLite 客户端（better-sqlite3 → `node:sqlite`）** 与 **Node 运行时（20 LTS → 24.21.0 LTS）** 两项决定已被 [ADR 0010](./0010-node-sqlite.md) 部分取代；其余决定（TS 严格模式 / 命令层 seam / vitest fixture）继续生效。
 
 ## 决策
 
@@ -41,12 +41,19 @@
 - `package.json` dependencies：`better-sqlite3`（runtime）。devDependencies：`@types/better-sqlite3`、`electron`、`electron-vite`、`electron-builder`、`electron-rebuild`（build 阶段跑）。
 - 跨平台：macOS / Windows / Linux 各一份 prebuilt binary；CI 4-runner 矩阵无 native build 压力。如某 prebuilt 缺失，回退到 `electron-builder install-app-deps`（npm 脚本 `postinstall`）。
 
-### 模块布局（沿用 ADR 0005 §代码层）
+### 模块布局
 
 ```
 src/main/
 ├── index.ts                   Electron app 入口；初始化 db、IPC handlers、tray / window / globalShortcut、materialization tick
-├── db.ts                      `openDatabase(filePath)` → Connection + 4 条 PRAGMA
+├── db.ts                      `openDatabase(filePath)` → Connection + 4 条 PRAGMA；
+│                              内存库走 `openInMemoryDatabase(dir, options)`，
+│                              options = `OpenInMemoryOptions { enableForeignKeyConstraints?: boolean }`
+│                              （[ADR 0010 §测试 seam](./0010-node-sqlite.md#测试-seam) 增量）
+├── sqlite.ts                  `node:sqlite` 与调用层之间的类型 + 事务适配层：
+│                              `TypedStatement<Row>` 声明合并（把泛型 `prepare<Params, Row>()` 补回 `DatabaseSync`）+
+│                              `withTx<T>(db, body)` 事务包装（`db.transaction(fn)()` 的等价物）。
+│                              详见 [ADR 0010 §模块布局](./0010-node-sqlite.md#模块布局)。
 ├── clock.ts                   可注入 Clock 接口 + SystemClock + FixedClock（与 Rust 端 FixedClock 同 API）
 ├── state.ts                   AppState（Clock + Connection + HolidayCalendar + trayStatus + dbPath）
 ├── error.ts                   AppError → 序列化为 { code, message, detail }
@@ -102,5 +109,6 @@ src/main/
 
 - 上游：[ADR 0005](./0005-electron-as-shell.md) Electron 壳
 - 上游：[ADR 0001](./0001-sqlite-schema.md) SQLite Schema（含 PRAGMA / FTS5 / 索引）
+- 部分取代（本 ADR）：[ADR 0010](./0010-node-sqlite.md) — Node 24 + `node:sqlite` 内建；替换本 ADR 的 SQLite 客户端 + Node 运行时两项决定
 - 下游：[ADR 0007](./0007-sql-migrations-runner.md) raw SQL + 自写 migrations runner
 - 下游：[ADR 0008](./0008-preload-contextbridge-ipc.md) preload + ipcMain.handle IPC 形状
