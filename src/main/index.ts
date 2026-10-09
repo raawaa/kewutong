@@ -44,7 +44,7 @@ function resolvePreload(): string {
   if (DEV_SERVER_URL) {
     return path.join(PRELOAD_DIST, "index.mjs");
   }
-  return path.join(__dirname, "../preload/index.js");
+  return path.join(__dirname, "../preload/index.mjs");
 }
 
 /** 统一的 BrowserWindow webPreferences——`createMainWindow` 与 `activate` 分支共用。 */
