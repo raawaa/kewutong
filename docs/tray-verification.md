@@ -20,18 +20,35 @@
 
 环境：Dock 栏、系统设置 → 控制中心 → 「菜单栏额外项目」默认。
 
+> **2026-10-09 验证状态：通过 ([#72](https://github.com/raawaa/kewutong/issues/72) T4)**
+>
+> 在 macOS 15.6.1 arm64（MacBook Air M3）上装 `release/0.2.0/kewutong-0.2.0-arm64.dmg`（`npm run build` 产物，ad-hoc 签名 + Gatekeeper 方法 3 `xattr -dr` 放行），人工跑过正常路径 5 项 + ×5 / ×30 循环 + Dock 默认勾选 + Dock 联动，全过；DevTools console 无 preload / IPC 错误，IPC bridge 正常装上。
+>
+> 阻塞本次验证的 [#75](https://github.com/raawaa/kewutong/issues/75) 方向错了——Electron 官方明说沙箱 preload loader 不认 `.mjs` + `package.json#type=module` 是 ESM 提示（[ESM tutorial](https://www.electronjs.org/docs/latest/tutorial/esm)），#75 那条"写 type=module 到产物旁"的路径从一开始就是 no-op。[#76](https://github.com/raawaa/kewutong/issues/76) 把 build 改为强制 CJS 输出（rollup `format: 'cjs'` + `[name].js`），让源里的 `import` 编译成 `require`，问题彻底解——`src/main/preload-build.test.ts` 现在的 CJS 内容守卫把这条防回归锁住。
+
 ### 正常路径
 
-- [ ] **关窗 = 隐藏到菜单栏**。点窗口左上红钮，主窗口消失；`⌘+Tab` 看不到应用入口；**菜单栏右侧出现 kewutong 图标**；进程仍在（活动监视器能看到）。
-- [ ] **菜单栏唤回**。点击菜单栏图标 → 系统弹出右键菜单（含「打开主窗口 / 退出」）；点「打开主窗口」→ 主窗口回到屏幕。注：macOS 菜单栏图标的 left-click 由系统接管为「打开菜单」（见 `src/main/tray/index.ts:139-143` 的 `process.platform !== 'darwin'` 分支），不要误以为 click 没生效。
-- [ ] **退出**。点菜单栏菜单的「退出」→ 进程结束，菜单栏图标消失。**这是唯一能退出进程的路径**（`src/main/tray/index.ts:125-129` 的 `app.quit()`）。
-- [ ] **单实例重复启动**。应用已运行时，在终端再跑一次 `open /Applications/kewutong.app` → 不再开第二个进程，已有进程把主窗口拉回前台（`src/main/index.ts:113-122` 的 `requestSingleInstanceLock` + `second-instance` 监听）。
-- [ ] **关窗 → hide → 唤回** 闭环。连续执行 5 次「关窗 → 菜单栏唤回」，每次唤回后主窗口都能正确显示在前台，没有焦点错位、菜单栏图标闪烁、进程泄漏等问题。
+- [x] **关窗 = 隐藏到菜单栏**（2026-10-09）。点窗口左上红钮，主窗口消失；`⌘+Tab` 看不到应用入口；**菜单栏右侧出现 kewutong 图标**；进程仍在（活动监视器能看到）。
+- [x] **菜单栏唤回**（2026-10-09）。点击菜单栏图标 → 系统弹出右键菜单（含「打开主窗口 / 退出」）；点「打开主窗口」→ 主窗口回到屏幕。注：macOS 菜单栏图标的 left-click 由系统接管为「打开菜单」（见 `src/main/tray/index.ts:139-143` 的 `process.platform !== 'darwin'` 分支），不要误以为 click 没生效。
+- [x] **退出**（2026-10-09）。点菜单栏菜单的「退出」→ 进程结束，菜单栏图标消失。**这是唯一能退出进程的路径**（`src/main/tray/index.ts:125-129` 的 `app.quit()`）。
+- [x] **单实例重复启动**（2026-10-09）。应用已运行时，在终端再跑一次 `open /Applications/kewutong.app` → 不再开第二个进程，已有进程把主窗口拉回前台（`src/main/index.ts:113-122` 的 `requestSingleInstanceLock` + `second-instance` 监听）。
+- [x] **关窗 → hide → 唤回** 闭环 ×5（2026-10-09）。连续执行 5 次「关窗 → 菜单栏唤回」，每次唤回后主窗口都能正确显示在前台，没有焦点错位、菜单栏图标闪烁、进程泄漏等问题。
+- [x] **关窗 → hide → 唤回** 闭环 ×30（2026-10-09）。issue [#72](https://github.com/raawaa/kewutong/issues/72) 的扩展项；与 ×5 同样无焦点漂移 / 闪烁 / 进程泄漏（`ps aux | grep "/Applications/kewutong.app" | grep -v grep | wc -l` 始终稳在 4）。
+- [x] **Dock 默认勾选**（2026-10-09）。应用启动时，菜单栏图标与 Dock 图标**都**在。
+- [x] **Dock 联动**（2026-10-09）。窗口隐藏时 Dock 图标消失；窗口唤回时 Dock 图标回来；进程退出后整个 Dock entry 清空。
 
 ### 失败降级
 
-- [ ] **托盘初始化失败时**：把 `build/icon.png` 临时改名（例如 `icon.png.bak`），重新 `npm run build` → 应用启动后**主窗口可见**，点关窗直接退出进程（不卡死、不静默失活）；前端 `trayStatus` IPC（命令在 `src/lib/api.ts:198`，IPC channel 常量 `tray.status` 在 `src/main/tray/dto.ts:18`）返回 `{ available: false, reason: "系统托盘不可用，请检查系统设置。" }` 或类似中文短句（见 `src/main/index.ts:138-148` 的 try/catch）；renderer 显示 `TrayStatusBanner`（`src/components/tray/TrayStatusBanner.tsx`）。
-  - 注：当前实现里 `createTray` 内部对图标缺失有兜底（`nativeImage.createEmpty()`，见 `src/main/tray/index.ts:78-88`），所以这条「触发 unavailable」的实际路径在 macOS 上**较难触发**——若本次跑通后没有触发，注记「macOS 下当前实现未触发 unavailable 路径，但降级逻辑已就位」即可，**不需要强行造一个失败**。
+- [x] **托盘初始化失败时**（2026-10-09，**注记 N/A**，未实际触发）：把 `build/icon.png` 临时改名（例如 `icon.png.bak`），重新 `npm run build` → 应用启动后**主窗口可见**，点关窗直接退出进程（不卡死、不静默失活）；前端 `trayStatus` IPC（命令在 `src/lib/api.ts:198`，IPC channel 常量 `tray.status` 在 `src/main/tray/dto.ts:18`）返回 `{ available: false, reason: "系统托盘不可用，请检查系统设置。" }` 或类似中文短句（见 `src/main/index.ts:138-148` 的 try/catch）；renderer 显示 `TrayStatusBanner`（`src/components/tray/TrayStatusBanner.tsx`）。
+  - **实际状态**：本环境 `build/icon.png` 本来就不存在——`createTray` 走 `createEmpty()` 降级（`src/main/tray/index.ts:78-88`），从启动那一刻 tray 就**已经是**降级状态但**仍可用**。要让 `trayStatus` 返回 `available: false` 需要 `createTray` 抛异常（需要更深的故障），本路径**当前在 macOS 上不可触达**。`src/main/index.ts:138-148` 的 try/catch 仍在位——降级逻辑已就位，只是触发条件未在 macOS 上出现。按 issue [#72](https://github.com/raawaa/kewutong/issues/72) 注释，「macOS 下当前实现未触发 unavailable 路径，但降级逻辑已就位」即满足 AC，不强造失败。
+
+### 验证记录
+
+| 日期 | commit | 环境 | 结果 | 备注 |
+|---|---|---|---|---|
+| 2026-10-09 | `docs(verify,#72): T4 macOS GUI verification`（本次） | macOS 15.6.1 arm64（MacBook Air M3），`release/0.2.0/kewutong-0.2.0-arm64.dmg`（ad-hoc 签名 + Gatekeeper 方法 3 放行） | ✅ 全部通过 | 正常路径 5 项 + ×5 / ×30 循环 + Dock 默认勾选 + Dock 联动 全过；T6 关窗 hide + 循环无焦点漂移 / 闪烁 / 进程泄漏；DevTools console 干净。阻塞本次验证的 [#75](https://github.com/raawaa/kewutong/issues/75) 由 [#76](https://github.com/raawaa/kewutong/issues/76) 解（preload 改 CJS 输出）。 |
+| 2026-10-09 | `86e8190`（doc回填，含本节 blockquote 之上 commit 链） | macOS 15.6.1 arm64，`npm run dev` | ❌ blocked | preload（`.mjs`）sandbox 加载失败，详见本节顶部 blockquote + [#75](https://github.com/raawaa/kewutong/issues/75) |
+| 2026-10-08 | `118ea03`（master，#66 的 build fix） | 同 commit message 自述 | ⚠️ 仅构建产物 | typecheck / vitest 349/349 / `npm run build` 出 `.dmg` 三件都过，但**未真跑过 GUI 行为** |
 
 ---
 

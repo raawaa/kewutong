@@ -42,7 +42,7 @@ const PRELOAD_DIST = path.join(__dirname, "../preload");
 /** prod preload 与 main 同目录（out/main + out/preload），dev 同上。 */
 function resolvePreload(): string {
   if (DEV_SERVER_URL) {
-    return path.join(PRELOAD_DIST, "index.mjs");
+    return path.join(PRELOAD_DIST, "index.js");
   }
   return path.join(__dirname, "../preload/index.js");
 }
