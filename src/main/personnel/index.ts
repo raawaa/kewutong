@@ -29,13 +29,24 @@ import type {
   PersonnelMatrixPerson,
   PersonnelMatrixSegment,
   Person,
+  PersonDetail,
+  PersonDetailInFlight,
   PersonIdArgs,
   ReorderSubTeamsArgs,
   SubTeam,
+  Task,
   UpdatePersonArgs,
   UpdateSubTeamArgs,
 } from "../types.js";
-import { fetchInFlightTasksForPerson } from "../task/index.js";
+import {
+  TASK_COLUMNS,
+  fetchInFlightTasksForPerson,
+  inFlightTaskOrderBy,
+  rowToTask,
+  type TaskRow,
+} from "../task/index.js";
+import { listProjectsForOwner } from "../project/index.js";
+import { listTemplatesForSubTeam } from "../recurring_template/index.js";
 import { withTx } from "../sqlite.js";
 
 /** `@` 下拉里最多显示几条。原型下拉高度 6 行；封顶在命令层。 */
@@ -421,4 +432,157 @@ export function personnelMatrix(
   }
 
   return { segments: result };
+}
+
+// ---------------------------------------------------------------------------
+// 人员详情（ticket #80 / #81 T1）
+// ---------------------------------------------------------------------------
+
+/**
+ * 拉取 owner = 本人 的所有任务（不限状态）——6 状态分桶的源数据。
+ *
+ * 单条 SQL 把 6 状态全捞出来,再在 TS 里按 `status` 分桶——避免在 SQL
+ * 端打 6 个 `IN (...)` 拼装。每条仍走 [`TASK_COLUMNS`] + [`rowToTask`]
+ * 的同源 mapping,与 [`fetchInFlightTasksForPerson`] 共用 DTO 形状。
+ *
+ * 排序：与 [`inFlightTaskOrderBy`] 同样的"在飞优先 + due_date + id"兜
+ * 底；调用方按 status 分桶后,各桶内顺序已对齐段内排序（Open / In-
+ * progress 看 due_date;Blocked / Waiting-on 看 blocked_at;Done /
+ * Cancelled 看 updated_at）。具体段内排序在 T2 票落实,本命令只保证
+ * 「拿到完整列表」,段内排序由分桶后置入。
+ */
+function fetchAllTasksForPerson(
+  db: DatabaseSync,
+  ownerPersonId: number,
+): Task[] {
+  const rows = db
+    .prepare<[number], TaskRow>(
+      `SELECT ${TASK_COLUMNS}
+         FROM task
+        WHERE owner_person_id = ?
+        ORDER BY ${inFlightTaskOrderBy("")}`,
+    )
+    .all(ownerPersonId);
+  return rows.map(rowToTask);
+}
+
+/**
+ * 拉取 `task.waiting_on_person_id = 本人` 的任务——「别人等的任务由本人推动」。
+ *
+ * 显式加 `status = 'Waiting-on'` 兜底——DB CHECK 强制 `waiting_on_
+ * person_id IS NULL OR status = 'Waiting-on'`,理论上走 `WHERE
+ * waiting_on_person_id = ?` 已足以,但显式 status 让 invariant 不再
+ *  load-bearing 在 DDL 上。排序按 `blocked_at` 升序,卡最久的在前——
+ * 与段 2 的 Blocked / Waiting-on 段同语义（longest-stuck first）。
+ */
+function fetchWaitingOnTasksForPerson(
+  db: DatabaseSync,
+  waitingOnPersonId: number,
+): Task[] {
+  const rows = db
+    .prepare<[number], TaskRow>(
+      `SELECT ${TASK_COLUMNS}
+         FROM task
+        WHERE waiting_on_person_id = ?
+           AND status = 'Waiting-on'
+        ORDER BY blocked_at ASC, id ASC`,
+    )
+    .all(waitingOnPersonId);
+  return rows.map(rowToTask);
+}
+
+/**
+ * 任务按 6 状态分桶——把一条 task 放到对应桶里。
+ *
+ * `waitingOn` 桶额外过滤 `waiting_on_person_id != 本人` ——「本人在等别人」
+ * 与「本人在等自己」（自反,DB 允许）的拆分：自反等待不进 waitingOn 桶,
+ * 因为语义是"卡在某处等审批",不是"等别人推动"。原 spec 写的是
+ * 「owner=本人 且 waiting_on_person_id 是别人」,这里精确还原。
+ */
+function bucketByStatus(
+  tasks: Task[],
+  ownerPersonId: number,
+): PersonDetailInFlight {
+  const buckets: PersonDetailInFlight = {
+    open: [],
+    inProgress: [],
+    blocked: [],
+    waitingOn: [],
+    done: [],
+    cancelled: [],
+  };
+  for (const task of tasks) {
+    switch (task.status) {
+      case "Open":
+        buckets.open.push(task);
+        break;
+      case "In-progress":
+        buckets.inProgress.push(task);
+        break;
+      case "Blocked":
+        buckets.blocked.push(task);
+        break;
+      case "Waiting-on":
+        if (
+          task.waitingOnPersonId !== null &&
+          task.waitingOnPersonId !== ownerPersonId
+        ) {
+          buckets.waitingOn.push(task);
+        }
+        break;
+      case "Done":
+        buckets.done.push(task);
+        break;
+      case "Cancelled":
+        buckets.cancelled.push(task);
+        break;
+    }
+  }
+  return buckets;
+}
+
+/**
+ * 人员详情聚合（ticket #80 / #81 T1）。
+ *
+ * 单次命令一次拉回 5 段 DTO,前端不查多表、不重排、不二次聚合：
+ * 1. `person` ——人员档案；
+ * 2. `inFlight` ——owner 是本人的任务按 6 状态分桶；
+ * 3. `ownedProjects` ——本人负责的项目（跨组也算）；
+ * 4. `waitingOnTasks` ——`waiting_on_person_id = 本人` 的任务；
+ * 5. `subTeamTemplates` ——所属子组的模板。
+ *
+ * 人员不存在 → `AppError.invalid("人员不存在或已被删除。")`,与既有
+ * 写命令（`updatePerson` / `deactivatePerson` 等）的语义一致——
+ * 「找不到」=「入参无效」,前端拿到就展示中文错误。
+ *
+ * 离岗人员**也正常返回**——`person.deactivatedAt` 字段就是「档案里的
+ * 离岗时间」,详情视图要据此给个徽章（user story #15）。不再单独
+ * 走「`include_deactivated`」开关,详情页只可能查一个具体 id。
+ */
+export function getPersonDetail(state: AppState, args: PersonIdArgs): PersonDetail {
+  const person = fetchPerson(state.db, args.id);
+  if (!person) {
+    throw AppError.invalid("人员不存在或已被删除。");
+  }
+
+  // 段 2 + 段 4：owner = 本人 拉一次,wantingOnPersonId = 本人 拉一次,
+  // 不合并——两条 SQL 各自只走 owner_person_id 或 waiting_on_person_id
+  // 单列索引(若有),合一条会让 where 同时卡两列,触发 table scan。
+  const ownedTasks = fetchAllTasksForPerson(state.db, person.id);
+  const waitingOnTasks = fetchWaitingOnTasksForPerson(state.db, person.id);
+
+  // 段 3：跨组也算 owner 关系；`listProjectsForOwner` 已按 due_date / id 排序。
+  const ownedProjects = listProjectsForOwner(state.db, person.id);
+
+  // 段 5：所属子组的模板。`person.sub_team_id` 必非空（DB NOT NULL），
+  // 子组被物理删除时 FK RESTRICT 兜底——不会出现「人还在但子组没了」。
+  const subTeamTemplates = listTemplatesForSubTeam(state.db, person.subTeamId);
+
+  return {
+    person,
+    inFlight: bucketByStatus(ownedTasks, person.id),
+    ownedProjects,
+    waitingOnTasks,
+    subTeamTemplates,
+  };
 }

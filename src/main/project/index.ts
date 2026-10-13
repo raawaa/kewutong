@@ -114,6 +114,32 @@ function fetchProject(db: DatabaseSync, id: number): Project | null {
   return row ? rowToProject(row) : null;
 }
 
+/**
+ * 列出指定负责人名下的项目（ticket #80 / #81 · 人员详情段 3）。
+ *
+ * 跨组也算——负责人与项目所属子组不要求一致。`status` 走视图层聚合
+ * ([`deriveStatusSqlFragment`])，与 `listProjects` / `listProjectCandidates`
+ * 共用同一份逻辑,避免三处漂移。
+ *
+ * 排序与 `listProjects` 同源：`due_date` NULL 末,再按 `created_at` / `id` 兜底。
+ */
+export function listProjectsForOwner(
+  db: DatabaseSync,
+  ownerPersonId: number,
+): Project[] {
+  const sql = `
+    SELECT ${projectSelectColumns(true)}
+      FROM project p
+     WHERE p.owner_person_id = ?
+     ORDER BY
+       CASE WHEN p.due_date IS NULL THEN 1 ELSE 0 END ASC,
+       p.due_date ASC,
+       p.created_at ASC,
+       p.id ASC`;
+  const rows = db.prepare<[number], ProjectRowWithStatus>(sql).all(ownerPersonId);
+  return rows.map(rowToProject);
+}
+
 // ---------------------------------------------------------------------------
 // 入参校验（已上提到 util/strings.ts）
 // ---------------------------------------------------------------------------

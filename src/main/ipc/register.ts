@@ -165,6 +165,11 @@ function registerPersonnel(state: AppState): void {
     "personnel.personnel_matrix",
     (s, args) => Personnel.personnelMatrix(s, args),
   )(ipcMain, state);
+
+  handle<import("../types.js").PersonIdArgs, import("../types.js").PersonDetail>(
+    "personnel.get_person_detail",
+    (s, args) => Personnel.getPersonDetail(s, args),
+  )(ipcMain, state);
 }
 
 /** Holiday domain（tickets #23 / #47）。 */

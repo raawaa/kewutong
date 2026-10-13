@@ -240,6 +240,52 @@ export interface PersonnelMatrix {
 }
 
 // ---------------------------------------------------------------------------
+// 人员详情（ticket #80 / #81 T1）
+// ---------------------------------------------------------------------------
+
+/**
+ * 人员详情的「在飞任务按 6 状态分组」段。
+ *
+ * `waitingOn` 与顶层 [`PersonDetail.waitingOnTasks`] 是两个独立概念：
+ * - `inFlight.waitingOn`：owner 是本人且 `waiting_on_person_id` 指向**别人**
+ *   ——「本人在等别人的任务」；
+ * - `PersonDetail.waitingOnTasks`：owner 是别人且 `waiting_on_person_id`
+ *   指向**本人** ——「别人等的任务由本人推动」。
+ */
+export interface PersonDetailInFlight {
+  open: Task[];
+  inProgress: Task[];
+  blocked: Task[];
+  waitingOn: Task[];
+  done: Task[];
+  cancelled: Task[];
+}
+
+/**
+ * 人员详情聚合 DTO——`get_person_detail` 命令一次返回。
+ *
+ * 五段：
+ * 1. `person` ——人员档案（姓名 / 联系方式 / 子组 / 离岗状态 / 录入时间）；
+ * 2. `inFlight` ——owner 是本人的任务按 6 状态分组；
+ * 3. `ownedProjects` ——`project.owner_person_id = 本人` 的项目（跨组也算）；
+ * 4. `waitingOnTasks` ——`task.waiting_on_person_id = 本人` 的任务；
+ * 5. `subTeamTemplates` ——`recurring_template.sub_team_id = person.sub_team_id`
+ *    的模板。
+ *
+ * 排序由主进程在组装时一次性给齐：Open / In-progress 按 `due_date` 升序
+ * （NULL 末）；Blocked / Waiting-on 按 `blocked_at` 升序（longest-stuck
+ * 在前）；Done / Cancelled 按 `updated_at` 降序；`waitingOnTasks` 按
+ * `blocked_at` 升序。前端拿到直接渲染，不二次聚合 / 重排。
+ */
+export interface PersonDetail {
+  person: Person;
+  inFlight: PersonDetailInFlight;
+  ownedProjects: Project[];
+  waitingOnTasks: Task[];
+  subTeamTemplates: RecurringTemplate[];
+}
+
+// ---------------------------------------------------------------------------
 // 项目（ticket #20）
 // ---------------------------------------------------------------------------
 

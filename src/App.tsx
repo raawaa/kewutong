@@ -16,6 +16,7 @@ import { PersonnelView } from "@/views/PersonnelView";
 import { ProjectsView } from "@/views/ProjectsView";
 import { TodayWeekView } from "@/views/TodayWeekView";
 import { HolidayCalendarView } from "@/views/HolidayCalendarView";
+import { PersonDetailView } from "@/views/PersonDetailView";
 import {
   listPeople,
   listProjects,
@@ -285,6 +286,24 @@ export default function App() {
         <PersonnelView />
       ) : (
         <HolidayCalendarView refreshToken={refreshToken} />
+      )}
+
+      {/* Dev-only: 临时打开人员详情视图（ticket #81 T1 · 端到端 seam）。
+       * 仅 dev 模式下出现,Vite 注入 `import.meta.env.DEV = true`、
+       * 注入 `import.meta.env.MODE = 'development'`；生产构建时两个都
+       * 不是预期值,按钮自动消失。test 模式 (`MODE = 'test'`) 也不渲
+       * 染,避免污染 App.test 的断言。
+       * personId 硬编码 = 1,需要时人工改这一行重测。后续 ticket (#82 等)
+       * 落实「独立 tab + 子 tab 列表」后,这枚按钮自然退役。 */}
+      {import.meta.env.DEV && import.meta.env.MODE !== "test" && (
+        <div className="border-warning/40 bg-warning/10 rounded-md border p-3 text-xs">
+          <div className="text-warning mb-2 font-medium">DEV · 人员详情（T1 临时入口）</div>
+          <PersonDetailView
+            personId={1}
+            subTeams={subTeams}
+            refreshToken={refreshToken}
+          />
+        </div>
       )}
 
       {dialog && (

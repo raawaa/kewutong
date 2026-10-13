@@ -95,7 +95,10 @@ export const TASK_COLUMNS_WITH_T =
 // 行 → DTO 映射
 // ---------------------------------------------------------------------------
 
-interface TaskRow {
+/** task 行形状——`rowToTask` 的输入类型,也是 SQL SELECT 列清单
+ *  的镜像。命令层之外的模块若要拼 `SELECT ${TASK_COLUMNS} FROM task`,
+ *  也借这份 row 类型（personnel 模块的 `getPersonDetail` 即如此）。 */
+export interface TaskRow {
   id: number;
   title: string;
   description: string | null;

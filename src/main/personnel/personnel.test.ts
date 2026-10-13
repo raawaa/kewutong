@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { freshDb } from "../test/commands/fresh_db.js";
 import * as Personnel from "./index.js";
+import * as Project from "../project/index.js";
+import * as RecurringTemplate from "../recurring_template/index.js";
 import { AppError } from "../error.js";
 import { withTx } from "../sqlite.js";
 
@@ -232,6 +234,207 @@ describe("personnel / personnelMatrix（#22）", () => {
       expect(card?.inFlightCount).toBe(2); // Open + Blocked
       expect(card?.blockedCount).toBe(1);
       expect(card?.tasks.length).toBe(2);
+    } finally {
+      close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getPersonDetail（#81 T1 · 端到端命令 seam）
+// ---------------------------------------------------------------------------
+
+describe("personnel / getPersonDetail（#81）", () => {
+  it("空库时人员不存在抛 AppError.invalid", () => {
+    const { state, close } = freshDb();
+    try {
+      expect(() => Personnel.getPersonDetail(state, { id: 1 })).toThrow(/人员不存在/);
+    } finally {
+      close();
+    }
+  });
+
+  it("正常返回：所有 5 段均聚合正确", () => {
+    const { state, close } = freshDb({ now: "2026-09-10 08:00:00" });
+    try {
+      const team = Personnel.createSubTeam(state, { name: "一组" });
+      const otherTeam = Personnel.createSubTeam(state, { name: "二组" });
+      const person = Personnel.createPerson(state, {
+        name: "张三",
+        subTeamId: team.id,
+        contact: "123",
+      });
+      // 先录入「本人等的别人」,Waiting-on 任务的 waiting_on_person_id 才
+      // 能指向他人(不是本人)——waitingOn 桶的语义是「等别人,不等自己」。
+      const someoneElse = Personnel.createPerson(state, {
+        name: "李四",
+        subTeamId: team.id,
+        contact: "456",
+      });
+
+      // 段 2：在飞任务六状态各一条 + 一条 cancelled
+      withTx(state.db, () => {
+        state.db
+          .prepare(
+            `INSERT INTO task (title, status, owner_person_id, due_date, blocked_at, blocked_reason, waiting_on_person_id, updated_at)
+             VALUES
+               ('open 任务',     'Open',        ?, '2026-09-10', NULL, NULL, NULL, '2026-09-10 08:00:00'),
+               ('in-prog 任务',  'In-progress', ?, '2026-09-11', NULL, NULL, NULL, '2026-09-10 08:00:00'),
+               ('blocked 任务',  'Blocked',     ?, '2026-09-12', '2026-09-09 09:00:00', '卡审批', NULL, '2026-09-10 08:00:00'),
+               ('waiting 任务',  'Waiting-on',  ?, '2026-09-13', '2026-09-09 10:00:00', '等对方', ?, '2026-09-10 08:00:00'),
+               ('done 任务',     'Done',        ?, NULL, NULL, NULL, NULL, '2026-09-10 08:00:00'),
+               ('cancel 任务',   'Cancelled',   ?, NULL, NULL, NULL, NULL, '2026-09-10 08:00:00')`,
+          )
+          .run(
+            person.id, person.id, person.id,
+            person.id, someoneElse.id,
+            person.id, person.id,
+          );
+      });
+
+      // 段 3：负责的项目（本组一个 + 跨组一个）
+      const projectA = Project.createProject(state, {
+        name: "项目 A",
+        ownerPersonId: person.id,
+        subTeamId: team.id,
+      });
+      const projectB = Project.createProject(state, {
+        name: "项目 B",
+        ownerPersonId: person.id,
+        subTeamId: otherTeam.id,
+      });
+
+      // 段 4：他人任务但 waiting_on_person_id = 本人(someoneElse 已在前面录好)
+      const waitingOnTaskId = withTx(state.db, () => {
+        const info = state.db
+          .prepare(
+            `INSERT INTO task (title, status, owner_person_id, due_date, blocked_at, blocked_reason, waiting_on_person_id, updated_at)
+             VALUES ('他人等我', 'Waiting-on', ?, '2026-09-14', '2026-09-09 11:00:00', '等审批', ?, '2026-09-10 08:00:00')`,
+          )
+          .run(someoneElse.id, person.id);
+        return Number(info.lastInsertRowid);
+      });
+
+      // 段 5：所属子组的周期模板（本组一个 + 跨组一个 + 别人的挂项目模板）
+      const tmplInTeam = RecurringTemplate.upsertRecurringTemplate(state, {
+        id: null,
+        name: "周一例会",
+        rule: {
+          freq: "weekly",
+          bydayMask: 1 << 0,
+          bymonthday: null,
+          bymonth: null,
+          byhour: 9,
+          byminute: 0,
+          ianaZone: "Asia/Shanghai",
+          ends: { kind: "after", n: 12 },
+          holidayBehavior: "skip",
+        },
+        projectId: null,
+        subTeamId: team.id,
+        notes: null,
+      });
+      const tmplInOtherTeam = RecurringTemplate.upsertRecurringTemplate(state, {
+        id: null,
+        name: "二组周会",
+        rule: {
+          freq: "weekly",
+          bydayMask: 1 << 1,
+          bymonthday: null,
+          bymonth: null,
+          byhour: 9,
+          byminute: 0,
+          ianaZone: "Asia/Shanghai",
+          ends: { kind: "after", n: 8 },
+          holidayBehavior: "skip",
+        },
+        projectId: null,
+        subTeamId: otherTeam.id,
+        notes: null,
+      });
+
+      const detail = Personnel.getPersonDetail(state, { id: person.id });
+
+      // 段 1：person
+      expect(detail.person.id).toBe(person.id);
+      expect(detail.person.name).toBe("张三");
+      expect(detail.person.subTeamId).toBe(team.id);
+      expect(detail.person.contact).toBe("123");
+      expect(detail.person.deactivatedAt).toBeNull();
+
+      // 段 2：6 状态分组（每条 inFlight bucket 各含 1 条）
+      expect(detail.inFlight.open.length).toBe(1);
+      expect(detail.inFlight.inProgress.length).toBe(1);
+      expect(detail.inFlight.blocked.length).toBe(1);
+      expect(detail.inFlight.waitingOn.length).toBe(1);
+      expect(detail.inFlight.done.length).toBe(1);
+      expect(detail.inFlight.cancelled.length).toBe(1);
+
+      // 段 3：owned projects（2 个,跨组也算）
+      expect(detail.ownedProjects.length).toBe(2);
+      const ownedIds = detail.ownedProjects.map((p) => p.id).sort();
+      expect(ownedIds).toEqual([projectA.id, projectB.id].sort());
+
+      // 段 4：他人 wait 在本人身上的任务
+      expect(detail.waitingOnTasks.length).toBe(1);
+      expect(detail.waitingOnTasks[0]?.id).toBe(waitingOnTaskId);
+
+      // 段 5：所属子组的模板（仅本组 = team.id,跨组的 tmplInOtherTeam 不在内）
+      expect(detail.subTeamTemplates.length).toBe(1);
+      expect(detail.subTeamTemplates[0]?.id).toBe(tmplInTeam.id);
+      expect(detail.subTeamTemplates[0]?.subTeamId).toBe(team.id);
+      // 显式兜底：跨子组的模板不进段 5,避免「长度对了但混了别组的模板」
+      expect(
+        detail.subTeamTemplates.some((t) => t.id === tmplInOtherTeam.id),
+      ).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  it("离岗人员可正常返回 DTO（不抛错）", () => {
+    const { state, close } = freshDb({ now: "2026-09-10 08:00:00" });
+    try {
+      const team = Personnel.createSubTeam(state, { name: "一组" });
+      const person = Personnel.createPerson(state, {
+        name: "张三",
+        subTeamId: team.id,
+        contact: "123",
+      });
+      Personnel.deactivatePerson(state, { id: person.id });
+
+      const detail = Personnel.getPersonDetail(state, { id: person.id });
+      expect(detail.person.id).toBe(person.id);
+      expect(detail.person.deactivatedAt).toBe("2026-09-10 08:00:00");
+      // 离岗人员的 5 段都应是空数组（库内无其它数据）
+      expect(detail.inFlight.open).toEqual([]);
+      expect(detail.inFlight.inProgress).toEqual([]);
+      expect(detail.inFlight.blocked).toEqual([]);
+      expect(detail.inFlight.waitingOn).toEqual([]);
+      expect(detail.inFlight.done).toEqual([]);
+      expect(detail.inFlight.cancelled).toEqual([]);
+      expect(detail.ownedProjects).toEqual([]);
+      expect(detail.waitingOnTasks).toEqual([]);
+      expect(detail.subTeamTemplates).toEqual([]);
+    } finally {
+      close();
+    }
+  });
+
+  it("人员不存在抛 AppError.invalid,与既有 fetchPerson 行为一致", () => {
+    const { state, close } = freshDb();
+    try {
+      // 先建一个其它人员,id 自增到 2,故意查 999 不应命中
+      const team = Personnel.createSubTeam(state, { name: "一组" });
+      const a = Personnel.createPerson(state, {
+        name: "甲",
+        subTeamId: team.id,
+        contact: "1",
+      });
+      expect(() => Personnel.getPersonDetail(state, { id: 999 })).toThrow(AppError);
+      // 已存在人员应可正常返回
+      const detail = Personnel.getPersonDetail(state, { id: a.id });
+      expect(detail.person.id).toBe(a.id);
     } finally {
       close();
     }

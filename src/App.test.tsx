@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import App from "./App";
 import {
   dataFileLocation,
+  getPersonDetail,
   isSampleDataPresent,
   listDueDateOptions,
   listPeople,
@@ -33,6 +34,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   trayStatus: vi.fn(),
   isSampleDataPresent: vi.fn(),
   dataFileLocation: vi.fn(),
+  getPersonDetail: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -56,6 +58,29 @@ beforeEach(() => {
   // 示例数据 banner——默认不存在,避免 banner 干扰断言。
   vi.mocked(isSampleDataPresent).mockResolvedValue({ present: false });
   vi.mocked(dataFileLocation).mockResolvedValue(null);
+  // 默认未调用 getPersonDetail —— DEV 按钮不在 test 模式出现,
+  // 但 mock 必须存在以防后续渲染中其它路径触发。
+  vi.mocked(getPersonDetail).mockResolvedValue({
+    person: {
+      id: 1,
+      name: "示例",
+      subTeamId: 1,
+      contact: "示例",
+      deactivatedAt: null,
+      createdAt: "2026-09-01 09:00:00",
+    },
+    inFlight: {
+      open: [],
+      inProgress: [],
+      blocked: [],
+      waitingOn: [],
+      done: [],
+      cancelled: [],
+    },
+    ownedProjects: [],
+    waitingOnTasks: [],
+    subTeamTemplates: [],
+  });
 });
 
 /** 弹窗开着的判据：新建任务的对话框在 DOM 里。 */

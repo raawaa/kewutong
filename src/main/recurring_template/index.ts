@@ -544,6 +544,30 @@ export function fetchTemplate(db: DatabaseSync, id: number): RecurringTemplate |
   return template;
 }
 
+/**
+ * 列出挂到指定子组的模板（ticket #80 / #81 · 人员详情段 5）。
+ *
+ * 含已停用 (`enabled = 0`) 的模板——停用不等于删除,「人员详情」想看
+ * TA 所在子组的「常规活儿」清单时也希望看到停用的,避免『这周没排
+ * 周会』的误判。排序与 [`listRecurringTemplates`] 同源（启用优先 +
+ * `created_at` / `id` 兜底）,不在命令层搞第二份规则。
+ */
+export function listTemplatesForSubTeam(
+  db: DatabaseSync,
+  subTeamId: number,
+): RecurringTemplate[] {
+  const sql = `SELECT ${TEMPLATE_SELECT_COLUMNS}
+                 FROM recurring_template
+                WHERE sub_team_id = ?
+                ORDER BY enabled DESC, created_at ASC, id ASC`;
+  const rows = db.prepare<[number], RecurringTemplateRow>(sql).all(subTeamId);
+  return rows.map((row) => {
+    const template = rowToTemplate(row);
+    sanityCheckRruleMatchesStructured(template);
+    return template;
+  });
+}
+
 /** 比对 `template.rruleText` 与结构化字段是否一致（ADR 0002）。 */
 function endsEqual(a: RecurringEnds, b: RecurringEnds): boolean {
   if (a.kind !== b.kind) return false;

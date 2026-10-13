@@ -34,6 +34,7 @@ import type {
   PersonnelMatrix,
   PersonnelMatrixArgs,
   Person,
+  PersonDetail,
   PersonIdArgs,
   PingReply,
   Project,
@@ -152,6 +153,8 @@ const api = {
       ipcRenderer.invoke("personnel.list_assignee_candidates", args),
     personnelMatrix: (args: PersonnelMatrixArgs): Promise<PersonnelMatrix> =>
       ipcRenderer.invoke("personnel.personnel_matrix", args),
+    getPersonDetail: (args: PersonIdArgs): Promise<PersonDetail> =>
+      ipcRenderer.invoke("personnel.get_person_detail", args),
   },
 
   // 项目管理（ticket #20）

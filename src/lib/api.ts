@@ -34,6 +34,7 @@ import type {
   PersonnelMatrix,
   PersonnelMatrixArgs,
   Person,
+  PersonDetail,
   PersonIdArgs,
   PingReply,
   Project,
@@ -100,6 +101,7 @@ export type {
   ListAssigneeCandidatesArgs,
   PersonnelMatrixArgs,
   PersonnelMatrix,
+  PersonDetail,
   Project,
   ProjectCandidate,
 SamplePresence,
@@ -307,6 +309,15 @@ export function listAssigneeCandidates(
 
 export function personnelMatrix(args: PersonnelMatrixArgs): Promise<PersonnelMatrix> {
   return window.api.personnel.personnelMatrix(args);
+}
+
+/**
+ * 人员详情（ticket #80 / #81）——一次拉回 5 段 DTO（档案 / 在飞任务 6 状态
+ * 分组 / 负责项目 / 等待本人推动 / 所属子组模板）。前端拿到直接渲染,
+ * 不二次聚合、不重排、不查多表。
+ */
+export function getPersonDetail(args: PersonIdArgs): Promise<PersonDetail> {
+  return window.api.personnel.getPersonDetail(args);
 }
 
 // ---------------------------------------------------------------------------
