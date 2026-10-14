@@ -798,3 +798,267 @@ describe("personnel / getPersonDetail（#81）", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// getPersonDetail · 段 3 / 段 4 / 段 5（#83 T3 · 三段聚焦测试）
+//
+// 整体端到端断言已在 #81 的 "正常返回：所有 5 段均聚合正确" 覆盖；T3
+// 这里对三个段各自的关键不变量加更细的 case：跨子组项目归属、longest-
+// stuck 排序、项目级模板排除。
+// ---------------------------------------------------------------------------
+
+describe("personnel / getPersonDetail · ownedProjects / waitingOnTasks / subTeamTemplates（#83）", () => {
+  /**
+   * ownedProjects 的核心不变量 = "owner 跨组也算"。把 person 放在一组,
+   * 给 TA 在另外两组挂的项目也建 owner 关系——DTO 必须全收,不能因为项
+   * 目所属子组 ≠ person.sub_team_id 就过滤掉。
+   */
+  it("ownedProjects:跨子组项目也归属本人", () => {
+    const { state, close } = freshDb();
+    try {
+      const homeTeam = Personnel.createSubTeam(state, { name: "一组" });
+      const otherTeamA = Personnel.createSubTeam(state, { name: "二组" });
+      const otherTeamB = Personnel.createSubTeam(state, { name: "三组" });
+      const person = Personnel.createPerson(state, {
+        name: "张三",
+        subTeamId: homeTeam.id,
+        contact: "1",
+      });
+
+      // 项目所属子组 ≠ person.sub_team_id 的两个 + 同组的 1 个
+      const sameGroup = Project.createProject(state, {
+        name: "同组项目",
+        ownerPersonId: person.id,
+        subTeamId: homeTeam.id,
+      });
+      const crossGroupA = Project.createProject(state, {
+        name: "跨组 A 项目",
+        ownerPersonId: person.id,
+        subTeamId: otherTeamA.id,
+      });
+      const crossGroupB = Project.createProject(state, {
+        name: "跨组 B 项目",
+        ownerPersonId: person.id,
+        subTeamId: otherTeamB.id,
+      });
+      // 噪声:owner 不是本人的项目（与 person 同组），不应出现在段里
+      const someoneElse = Personnel.createPerson(state, {
+        name: "李四",
+        subTeamId: homeTeam.id,
+        contact: "2",
+      });
+      Project.createProject(state, {
+        name: "别人的项目",
+        ownerPersonId: someoneElse.id,
+        subTeamId: homeTeam.id,
+      });
+
+      const detail = Personnel.getPersonDetail(state, { id: person.id });
+      const ownedIds = detail.ownedProjects.map((p) => p.id).sort((a, b) => a - b);
+      expect(ownedIds).toEqual(
+        [sameGroup.id, crossGroupA.id, crossGroupB.id].sort((a, b) => a - b),
+      );
+      // 显式兜底:owner=别人的项目绝不能混进段
+      const stranger = detail.ownedProjects.find((p) => p.name === "别人的项目");
+      expect(stranger).toBeUndefined();
+    } finally {
+      close();
+    }
+  });
+
+  /**
+   * waitingOnTasks 的关键不变量 = "按 blocked_at ASC 排,卡最久在前"——
+   * 与段 2 的 Blocked / Waiting-on 桶同语义（longest-stuck first）。这里
+   * seed 3 条 waiting-on 任务,blocked_at 分别是 1/5/10 天前,断言顺序是
+   * [10天前, 5天前, 1天前]。
+   */
+  it("waitingOnTasks:按 blocked_at ASC 排,longest-stuck 最靠前", () => {
+    const { state, close } = freshDb({ now: "2026-09-10 12:00:00" });
+    try {
+      const team = Personnel.createSubTeam(state, { name: "一组" });
+      const person = Personnel.createPerson(state, {
+        name: "张三",
+        subTeamId: team.id,
+        contact: "1",
+      });
+      const someoneElse = Personnel.createPerson(state, {
+        name: "李四",
+        subTeamId: team.id,
+        contact: "2",
+      });
+
+      // 三条 waiting-on:owner = someoneElse,wating_on_person_id = person
+      const oneDayId = withTaskInsert(state.db, {
+        title: "等 1 天",
+        status: "Waiting-on",
+        owner: someoneElse.id,
+        dueDate: null,
+        blockedAt: "2026-09-09 12:00:00",
+        blockedReason: "等审批",
+        waitingOn: person.id,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+      const fiveDayId = withTaskInsert(state.db, {
+        title: "等 5 天",
+        status: "Waiting-on",
+        owner: someoneElse.id,
+        dueDate: null,
+        blockedAt: "2026-09-05 12:00:00",
+        blockedReason: "等审批",
+        waitingOn: person.id,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+      const tenDayId = withTaskInsert(state.db, {
+        title: "等 10 天",
+        status: "Waiting-on",
+        owner: someoneElse.id,
+        dueDate: null,
+        blockedAt: "2026-08-31 12:00:00",
+        blockedReason: "等审批",
+        waitingOn: person.id,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+
+      const detail = Personnel.getPersonDetail(state, { id: person.id });
+      expect(detail.waitingOnTasks.map((t) => t.id)).toEqual([
+        tenDayId,
+        fiveDayId,
+        oneDayId,
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  /**
+   * subTeamTemplates 的核心不变量 = "仅子组级,不含项目级"。模板目录里
+   * 项目级模板（`sub_team_id = null, project_id = some_project`）即使
+   * 挂在同子组的项目下,也**不能**进段 5——段 5 是「所在子组的常规活
+   * 儿」,项目级模板是「项目的常规活儿」,语义不同。
+   */
+  it("subTeamTemplates:仅子组级,不含项目级", () => {
+    const { state, close } = freshDb();
+    try {
+      const team = Personnel.createSubTeam(state, { name: "一组" });
+      const otherTeam = Personnel.createSubTeam(state, { name: "二组" });
+      const person = Personnel.createPerson(state, {
+        name: "张三",
+        subTeamId: team.id,
+        contact: "1",
+      });
+      const someProject = Project.createProject(state, {
+        name: "项目 A",
+        ownerPersonId: person.id,
+        subTeamId: team.id,
+      });
+
+      // 子组级 2 条（其中一张挂在同子组的项目下,但 sub_team_id 也设了）
+      const subTeamOnly = RecurringTemplate.upsertRecurringTemplate(state, {
+        id: null,
+        name: "周一例会",
+        rule: weeklyRule(),
+        projectId: null,
+        subTeamId: team.id,
+        notes: null,
+      });
+      const subTeamWithProjectLink = RecurringTemplate.upsertRecurringTemplate(state, {
+        id: null,
+        name: "项目子组双挂",
+        rule: weeklyRule(),
+        projectId: someProject.id,
+        subTeamId: team.id,
+        notes: null,
+      });
+      // 噪声 1：项目级模板（sub_team_id = null,挂在同子组的项目下）
+      const projectLevel = RecurringTemplate.upsertRecurringTemplate(state, {
+        id: null,
+        name: "项目周报",
+        rule: weeklyRule(),
+        projectId: someProject.id,
+        subTeamId: null,
+        notes: null,
+      });
+      // 噪声 2：跨子组的子组级模板
+      const otherTeamTpl = RecurringTemplate.upsertRecurringTemplate(state, {
+        id: null,
+        name: "二组周会",
+        rule: weeklyRule(),
+        projectId: null,
+        subTeamId: otherTeam.id,
+        notes: null,
+      });
+
+      const detail = Personnel.getPersonDetail(state, { id: person.id });
+      const ids = detail.subTeamTemplates.map((t) => t.id).sort((a, b) => a - b);
+      expect(ids).toEqual(
+        [subTeamOnly.id, subTeamWithProjectLink.id].sort((a, b) => a - b),
+      );
+      // 显式兜底：项目级 + 跨子组的模板绝不能混进段 5
+      expect(detail.subTeamTemplates.some((t) => t.id === projectLevel.id)).toBe(false);
+      expect(detail.subTeamTemplates.some((t) => t.id === otherTeamTpl.id)).toBe(false);
+    } finally {
+      close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 段 3 / 段 4 / 段 5 测试用的本地 helper（与上方 #82 块不共享作用域,
+// 这里按需新建一组,避免不同测试间互相污染 fixture 名字）。
+// ---------------------------------------------------------------------------
+
+/** 一次性 weekly rule——seed 模板时复用,避免 case 内联一大坨。 */
+function weeklyRule(): import("../types.js").StructuredRule {
+  return {
+    freq: "weekly",
+    bydayMask: 1 << 0,
+    bymonthday: null,
+    bymonth: null,
+    byhour: 9,
+    byminute: 0,
+    ianaZone: "Asia/Shanghai",
+    ends: { kind: "after", n: 12 },
+    holidayBehavior: "skip",
+  };
+}
+
+/**
+ * 直接 SQL 灌一条任务——绕开 [`setTaskStatus`]（那个会按 now 重写
+ * `blocked_at` / `updated_at`,会污染「按字段排序」断言）。专给段 4
+ * 的 waiting-on 排序测试用,owner 可以是任意人。
+ */
+function withTaskInsert(
+  db: import("node:sqlite").DatabaseSync,
+  row: {
+    title: string;
+    status: "Open" | "In-progress" | "Blocked" | "Waiting-on" | "Done" | "Cancelled";
+    owner: number;
+    dueDate: string | null;
+    blockedAt: string | null;
+    blockedReason: string | null;
+    waitingOn: number | null;
+    updatedAt: string;
+  },
+): number {
+  let id = 0;
+  withTx(db, () => {
+    const info = db
+      .prepare(
+        `INSERT INTO task (title, status, owner_person_id, due_date,
+                           blocked_at, blocked_reason, waiting_on_person_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        row.title,
+        row.status,
+        row.owner,
+        row.dueDate,
+        row.blockedAt,
+        row.blockedReason,
+        row.waitingOn,
+        row.updatedAt,
+      );
+    id = Number(info.lastInsertRowid);
+  });
+  return id;
+}

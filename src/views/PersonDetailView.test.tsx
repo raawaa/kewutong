@@ -20,6 +20,8 @@ import {
   listSubTeams,
   type Person,
   type PersonDetail,
+  type Project,
+  type RecurringTemplate,
   type SubTeam,
   type Task,
 } from "@/lib/api";
@@ -391,18 +393,185 @@ describe("PersonDetailView · 在飞任务段（T2）", () => {
     const onCreateTask = vi.fn();
     render(<DetailHarness onCreateTask={onCreateTask} />);
 
-    // 段头 + 按钮的 `aria-label` 是「新建任务给 TA · {状态名}」,用
+    // 段头 + 按钮的 `aria-label` 是「新建任务给 TA · {段名}」,用
     // 这个完整模式筛 header 按钮；空态按钮的「→ 新建任务给 TA」是文本
-    // 内容,匹配不到,自然排除。
+    // 内容,匹配不到,自然排除。T3 新增「等待 TA 推动」段也走同一个
+    // `onCreateTask` 回调（spec #80 §Implementation #17）——所以这
+    // 里总数是 6 + 1 = 7。
     const plusButtons = await screen.findAllByRole("button", {
       name: /新建任务给 TA ·/,
     });
-    expect(plusButtons.length).toBe(6); // 每个段一个
+    expect(plusButtons.length).toBe(7); // 6 在飞段 + 1 等待 TA 推动段
     await user.click(plusButtons[0]!);
 
     expect(onCreateTask).toHaveBeenCalledTimes(1);
     expect(vi.mocked(onCreateTask).mock.calls[0]?.[0]?.id).toBe(1);
     expect(vi.mocked(onCreateTask).mock.calls[0]?.[0]?.name).toBe("张三");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 段 3 / 段 4 / 段 5（#83 T3）
+//
+// 三段均为「读 + 加」模型：段头 = 标题 + 计数 + + 按钮;列表渲染段语义
+// 字段（项目名 / 任务名 / 模板名 + 关键上下文）;空态降级到「→ 去 XXX
+// tab 新建」。+ 按钮把当前人员 / 子组作为预填意图交给父层,由父层决定
+// 切到哪个 tab、开哪个表单。
+//
+// 三段的段内排序由命令层（#81 / #82）一次性给齐,本视图不二次排——与
+// InFlightSection 同一原则。
+// ---------------------------------------------------------------------------
+
+describe("PersonDetailView · 段 3 / 段 4 / 段 5（T3）", () => {
+  it("负责的项目段——渲染项目名 + 状态徽章 + 子组 + 截止日", async () => {
+    vi.mocked(getPersonDetail).mockResolvedValue(
+      makeDetail({
+        ownedProjects: [
+          projectStub({
+            id: 10,
+            name: "智慧城市",
+            subTeamId: 1,
+            status: "Active",
+            dueDate: "2026-12-31",
+          }),
+          projectStub({
+            id: 11,
+            name: "乡村振兴",
+            subTeamId: 2,
+            status: "Done",
+            dueDate: null,
+          }),
+        ],
+      }),
+    );
+
+    render(<DetailHarness />);
+
+    expect(await screen.findByText("智慧城市")).toBeInTheDocument();
+    expect(screen.getByText("乡村振兴")).toBeInTheDocument();
+    // 截止日与状态徽章
+    expect(screen.getByText(/截止 2026-12-31/)).toBeInTheDocument();
+  });
+
+  it("负责的项目段空：显示「暂无负责项目 → 去项目 tab 新建」", async () => {
+    vi.mocked(getPersonDetail).mockResolvedValue(makeDetail({ ownedProjects: [] }));
+
+    render(<DetailHarness />);
+
+    expect(
+      await screen.findByText(/暂无负责项目.*去项目 tab 新建/),
+    ).toBeInTheDocument();
+  });
+
+  it("负责的项目 + 按钮 → 调 onCreateProject 并带上当前人员", async () => {
+    vi.mocked(getPersonDetail).mockResolvedValue(makeDetail({ ownedProjects: [] }));
+
+    const user = userEvent.setup();
+    const onCreateProject = vi.fn();
+    render(<DetailHarness onCreateProject={onCreateProject} />);
+
+    // + 按钮的 aria-label = 「新建项目给 TA · 负责的项目」
+    await user.click(
+      await screen.findByRole("button", { name: /新建项目给 TA · 负责的项目/ }),
+    );
+
+    expect(onCreateProject).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(onCreateProject).mock.calls[0]?.[0]?.id).toBe(1);
+    expect(vi.mocked(onCreateProject).mock.calls[0]?.[0]?.name).toBe("张三");
+  });
+
+  it("等待 TA 推动段——渲染任务名 + blocked_reason（卡最久的在前）", async () => {
+    vi.mocked(getPersonDetail).mockResolvedValue(
+      makeDetail({
+        waitingOnTasks: [
+          taskStub({
+            id: 100,
+            title: "等市里回函",
+            status: "Waiting-on",
+            blockedReason: "卡在分管领导批示",
+          }),
+        ],
+      }),
+    );
+
+    render(<DetailHarness />);
+
+    expect(await screen.findByText("等市里回函")).toBeInTheDocument();
+    // 阻塞原因作为次级文案渲染
+    expect(screen.getByText(/卡在分管领导批示/)).toBeInTheDocument();
+  });
+
+  it("等待 TA 推动段空：显示「暂时没有任务等 TA 推动」", async () => {
+    vi.mocked(getPersonDetail).mockResolvedValue(makeDetail({ waitingOnTasks: [] }));
+
+    render(<DetailHarness />);
+
+    expect(
+      await screen.findByText(/暂时没有任务等 TA 推动/),
+    ).toBeInTheDocument();
+  });
+
+  it("等待 TA 推动 + 按钮 → 调 onCreateTask（与在飞段同回调）并带上当前人员", async () => {
+    vi.mocked(getPersonDetail).mockResolvedValue(makeDetail({ waitingOnTasks: [] }));
+
+    const user = userEvent.setup();
+    const onCreateTask = vi.fn();
+    render(<DetailHarness onCreateTask={onCreateTask} />);
+
+    // + 按钮的 aria-label = 「新建任务给 TA · 等待 TA 推动」
+    await user.click(
+      await screen.findByRole("button", { name: /新建任务给 TA · 等待 TA 推动/ }),
+    );
+
+    expect(onCreateTask).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(onCreateTask).mock.calls[0]?.[0]?.id).toBe(1);
+    expect(vi.mocked(onCreateTask).mock.calls[0]?.[0]?.name).toBe("张三");
+  });
+
+  it("所在子组的周期模板段——渲染模板名 + 频次", async () => {
+    vi.mocked(getPersonDetail).mockResolvedValue(
+      makeDetail({
+        subTeamTemplates: [
+          templateStub({ id: 50, name: "周一例会", freq: "weekly", bydayMask: 1 << 0 }),
+          templateStub({ id: 51, name: "月度汇报", freq: "monthly" }),
+        ],
+      }),
+    );
+
+    render(<DetailHarness />);
+
+    expect(await screen.findByText("周一例会")).toBeInTheDocument();
+    expect(screen.getByText("月度汇报")).toBeInTheDocument();
+  });
+
+  it("所在子组的周期模板段空：显示「所在子组暂无周期模板 → 去节假日 tab 配置周期事务」", async () => {
+    vi.mocked(getPersonDetail).mockResolvedValue(makeDetail({ subTeamTemplates: [] }));
+
+    render(<DetailHarness />);
+
+    expect(
+      await screen.findByText(
+        /所在子组暂无周期模板.*去节假日 tab 配置周期事务/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("所在子组的周期模板 + 按钮 → 调 onCreateTemplate 并带上当前人员的子组 id", async () => {
+    vi.mocked(getPersonDetail).mockResolvedValue(makeDetail({ subTeamTemplates: [] }));
+
+    const user = userEvent.setup();
+    const onCreateTemplate = vi.fn();
+    render(<DetailHarness onCreateTemplate={onCreateTemplate} />);
+
+    // + 按钮的 aria-label = 「新建周期模板 · 所在子组的周期模板」
+    await user.click(
+      await screen.findByRole("button", {
+        name: /新建周期模板 · 所在子组的周期模板/,
+      }),
+    );
+
+    expect(onCreateTemplate).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(onCreateTemplate).mock.calls[0]?.[0]).toBe(1); // person.subTeamId
   });
 });
 
@@ -414,6 +583,7 @@ interface TaskStubOverrides {
   id: number;
   title?: string;
   status?: Task["status"];
+  blockedReason?: string | null;
 }
 
 function taskStub(overrides: TaskStubOverrides): Task {
@@ -433,9 +603,69 @@ function taskStub(overrides: TaskStubOverrides): Task {
     effectiveDate: null,
     createdAt: "2026-09-01 09:00:00",
     updatedAt: "2026-09-01 09:00:00",
-    blockedAt: null,
-    blockedReason: null,
-    waitingOnPersonId: null,
+    blockedAt: overrides.status === "Blocked" || overrides.status === "Waiting-on"
+      ? "2026-09-01 09:00:00"
+      : null,
+    blockedReason: overrides.blockedReason ?? null,
+    waitingOnPersonId: overrides.status === "Waiting-on" ? 2 : null,
+  };
+}
+
+interface ProjectStubOverrides {
+  id: number;
+  name?: string;
+  ownerPersonId?: number;
+  subTeamId?: number;
+  startDate?: string | null;
+  dueDate?: string | null;
+  notes?: string | null;
+  createdAt?: string;
+  status?: Project["status"];
+}
+
+function projectStub(overrides: ProjectStubOverrides): Project {
+  return {
+    id: overrides.id,
+    name: overrides.name ?? "项目",
+    ownerPersonId: overrides.ownerPersonId ?? 1,
+    subTeamId: overrides.subTeamId ?? 1,
+    startDate: overrides.startDate ?? null,
+    dueDate: overrides.dueDate ?? null,
+    notes: overrides.notes ?? null,
+    createdAt: overrides.createdAt ?? "2026-09-01 09:00:00",
+    status: overrides.status ?? "Active",
+  };
+}
+
+interface TemplateStubOverrides {
+  id: number;
+  name?: string;
+  freq?: RecurringTemplate["freq"];
+  bydayMask?: number;
+  byhour?: number;
+  byminute?: number;
+  holidayBehavior?: RecurringTemplate["holidayBehavior"];
+}
+
+function templateStub(overrides: TemplateStubOverrides): RecurringTemplate {
+  return {
+    id: overrides.id,
+    name: overrides.name ?? "模板",
+    freq: overrides.freq ?? "weekly",
+    bydayMask: overrides.bydayMask ?? 0,
+    bymonthday: null,
+    bymonth: null,
+    byhour: overrides.byhour ?? 9,
+    byminute: overrides.byminute ?? 0,
+    ianaZone: "Asia/Shanghai",
+    ends: { kind: "after", n: 12 },
+    holidayBehavior: overrides.holidayBehavior ?? "skip",
+    rruleText: "RRULE:FREQ=WEEKLY",
+    projectId: null,
+    subTeamId: 1,
+    enabled: true,
+    notes: null,
+    createdAt: "2026-09-01 09:00:00",
   };
 }
 
@@ -444,7 +674,7 @@ function makeTeamAt(id: number, name: string): SubTeam {
 }
 
 /**
- * T1 + T2 测试用统一壳——包一层 PersonDetailView,把 mock 化的两个回
+ * T1 + T2 + T3 测试用统一壳——包一层 PersonDetailView,把 mock 化的回
  * 调 + 子组 catalog + 默认 refreshToken 收口在一处,各 case 只覆盖差
  * 异。`refreshToken` 默认 0;需要变更的 case（如 #81 的重拉测试）显
  * 式传入。
@@ -452,6 +682,8 @@ function makeTeamAt(id: number, name: string): SubTeam {
 function DetailHarness({
   onOpenTask,
   onCreateTask,
+  onCreateProject,
+  onCreateTemplate,
   refreshToken = 0,
 }: {
   onOpenTask?: (
@@ -459,6 +691,8 @@ function DetailHarness({
     extras: { assignee: { personId: number; name: string; subTeamName: string } },
   ) => void;
   onCreateTask?: (person: Person) => void;
+  onCreateProject?: (person: Person) => void;
+  onCreateTemplate?: (subTeamId: number) => void;
   refreshToken?: number;
 }) {
   return (
@@ -468,6 +702,8 @@ function DetailHarness({
       refreshToken={refreshToken}
       onOpenTask={onOpenTask ?? vi.fn()}
       onCreateTask={onCreateTask ?? vi.fn()}
+      onCreateProject={onCreateProject ?? vi.fn()}
+      onCreateTemplate={onCreateTemplate ?? vi.fn()}
     />
   );
 }

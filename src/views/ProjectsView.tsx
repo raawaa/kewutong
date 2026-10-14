@@ -20,17 +20,7 @@ import {
   type TaskStatus,
 } from "@/lib/api";
 import { STATUS_STYLE } from "@/lib/taskStatusStyle";
-
-/**
- * 项目状态（Active / Done / Cancelled）的色板——三色一一映射,与上面任务
- * 6 状态色的"已完成 / 已取消"对齐。Active 用 blue-50 区分于任务的
- * Open（muted），因为 Active 的语义更广（"还在飞"）而非单纯的"待开始"。
- */
-const PROJECT_STATUS_STYLE: Record<ProjectStatus, { label: string; className: string }> = {
-  Active: { label: "在飞", className: "bg-blue-50 text-blue-600" },
-  Done: { label: "已完成", className: "bg-green-50 text-green-600" },
-  Cancelled: { label: "已取消", className: "bg-muted text-muted-foreground line-through" },
-};
+import { PROJECT_STATUS_STYLE } from "@/lib/projectStatusStyle";
 
 const STATUS_COLUMNS: TaskStatus[] = [
   "Open",
@@ -56,10 +46,16 @@ interface BlockedDropPrompt {
  * 拖拽语义唯一——只在项目看板出现，其它视图（任务列表 / 人员）没有拖拽。
  * Blocked / Waiting-on 落列时弹小表单收集 reason 与可选 waiting_on。
  */
+
+// 项目状态的色板集中放在 [`src/lib/projectStatusStyle.ts`]——
+// `PersonDetailView` 的「负责的项目」段（#83 T3）共用同份,改一处同步。
+
 export function ProjectsView({
   refreshToken,
   pendingProjectId,
   onProjectLocated,
+  pendingCreateOwnerId,
+  onCreateOwnerConsumed,
 }: {
   refreshToken: number;
   /**
@@ -69,6 +65,14 @@ export function ProjectsView({
    */
   pendingProjectId?: number | null;
   onProjectLocated?: () => void;
+  /**
+   * 「人员详情」段 3（#83 T3）的 + 按钮走这条路径：切到「项目」tab
+   * 后开新建表单,把这个 owner 作为新项目的负责人预填进去。
+   * `onCreateOwnerConsumed` 在表单开起来后被调用,父层清掉这个
+   * pending 状态。
+   */
+  pendingCreateOwnerId?: number | null;
+  onCreateOwnerConsumed?: () => void;
 }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [subTeams, setSubTeams] = useState<SubTeam[]>([]);
@@ -76,7 +80,7 @@ export function ProjectsView({
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [editing, setEditing] = useState<
-    | { kind: "new" }
+    | { kind: "new"; prefillOwnerId?: number }
     | { kind: "edit"; project: Project }
     | null
   >(null);
@@ -110,6 +114,21 @@ export function ProjectsView({
       onProjectLocated?.();
     }
   }, [pendingProjectId, projects, onProjectLocated]);
+
+  // 「人员详情」段 3（#83 T3）+ 按钮跳过来：开新建表单,把
+  // pendingCreateOwnerId 作为负责人预填。注意要在 people 拉到之后才
+  // 生效——people 比 candidates 时主表单负责人 select 没候选可填,
+  // people 拉完后再 fire 一次。`prefillOwnerId` 一旦塞进 `editing`
+  // 状态就是该次"开表单"的快照——后续无关的 editing reset 不会带回
+  // 来。消费完立刻调 onCreateOwnerConsumed 清掉 pending,避免下次
+  // 重渲染重复打开表单。
+  useEffect(() => {
+    if (pendingCreateOwnerId == null) return;
+    if (people.some((p) => p.id === pendingCreateOwnerId)) {
+      setEditing({ kind: "new", prefillOwnerId: pendingCreateOwnerId });
+      onCreateOwnerConsumed?.();
+    }
+  }, [pendingCreateOwnerId, people, onCreateOwnerConsumed]);
 
   async function refreshAll() {
     setBusy(true);
@@ -363,6 +382,7 @@ export function ProjectsView({
       {editing && (
         <ProjectForm
           initial={editing.kind === "edit" ? editing.project : null}
+          prefillOwnerId={editing.kind === "new" ? editing.prefillOwnerId : undefined}
           subTeams={subTeams}
           people={people}
           busy={busy}
@@ -654,6 +674,7 @@ function BlockedDropDialog({
 
 function ProjectForm({
   initial,
+  prefillOwnerId,
   subTeams,
   people,
   busy,
@@ -661,6 +682,13 @@ function ProjectForm({
   onSubmit,
 }: {
   initial: Project | null;
+  /**
+   * 「人员详情」段 3（#83 T3）的 + 按钮走这条路径：开新建表单时把
+   * 当前人员作为预填负责人。`initial == null` 时生效（编辑现有项目
+   * 不需要 prefill,以 Owner 为准）。`exactOptionalPropertyTypes:
+   * true` 下 prop 类型写成 `number | undefined` 以允许显式传 undefined。
+   */
+  prefillOwnerId?: number | undefined;
   subTeams: SubTeam[];
   people: Person[];
   busy: boolean;
@@ -676,7 +704,7 @@ function ProjectForm({
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [ownerPersonId, setOwnerPersonId] = useState<number | "">(
-    initial?.ownerPersonId ?? "",
+    initial?.ownerPersonId ?? prefillOwnerId ?? "",
   );
   const [subTeamId, setSubTeamId] = useState<number | "">(
     initial?.subTeamId ?? (subTeams[0]?.id ?? ""),

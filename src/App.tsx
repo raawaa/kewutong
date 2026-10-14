@@ -85,6 +85,11 @@ export default function App() {
   const [pendingProjectId, setPendingProjectId] = useState<number | null>(null);
   // 人员矩阵的"定位"——同理,跳过去时滚到该人员卡片。完成后清空。
   const [pendingPersonId, setPendingPersonId] = useState<number | null>(null);
+  // 「人员详情」段 3 + 按钮（#83 T3）——切到「项目」tab 并打开新建
+  // 表单,把这个 owner 预填进去。ProjectsView 用完清。
+  const [pendingProjectCreateOwnerId, setPendingProjectCreateOwnerId] = useState<
+    number | null
+  >(null);
 
   const openCreate = useCallback(() => setDialog({ mode: "create" }), []);
   /**
@@ -233,6 +238,33 @@ export default function App() {
     [openCreate],
   );
 
+  /**
+   * 「人员详情」段 3（#83 T3）的 + 按钮走这条路径：把当前人员预填
+   * 为新项目的负责人,切到「项目」tab 并触发 ProjectsView 的"开新建
+   * 表单 + 默认填该 owner"。比让用户再切 tab + 点新建 + 选负责人
+   * 省两步。
+   */
+  const openCreateProject = useCallback(
+    (person: Person) => {
+      setPendingProjectCreateOwnerId(person.id);
+      setTab("projects");
+    },
+    [],
+  );
+
+  /**
+   * 「人员详情」段 5（#83 T3）的 + 按钮走这条路径：切到「节假日」
+   * tab。模板创建 UI 当前在 holiday tab 内还未落地（独立 ticket），
+   * 本期 spec 只要求"切到 tab + 预填子组"——切到 tab 由本回调完
+   * 成；「预填子组」的具体形态等模板 UI 落地时再补。
+   */
+  const openCreateTemplate = useCallback((_subTeamId: number) => {
+    // `subTeamId` 入参暂未使用——保留参数等模板 UI 落地后从本回调
+    // 直接预填到新表单里。当前最小动作只是切 tab。
+    void _subTeamId;
+    setTab("holiday");
+  }, []);
+
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 p-6">
       <header className="flex items-center justify-between gap-4">
@@ -297,6 +329,8 @@ export default function App() {
           refreshToken={refreshToken}
           pendingProjectId={pendingProjectId}
           onProjectLocated={() => setPendingProjectId(null)}
+          pendingCreateOwnerId={pendingProjectCreateOwnerId}
+          onCreateOwnerConsumed={() => setPendingProjectCreateOwnerId(null)}
         />
       ) : tab === "personnel" ? (
         <PersonnelView />
@@ -322,6 +356,8 @@ export default function App() {
               openEditTask(task, { assignee, project: null })
             }
             onCreateTask={(person) => openCreateWithAssignee(person)}
+            onCreateProject={(person) => openCreateProject(person)}
+            onCreateTemplate={(subTeamId) => openCreateTemplate(subTeamId)}
           />
         </div>
       )}
