@@ -30,6 +30,7 @@ import {
   type Task,
   type TrayStatusDto,
 } from "@/lib/api";
+import { toAssigneeCandidate } from "@/lib/assignee";
 
 /**
  * 顶层 tab——spec #15 user story 60-66：四个主视图平级。
@@ -86,6 +87,21 @@ export default function App() {
   const [pendingPersonId, setPendingPersonId] = useState<number | null>(null);
 
   const openCreate = useCallback(() => setDialog({ mode: "create" }), []);
+  /**
+   * 「人员详情」段 2（#82 T2）的 + 按钮走这条路径：把当前人员预填
+   * 为负责人,免去先 `@` 一下再录入标题的手势。`subTeamName` 从
+   * catalog 查；catalog 缺失时回退空串——详情页本来就有 fallback
+   * 路径（`useMissingSubTeams`）兜底,这里不重复做。
+   */
+  const openCreateWithAssignee = useCallback(
+    (person: Person) => {
+      setDialog({
+        mode: "create",
+        initialAssignee: toAssigneeCandidate(person, subTeams),
+      });
+    },
+    [subTeams],
+  );
   const closeDialog = useCallback(() => setDialog(null), []);
   const onTaskSaved = useCallback(() => {
     setDialog(null);
@@ -288,20 +304,24 @@ export default function App() {
         <HolidayCalendarView refreshToken={refreshToken} />
       )}
 
-      {/* Dev-only: 临时打开人员详情视图（ticket #81 T1 · 端到端 seam）。
+      {/* Dev-only: 临时打开人员详情视图（ticket #81 T1 / #82 T2 · 端到端 seam）。
        * 仅 dev 模式下出现,Vite 注入 `import.meta.env.DEV = true`、
        * 注入 `import.meta.env.MODE = 'development'`；生产构建时两个都
        * 不是预期值,按钮自动消失。test 模式 (`MODE = 'test'`) 也不渲
        * 染,避免污染 App.test 的断言。
-       * personId 硬编码 = 1,需要时人工改这一行重测。后续 ticket (#82 等)
+       * personId 硬编码 = 1,需要时人工改这一行重测。后续 ticket (#82+)
        * 落实「独立 tab + 子 tab 列表」后,这枚按钮自然退役。 */}
       {import.meta.env.DEV && import.meta.env.MODE !== "test" && (
         <div className="border-warning/40 bg-warning/10 rounded-md border p-3 text-xs">
-          <div className="text-warning mb-2 font-medium">DEV · 人员详情（T1 临时入口）</div>
+          <div className="text-warning mb-2 font-medium">DEV · 人员详情（T1+T2 临时入口）</div>
           <PersonDetailView
             personId={1}
             subTeams={subTeams}
             refreshToken={refreshToken}
+            onOpenTask={(task, { assignee }) =>
+              openEditTask(task, { assignee, project: null })
+            }
+            onCreateTask={(person) => openCreateWithAssignee(person)}
           />
         </div>
       )}

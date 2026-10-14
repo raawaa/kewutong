@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { DatabaseSync } from "node:sqlite";
 
 import { freshDb } from "../test/commands/fresh_db.js";
 import * as Personnel from "./index.js";
@@ -6,6 +7,7 @@ import * as Project from "../project/index.js";
 import * as RecurringTemplate from "../recurring_template/index.js";
 import { AppError } from "../error.js";
 import { withTx } from "../sqlite.js";
+import type { AppState } from "../state.js";
 
 describe("personnel / 子组 CRUD（#17）", () => {
   it("空库时 listSubTeams 返回空", () => {
@@ -435,6 +437,362 @@ describe("personnel / getPersonDetail（#81）", () => {
       // 已存在人员应可正常返回
       const detail = Personnel.getPersonDetail(state, { id: a.id });
       expect(detail.person.id).toBe(a.id);
+    } finally {
+      close();
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // 段内排序（#82 T2）——「Longest-Stuck」语义在命令层一次给齐,前端不
+  // 重排。3 类排序各 3 条互不相同的值 + 显式覆盖 NULL/并列兜底。
+  // -----------------------------------------------------------------------
+
+  /**
+   * 给单人灌 6 段测试任务的便捷工厂——本块 6 个 case 都跑这套结构。
+   * 函数内返回 `personId` 由调用方持有,做后续断言。
+   */
+  function seedPersonWithSixSegments(): { state: AppState; personId: number; close: () => void } {
+    const { state, close } = freshDb({ now: "2026-09-10 12:00:00" });
+    const team = Personnel.createSubTeam(state, { name: "一组" });
+    const person = Personnel.createPerson(state, {
+      name: "张三",
+      subTeamId: team.id,
+      contact: "1",
+    });
+    return { state, personId: person.id, close };
+  }
+
+  /**
+   * 直接 SQL 灌一条任务——绕开 `setTaskStatus`（那个会按 now 重写
+   * `blocked_at` / `updated_at`,会污染本块的「按字段排序」断言）。
+   */
+  function insertTaskRow(
+    db: DatabaseSync,
+    row: {
+      title: string;
+      status: "Open" | "In-progress" | "Blocked" | "Waiting-on" | "Done" | "Cancelled";
+      ownerPersonId: number;
+      dueDate: string | null;
+      blockedAt: string | null;
+      blockedReason: string | null;
+      waitingOnPersonId: number | null;
+      updatedAt: string;
+    },
+  ): number {
+    let id = 0;
+    withTx(db, () => {
+      const info = db
+        .prepare(
+          `INSERT INTO task (title, status, owner_person_id, due_date,
+                             blocked_at, blocked_reason, waiting_on_person_id, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          row.title,
+          row.status,
+          row.ownerPersonId,
+          row.dueDate,
+          row.blockedAt,
+          row.blockedReason,
+          row.waitingOnPersonId,
+          row.updatedAt,
+        );
+      id = Number(info.lastInsertRowid);
+    });
+    return id;
+  }
+
+  it("Open 段按 due_date ASC 排,NULL 排到末尾", () => {
+    const { state, personId, close } = seedPersonWithSixSegments();
+    try {
+      // 三条 Open：1 天后 / 5 天后 / NULL。NULL 必须排到末。
+      const nearId = insertTaskRow(state.db, {
+        title: "1 天后到期",
+        status: "Open",
+        ownerPersonId: personId,
+        dueDate: "2026-09-11",
+        blockedAt: null,
+        blockedReason: null,
+        waitingOnPersonId: null,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+      const farId = insertTaskRow(state.db, {
+        title: "5 天后到期",
+        status: "Open",
+        ownerPersonId: personId,
+        dueDate: "2026-09-15",
+        blockedAt: null,
+        blockedReason: null,
+        waitingOnPersonId: null,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+      const noDueId = insertTaskRow(state.db, {
+        title: "无截止",
+        status: "Open",
+        ownerPersonId: personId,
+        dueDate: null,
+        blockedAt: null,
+        blockedReason: null,
+        waitingOnPersonId: null,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+
+      const detail = Personnel.getPersonDetail(state, { id: personId });
+      expect(detail.inFlight.open.map((t) => t.id)).toEqual([
+        nearId,
+        farId,
+        noDueId,
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("In-progress 段按 due_date ASC 排,NULL 排到末尾", () => {
+    const { state, personId, close } = seedPersonWithSixSegments();
+    try {
+      const nearId = insertTaskRow(state.db, {
+        title: "进行中 · 1 天后",
+        status: "In-progress",
+        ownerPersonId: personId,
+        dueDate: "2026-09-11",
+        blockedAt: null,
+        blockedReason: null,
+        waitingOnPersonId: null,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+      const noDueId = insertTaskRow(state.db, {
+        title: "进行中 · 无截止",
+        status: "In-progress",
+        ownerPersonId: personId,
+        dueDate: null,
+        blockedAt: null,
+        blockedReason: null,
+        waitingOnPersonId: null,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+      const farId = insertTaskRow(state.db, {
+        title: "进行中 · 5 天后",
+        status: "In-progress",
+        ownerPersonId: personId,
+        dueDate: "2026-09-15",
+        blockedAt: null,
+        blockedReason: null,
+        waitingOnPersonId: null,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+
+      const detail = Personnel.getPersonDetail(state, { id: personId });
+      expect(detail.inFlight.inProgress.map((t) => t.id)).toEqual([
+        nearId,
+        farId,
+        noDueId,
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("Blocked 段按 blocked_at ASC 排,longest-stuck 最靠前", () => {
+    const { state, personId, close } = seedPersonWithSixSegments();
+    try {
+      // 三条 Blocked：阻塞起点分别是 1 天前 / 5 天前 / 10 天前。
+      // longest-stuck first → 10 天前那一条排第一。
+      const oneDayId = insertTaskRow(state.db, {
+        title: "阻塞 1 天",
+        status: "Blocked",
+        ownerPersonId: personId,
+        dueDate: null,
+        blockedAt: "2026-09-09 12:00:00",
+        blockedReason: "卡审批",
+        waitingOnPersonId: null,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+      const fiveDayId = insertTaskRow(state.db, {
+        title: "阻塞 5 天",
+        status: "Blocked",
+        ownerPersonId: personId,
+        dueDate: null,
+        blockedAt: "2026-09-05 12:00:00",
+        blockedReason: "卡审批",
+        waitingOnPersonId: null,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+      const tenDayId = insertTaskRow(state.db, {
+        title: "阻塞 10 天",
+        status: "Blocked",
+        ownerPersonId: personId,
+        dueDate: null,
+        blockedAt: "2026-08-31 12:00:00",
+        blockedReason: "卡审批",
+        waitingOnPersonId: null,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+
+      const detail = Personnel.getPersonDetail(state, { id: personId });
+      expect(detail.inFlight.blocked.map((t) => t.id)).toEqual([
+        tenDayId,
+        fiveDayId,
+        oneDayId,
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("Waiting-on 段按 blocked_at ASC 排,longest-stuck 最靠前", () => {
+    const { state, personId, close } = seedPersonWithSixSegments();
+    try {
+      const someoneElseId = Personnel.createPerson(state, {
+        name: "李四",
+        subTeamId: 1,
+        contact: "2",
+      }).id;
+
+      const oneDayId = insertTaskRow(state.db, {
+        title: "等 1 天",
+        status: "Waiting-on",
+        ownerPersonId: personId,
+        dueDate: null,
+        blockedAt: "2026-09-09 12:00:00",
+        blockedReason: "等审批",
+        waitingOnPersonId: someoneElseId,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+      const fiveDayId = insertTaskRow(state.db, {
+        title: "等 5 天",
+        status: "Waiting-on",
+        ownerPersonId: personId,
+        dueDate: null,
+        blockedAt: "2026-09-05 12:00:00",
+        blockedReason: "等审批",
+        waitingOnPersonId: someoneElseId,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+      const tenDayId = insertTaskRow(state.db, {
+        title: "等 10 天",
+        status: "Waiting-on",
+        ownerPersonId: personId,
+        dueDate: null,
+        blockedAt: "2026-08-31 12:00:00",
+        blockedReason: "等审批",
+        waitingOnPersonId: someoneElseId,
+        updatedAt: "2026-09-10 12:00:00",
+      });
+
+      const detail = Personnel.getPersonDetail(state, { id: personId });
+      expect(detail.inFlight.waitingOn.map((t) => t.id)).toEqual([
+        tenDayId,
+        fiveDayId,
+        oneDayId,
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("Done 段按 updated_at DESC 排", () => {
+    const { state, personId, close } = seedPersonWithSixSegments();
+    try {
+      // updated_at 分别是 1 天前 / 5 天前 / 10 天前。DESC → 1 天前那
+      // 条排第一（最新完成的先看）。
+      const oneDayId = insertTaskRow(state.db, {
+        title: "完成 · 1 天前",
+        status: "Done",
+        ownerPersonId: personId,
+        dueDate: null,
+        blockedAt: null,
+        blockedReason: null,
+        waitingOnPersonId: null,
+        updatedAt: "2026-09-09 12:00:00",
+      });
+      const fiveDayId = insertTaskRow(state.db, {
+        title: "完成 · 5 天前",
+        status: "Done",
+        ownerPersonId: personId,
+        dueDate: null,
+        blockedAt: null,
+        blockedReason: null,
+        waitingOnPersonId: null,
+        updatedAt: "2026-09-05 12:00:00",
+      });
+      const tenDayId = insertTaskRow(state.db, {
+        title: "完成 · 10 天前",
+        status: "Done",
+        ownerPersonId: personId,
+        dueDate: null,
+        blockedAt: null,
+        blockedReason: null,
+        waitingOnPersonId: null,
+        updatedAt: "2026-08-31 12:00:00",
+      });
+
+      const detail = Personnel.getPersonDetail(state, { id: personId });
+      expect(detail.inFlight.done.map((t) => t.id)).toEqual([
+        oneDayId,
+        fiveDayId,
+        tenDayId,
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("Cancelled 段按 updated_at DESC 排", () => {
+    const { state, personId, close } = seedPersonWithSixSegments();
+    try {
+      const oneDayId = insertTaskRow(state.db, {
+        title: "取消 · 1 天前",
+        status: "Cancelled",
+        ownerPersonId: personId,
+        dueDate: null,
+        blockedAt: null,
+        blockedReason: null,
+        waitingOnPersonId: null,
+        updatedAt: "2026-09-09 12:00:00",
+      });
+      const fiveDayId = insertTaskRow(state.db, {
+        title: "取消 · 5 天前",
+        status: "Cancelled",
+        ownerPersonId: personId,
+        dueDate: null,
+        blockedAt: null,
+        blockedReason: null,
+        waitingOnPersonId: null,
+        updatedAt: "2026-09-05 12:00:00",
+      });
+      const tenDayId = insertTaskRow(state.db, {
+        title: "取消 · 10 天前",
+        status: "Cancelled",
+        ownerPersonId: personId,
+        dueDate: null,
+        blockedAt: null,
+        blockedReason: null,
+        waitingOnPersonId: null,
+        updatedAt: "2026-08-31 12:00:00",
+      });
+
+      const detail = Personnel.getPersonDetail(state, { id: personId });
+      expect(detail.inFlight.cancelled.map((t) => t.id)).toEqual([
+        oneDayId,
+        fiveDayId,
+        tenDayId,
+      ]);
+    } finally {
+      close();
+    }
+  });
+
+  it("空段聚合：六段全空时各桶都为空数组", () => {
+    const { state, personId, close } = seedPersonWithSixSegments();
+    try {
+      const detail = Personnel.getPersonDetail(state, { id: personId });
+      expect(detail.inFlight.open).toEqual([]);
+      expect(detail.inFlight.inProgress).toEqual([]);
+      expect(detail.inFlight.blocked).toEqual([]);
+      expect(detail.inFlight.waitingOn).toEqual([]);
+      expect(detail.inFlight.done).toEqual([]);
+      expect(detail.inFlight.cancelled).toEqual([]);
     } finally {
       close();
     }

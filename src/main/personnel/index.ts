@@ -441,15 +441,14 @@ export function personnelMatrix(
 /**
  * 拉取 owner = 本人 的所有任务（不限状态）——6 状态分桶的源数据。
  *
- * 单条 SQL 把 6 状态全捞出来,再在 TS 里按 `status` 分桶——避免在 SQL
- * 端打 6 个 `IN (...)` 拼装。每条仍走 [`TASK_COLUMNS`] + [`rowToTask`]
- * 的同源 mapping,与 [`fetchInFlightTasksForPerson`] 共用 DTO 形状。
+ * 单条 SQL 把 6 状态全捞出来,再在 TS 里按 `status` 分桶 + 段内排——
+ * 避免在 SQL 端打 6 个 `IN (...)` 拼装。每条仍走 [`TASK_COLUMNS`] +
+ * [`rowToTask`] 的同源 mapping,与 [`fetchInFlightTasksForPerson`] 共
+ * 用 DTO 形状。
  *
- * 排序：与 [`inFlightTaskOrderBy`] 同样的"在飞优先 + due_date + id"兜
- * 底；调用方按 status 分桶后,各桶内顺序已对齐段内排序（Open / In-
- * progress 看 due_date;Blocked / Waiting-on 看 blocked_at;Done /
- * Cancelled 看 updated_at）。具体段内排序在 T2 票落实,本命令只保证
- * 「拿到完整列表」,段内排序由分桶后置入。
+ * 段内排序由 [`bucketByStatus`]（#82 T2）一次性给齐,SQL 端走
+ * [`inFlightTaskOrderBy`] 兜底——单人员全状态的任务量极小,顺序先
+ * 后不影响 TS 端按段语义最终拍板。
  */
 function fetchAllTasksForPerson(
   db: DatabaseSync,
@@ -492,12 +491,22 @@ function fetchWaitingOnTasksForPerson(
 }
 
 /**
- * 任务按 6 状态分桶——把一条 task 放到对应桶里。
+ * 任务按 6 状态分桶——把一条 task 放到对应桶里,再按各段语义排序。
  *
- * `waitingOn` 桶额外过滤 `waiting_on_person_id != 本人` ——「本人在等别人」
- * 与「本人在等自己」（自反,DB 允许）的拆分：自反等待不进 waitingOn 桶,
- * 因为语义是"卡在某处等审批",不是"等别人推动"。原 spec 写的是
- * 「owner=本人 且 waiting_on_person_id 是别人」,这里精确还原。
+ * **`waitingOn` 桶额外过滤 `waiting_on_person_id != 本人`**——「本人
+ * 在等别人」与「本人在等自己」（自反,DB 允许）的拆分：自反等待不进
+ * waitingOn 桶,因为语义是"卡在某处等审批",不是"等别人推动"。原
+ * spec 写的是「owner=本人 且 waiting_on_person_id 是别人」,这里
+ * 精确还原。
+ *
+ * **段内排序由 [`bucketByStatus`] 一次性给齐**（#82 T2）：
+ * - `Open` / `In-progress` ——`due_date` 升序,NULL 排末；
+ * - `Blocked` / `Waiting-on` ——`blocked_at` 升序,longest-stuck 最靠前；
+ * - `Done` / `Cancelled` ——`updated_at` 降序,最近完成的先看。
+ *
+ * 排序在 TS 里跑（不在 SQL）——上层已经用一条 `WHERE owner_person_id
+ * = ?` 把该人员的所有任务拉回来,数据量是单人员全状态,6 个桶都极小,
+ * 内存排一遍比再发 6 条 SQL 便宜,也避免把 SQL 拼得四处散落。
  */
 function bucketByStatus(
   tasks: Task[],
@@ -538,7 +547,50 @@ function bucketByStatus(
         break;
     }
   }
+
+  // 各桶按段语义排——见函数头注释。`nullish` 用 `<` / `>` 在 `null`
+  // 与字符串之间比较时,JS 会做字典序,「非空先排」语义自然达成；要
+  // 「NULL 排末」就把 null 反向排（DESC 等价）。
+  buckets.open.sort(compareByDueDateAscNullLast);
+  buckets.inProgress.sort(compareByDueDateAscNullLast);
+  buckets.blocked.sort(compareByBlockedAtAsc);
+  buckets.waitingOn.sort(compareByBlockedAtAsc);
+  buckets.done.sort(compareByUpdatedAtDesc);
+  buckets.cancelled.sort(compareByUpdatedAtDesc);
+
   return buckets;
+}
+
+/** `due_date` 升序,NULL 排末——Open / In-progress 共用。 */
+function compareByDueDateAscNullLast(a: Task, b: Task): number {
+  if (a.dueDate === null && b.dueDate === null) return a.id - b.id;
+  if (a.dueDate === null) return 1; // null 排末
+  if (b.dueDate === null) return -1;
+  if (a.dueDate < b.dueDate) return -1;
+  if (a.dueDate > b.dueDate) return 1;
+  return a.id - b.id;
+}
+
+/** `blocked_at` 升序——Blocked / Waiting-on 共用（longest-stuck first）。 */
+function compareByBlockedAtAsc(a: Task, b: Task): number {
+  const aAt = a.blockedAt;
+  const bAt = b.blockedAt;
+  // 这两个状态的 `blocked_at` 走 [`setTaskStatus`] 写库,DB NOT NULL 强
+  // 制——这里收 null 兜底但断言「不可能出现」,一旦出现就把 null 排末
+  // 让观察者看到而非吞错。
+  if (aAt === null && bAt === null) return a.id - b.id;
+  if (aAt === null) return 1;
+  if (bAt === null) return -1;
+  if (aAt < bAt) return -1;
+  if (aAt > bAt) return 1;
+  return a.id - b.id;
+}
+
+/** `updated_at` 降序——Done / Cancelled 共用（最近完成的先看）。 */
+function compareByUpdatedAtDesc(a: Task, b: Task): number {
+  if (a.updatedAt > b.updatedAt) return -1;
+  if (a.updatedAt < b.updatedAt) return 1;
+  return b.id - a.id;
 }
 
 /**

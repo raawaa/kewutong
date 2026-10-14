@@ -160,6 +160,7 @@ export type {
     DueDateChip,
     PersonnelMatrixPerson,
     PersonnelMatrixSegment,
+    PersonDetailInFlight,
     TodayWeekCounts,
     TodayWeekBuckets,
     StructuredRule,

@@ -25,9 +25,13 @@ import {
  *
  * **编辑即详情**（ticket #19）：点开一条已有任务就是 `edit`，字段与 `create`
  * 完全一致——没有独立的详情视图，也没有第二套改期手势。
+ *
+ * `create` 模式可以带一个 `initialAssignee` ——人员详情段 2 的 + 按钮
+ * 走这条路径（#82 T2），预填负责人为本人员，避免 `TitleEditor` 一开
+ * 就让用户先 `@` 一下。「不预填」=字段缺省——和显式 `null` 等价。
  */
 export type TaskDialogTarget =
-  | { mode: "create" }
+  | { mode: "create"; initialAssignee?: AssigneeCandidate | null }
   | { mode: "edit"; task: Task; assignee: AssigneeCandidate | null; project: ProjectCandidate | null };
 
 /**
@@ -50,7 +54,9 @@ export function TaskDialog({
   const [options, setOptions] = useState<DueDateOption[] | null>(null);
   const [title, setTitle] = useState(editing?.title ?? "");
   const [assignee, setAssignee] = useState<AssigneeCandidate | null>(
-    target.mode === "edit" ? target.assignee : null,
+    target.mode === "edit"
+      ? target.assignee
+      : target.initialAssignee ?? null,
   );
   const [project, setProject] = useState<ProjectCandidate | null>(
     target.mode === "edit" ? target.project : null,
