@@ -484,6 +484,7 @@ export default function App() {
           onCreateTask={(person) => openCreateWithAssignee(person)}
           onCreateProject={(person) => openCreateProject(person)}
           onCreateTemplate={(subTeamId) => openCreateTemplate(subTeamId)}
+          onOpenPerson={openPerson}
         />
       ) : (
         <HolidayCalendarView refreshToken={refreshToken} />

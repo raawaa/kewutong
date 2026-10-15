@@ -21,6 +21,7 @@ import userEvent from "@testing-library/user-event";
 import { PersonDetailTabsView } from "./PersonDetailTabsView";
 import {
   getPersonDetail,
+  listPeople,
   listSubTeams,
   type Person,
   type PersonDetail,
@@ -31,6 +32,7 @@ import {
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   getPersonDetail: vi.fn(),
+  listPeople: vi.fn(),
   listSubTeams: vi.fn(),
 }));
 
@@ -104,9 +106,26 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("PersonDetailTabsView · 渲染", () => {
-  it("子 tab 列表空时显示占位文案", () => {
-    render(<Harness />);
-    expect(screen.getByText(/还没有打开任何人员的详情/)).toBeInTheDocument();
+  it("子 tab 列表空时显示浏览网格（搜索框 + 全员卡片）", () => {
+    render(
+      <Harness
+        people={[
+          makePerson(1, { name: "张三" }),
+          makePerson(2, { name: "李四" }),
+        ]}
+      />,
+    );
+    // 不再显示 T4 的占位文案
+    expect(
+      screen.queryByText(/还没有打开任何人员的详情/),
+    ).not.toBeInTheDocument();
+    // 搜索框出现
+    expect(
+      screen.getByRole("searchbox", { name: /姓名.*子组名/ }),
+    ).toBeInTheDocument();
+    // 网格卡片渲染（按姓名查询）
+    expect(screen.getByText("张三")).toBeInTheDocument();
+    expect(screen.getByText("李四")).toBeInTheDocument();
   });
 
   it("渲染子 tab 条 + 当前激活 tab 的详情", async () => {
@@ -197,6 +216,209 @@ describe("PersonDetailTabsView · 渲染", () => {
     );
     // id=99 的子 tab 标题显示 fallback
     expect(screen.getByText("id=99 已被删除")).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 浏览网格（T5 / ticket #85）
+//
+// 子 tab 列表空时显示：顶部搜索框 + 人员卡片网格（姓名 / 子组 / 在岗
+// 徽章 / 离岗徽章 / 联系方式前 8 字）。点击卡片 → onOpenPerson(id) 走
+// App 的 openPerson 入口——与其它真入口（矩阵 / PersonnelView / ⌘K
+// / 任务负责人）行为同形（Q10 / Q23 决议）。
+// ---------------------------------------------------------------------------
+
+describe("PersonDetailTabsView · 浏览网格（#85）", () => {
+  it("网格卡片显示：姓名 / 子组 / 在岗徽章 / 联系方式前 8 字", () => {
+    render(
+      <Harness
+        people={[
+          // 联系方式刚好 8 字 — 严格匹配展示前 8 字;长联系方式在另一条用例验。
+          makePerson(1, { name: "张三", contact: "13800001" }),
+          makePerson(2, { name: "李四", contact: "abcd1234" }),
+        ]}
+      />,
+    );
+    // 姓名
+    expect(screen.getByText("张三")).toBeInTheDocument();
+    expect(screen.getByText("李四")).toBeInTheDocument();
+    // 子组(两张卡同一子组 → 出现 2 次)
+    expect(screen.getAllByText("一组")).toHaveLength(2);
+    // 在岗徽章
+    expect(screen.getAllByText("在岗")).toHaveLength(2);
+    // 联系方式前 8 字 —— 严格 8 字时不带省略号
+    expect(screen.getByText("13800001")).toBeInTheDocument();
+    expect(screen.getByText("abcd1234")).toBeInTheDocument();
+    // 不显示「在飞任务数」—— 与人员矩阵的「任务负载」维度区分(Q24/Q29)
+    expect(screen.queryByText(/在飞/)).not.toBeInTheDocument();
+  });
+
+  it("联系方式超过 8 字时,卡片只截前 8 字 + 省略号", () => {
+    render(
+      <Harness
+        people={[
+          makePerson(1, { name: "张三", contact: "13800001234" }),
+        ]}
+      />,
+    );
+    // 完整联系方式在 title 属性里 —— hover 能看到
+    expect(
+      screen.getByTitle("13800001234"),
+    ).toBeInTheDocument();
+    // 卡片显示前 8 字 + 省略号 —— 严格匹配 textContent
+    expect(screen.getByText("13800001…")).toBeInTheDocument();
+  });
+
+  it("离岗人员显示「离岗」徽章", () => {
+    render(
+      <Harness
+        people={[
+          makePerson(1, { name: "张三", deactivatedAt: "2026-08-01 09:00:00" }),
+          makePerson(2, { name: "李四" }),
+        ]}
+      />,
+    );
+    // 张三是离岗,李四是在岗
+    expect(screen.getByText("离岗")).toBeInTheDocument();
+    expect(screen.getByText("在岗")).toBeInTheDocument();
+  });
+
+  it("搜索框按姓名子串过滤（不区分大小写）", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        people={[
+          makePerson(1, { name: "张三" }),
+          makePerson(2, { name: "李四" }),
+        ]}
+      />,
+    );
+
+    const search = screen.getByRole("searchbox", { name: /姓名.*子组名/ });
+    // 大写英文,中文姓名"张三"不匹配
+    await user.type(search, "ABC");
+    expect(screen.getByText(/没有匹配的人员/)).toBeInTheDocument();
+
+    // 清空 + 输入「李」 → 仅李四留下
+    await user.clear(search);
+    await user.type(search, "李");
+    expect(screen.getByText("李四")).toBeInTheDocument();
+    expect(screen.queryByText("张三")).not.toBeInTheDocument();
+  });
+
+  it("搜索框按子组名子串过滤（不区分大小写）", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        subTeams={[
+          { id: 1, name: "一组", description: null, sortOrder: 0, createdAt: "2026-09-01 09:00:00" },
+          { id: 2, name: "二组", description: null, sortOrder: 1, createdAt: "2026-09-01 09:00:00" },
+        ]}
+        people={[
+          makePerson(1, { name: "张三", subTeamId: 1 }),
+          makePerson(2, { name: "李四", subTeamId: 2 }),
+        ]}
+      />,
+    );
+
+    const search = screen.getByRole("searchbox", { name: /姓名.*子组名/ });
+    await user.type(search, "二组");
+    expect(screen.getByText("李四")).toBeInTheDocument();
+    expect(screen.queryByText("张三")).not.toBeInTheDocument();
+  });
+
+  it("搜索是本地 in-memory 过滤——不发 IPC", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        people={[
+          makePerson(1, { name: "张三" }),
+          makePerson(2, { name: "李四" }),
+        ]}
+      />,
+    );
+    const search = screen.getByRole("searchbox", { name: /姓名.*子组名/ });
+    // 网格只接受父层 catalog,无独立 IPC 入口 —— 渲染中没新增 listPeople 调用,
+    // 搜索纯客户端 .includes()。这是「不引入额外 IPC」的实测:
+    // 整个 PersonDetailTabsView 一次渲染后,输入搜索关键字不应触发
+    // listPeople 调用 —— listPeople 仍是父层 catalog 的事。
+    await user.type(search, "李");
+
+    expect(screen.getByText("李四")).toBeInTheDocument();
+    // 直接断言 listPeople 没在本测试里被调到 —— 网格层无 IPC 入口。
+    expect(vi.mocked(listPeople)).not.toHaveBeenCalled();
+  });
+
+  it("点击网格卡片触发 onOpenPerson(personId)", async () => {
+    const user = userEvent.setup();
+    const onOpenPerson = vi.fn();
+    render(
+      <Harness
+        people={[makePerson(42, { name: "王五" })]}
+        onOpenPerson={onOpenPerson}
+      />,
+    );
+
+    // 用 byText 找到名字,再找最近的 button —— 卡片 = button
+    const card = screen.getByRole("button", { name: /王五/ });
+    await user.click(card);
+
+    expect(onOpenPerson).toHaveBeenCalledWith(42);
+  });
+
+  it("catalog 为空时显示「还没有人员」提示(不显示搜索框)", () => {
+    render(<Harness people={[]} />);
+    expect(screen.getByText(/还没有人员/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("searchbox", { name: /姓名.*子组名/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("关闭最后一个子 tab → 自动回到网格", async () => {
+    const onClose = vi.fn();
+    // 单元视图层的合同是「openPersonTabs=[] → 渲染浏览网格」。
+    // 父层 App.tsx 的 closePersonTab（tickets #84 T4）已实现「最后
+    // 一条关闭时,activePersonId→null + 数组清空」的同步收敛；本测试
+    // 不重复测 App 状态机,只断言「只要上层给空数组 + null 激活,网
+    // 格自动现身」。
+    const { rerender } = render(
+      <Harness
+        people={[
+          makePerson(1, { name: "张三" }),
+          makePerson(2, { name: "李四" }),
+        ]}
+        openPersonTabs={[{ personId: 1 }]}
+        activePersonId={1}
+        onClose={onClose}
+      />,
+    );
+
+    // 激活的子 tab 渲染了 PersonDetailView —— 等头部 "张三" h2 出来
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 2, name: "人员 1" })).toBeInTheDocument(),
+    );
+    // 此刻不应有搜索框（列表非空 → 子 tab 内容区在,网格不显示）
+    expect(
+      screen.queryByRole("searchbox", { name: /姓名.*子组名/ }),
+    ).not.toBeInTheDocument();
+
+    // 模拟父层 closePersonTab 收敛后:列表空、激活态 null —— 网格重新出现
+    rerender(
+      <Harness
+        people={[
+          makePerson(1, { name: "张三" }),
+          makePerson(2, { name: "李四" }),
+        ]}
+        openPersonTabs={[]}
+        activePersonId={null}
+      />,
+    );
+    // 网格(搜索框 + 张三 / 李四 卡片)出现
+    expect(
+      screen.getByRole("searchbox", { name: /姓名.*子组名/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("张三")).toBeInTheDocument();
+    expect(screen.getByText("李四")).toBeInTheDocument();
   });
 });
 
@@ -664,6 +886,7 @@ interface HarnessProps {
   openPersonTabs?: ReadonlyArray<{ personId: number }>;
   activePersonId?: number | null;
   people?: ReadonlyArray<Person>;
+  subTeams?: SubTeam[];
   refreshToken?: number;
   onActivate?: (personId: number) => void;
   onClose?: (personId: number) => void;
@@ -679,12 +902,14 @@ interface HarnessProps {
   onCreateTask?: (person: Person) => void;
   onCreateProject?: (person: Person) => void;
   onCreateTemplate?: (subTeamId: number) => void;
+  onOpenPerson?: (personId: number) => void;
 }
 
 function Harness(props: HarnessProps) {
-  const subTeams: SubTeam[] = [
-    { id: 1, name: "一组", description: null, sortOrder: 0, createdAt: "2026-09-01 09:00:00" },
-  ];
+  const subTeams: SubTeam[] =
+    props.subTeams ?? [
+      { id: 1, name: "一组", description: null, sortOrder: 0, createdAt: "2026-09-01 09:00:00" },
+    ];
   const people: ReadonlyArray<Person> =
     props.people ?? [makePerson(1), makePerson(2), makePerson(3)];
   return (
@@ -705,6 +930,7 @@ function Harness(props: HarnessProps) {
       onCreateTask={props.onCreateTask ?? vi.fn()}
       onCreateProject={props.onCreateProject ?? vi.fn()}
       onCreateTemplate={props.onCreateTemplate ?? vi.fn()}
+      onOpenPerson={props.onOpenPerson ?? vi.fn()}
     />
   );
 }

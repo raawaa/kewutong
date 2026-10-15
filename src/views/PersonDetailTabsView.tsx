@@ -17,15 +17,17 @@ import {
 } from "@/lib/api";
 
 /**
- * 「人员详情」主 tab 的子 tab 列表 + 内容区（tickets #80 / #84 T4）。
+ * 「人员详情」主 tab 的子 tab 列表 + 内容区（tickets #80 / #84 T4 / #85 T5）。
  *
  * 基础设施层 —— 不画详情内容，只承担：
  * 1. 子 tab 条（姓名 / （离岗）徽章 / × / 切换激活态 / 拖拽重排 / 右键菜单）。
  * 2. 已开子 tab 的内容区：所有 `PersonDetailView` 同时挂载，非激活用
  *    `hidden` 隐藏 —— DOM 与 React state 保留，切换瞬时（Q23）。
- * 3. 子 tab 列表空时显示空态占位（浏览网格由 T5 #85 接入）。
+ * 3. 子 tab 列表空时显示浏览网格（T5 #85）：搜索框 + 人员卡片网格，
+ *    点卡片 = onOpenPerson(id) 走 App 的 openPerson 入口，与其它真
+ *    入口（矩阵 / PersonnelView / TaskDialog / ⌘K）行为同形（Q10）。
  *
- * 业务规则在 `PersonDetailView` 与主进程命令层；本视图只管"开 / 关 / 重排"。
+ * 业务规则在 `PersonDetailView` 与主进程命令层；本视图只管"开 / 关 / 重排 / 浏览"。
  */
 
 /** 一条已开子 tab = 一位人员的详情容器（spec #80 §Implementation #3）。 */
@@ -50,6 +52,7 @@ export function PersonDetailTabsView({
   onCreateTask,
   onCreateProject,
   onCreateTemplate,
+  onOpenPerson,
 }: {
   /** 已开子 tab 列表 —— 物理顺序即子 tab 显示顺序（spec #80 §Impl #11）。 */
   openPersonTabs: ReadonlyArray<OpenPersonTab>;
@@ -80,6 +83,12 @@ export function PersonDetailTabsView({
   onCreateTask: (person: Person) => void;
   onCreateProject: (person: Person) => void;
   onCreateTemplate: (subTeamId: number) => void;
+  /**
+   * 浏览网格（T5 #85）点击卡片 → App 的 openPerson —— 与其它真入口
+   * （矩阵 / PersonnelView / TaskDialog 负责人 / ⌘K）行为同形（Q10）。
+   * 同一 personId 重复 add → 聚焦已开，本回调仍正常调用，App 层负责去重。
+   */
+  onOpenPerson: (personId: number) => void;
 }) {
   const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
 
@@ -95,7 +104,11 @@ export function PersonDetailTabsView({
       </header>
 
       {openPersonTabs.length === 0 ? (
-        <EmptyState />
+        <PersonBrowseGrid
+          people={people}
+          subTeams={subTeams}
+          onOpenPerson={onOpenPerson}
+        />
       ) : (
         <>
           <PersonSubTabBar
@@ -562,23 +575,175 @@ function PersonDetailContentArea({
 }
 
 // ---------------------------------------------------------------------------
-// 空态 —— 子 tab 列表全空时显示（tickets #84 T4 占位 + #85 T5 浏览网格）
+// 浏览网格 —— 子 tab 列表全空时显示（ticket #85 T5）
+//
+// 设计要点：
+// - 顶部一个搜索框，按「姓名 / 子组名」子串模糊匹配，**本地 in-memory**
+//   过滤——复用既有 `listPeople` 的 `name LIKE` + `escapeLike` 模式在
+//   客户端过滤 (Q24 / Q29 决议),不引入额外 IPC。
+// - 每张卡片 = 姓名 + 子组名 + 在岗/离岗徽章 + 联系方式前 8 字。
+//   **不**显示在飞任务数——与人员矩阵的「任务负载」维度区分(Q24 / Q29)。
+// - catalog 空（catalog 没拉到 / 真的没人）→ 友好提示,不发 IPC。
+// - catalog 顺序即卡片顺序（list_people 已按子组 ASC → 在岗优先 → id ASC 排）。
 // ---------------------------------------------------------------------------
 
 /**
- * 子 tab 列表全空时的占位文案 —— 浏览网格是 #85 T5 的范围，本视图只
- * 给「请打开」提示，避免冷启动看到一片空白。
+ * 「姓名 / 子组名」本地 in-memory 过滤——子串、不区分大小写。
+ *
+ * 与命令层 `listPeople` 走同一种语义（`%query%` 模式）但**不发 IPC**：
+ * 父层 catalog 一次性拉过,客户端直接 `.includes()`。`%` / `_` /
+ * 反斜杠由前端不做处理——前端的 `.includes` 不解析通配符,用户敲
+ * `%` 就是字面 `%`。
  */
-function EmptyState() {
+function filterPeopleByQuery(
+  people: ReadonlyArray<Person>,
+  subTeamsById: Map<number, SubTeam>,
+  query: string,
+): Person[] {
+  const trimmed = query.trim().toLowerCase();
+  if (trimmed === "") return [...people];
+  return people.filter((person) => {
+    if (person.name.toLowerCase().includes(trimmed)) return true;
+    const subTeamName = subTeamsById.get(person.subTeamId)?.name ?? "";
+    return subTeamName.toLowerCase().includes(trimmed);
+  });
+}
+
+/**
+ * 浏览网格：搜索框 + 卡片网格。子 tab 列表空时显示。
+ */
+function PersonBrowseGrid({
+  people,
+  subTeams,
+  onOpenPerson,
+}: {
+  people: ReadonlyArray<Person>;
+  subTeams: ReadonlyArray<SubTeam>;
+  onOpenPerson: (personId: number) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const subTeamsById = useMemo(
+    () => new Map(subTeams.map((t) => [t.id, t])),
+    [subTeams],
+  );
+  const filtered = useMemo(
+    () => filterPeopleByQuery(people, subTeamsById, query),
+    [people, subTeamsById, query],
+  );
+
+  // catalog 为空 = 父层还没拉到 OR 库里真没人 —— 友好兜底文案,
+  // 不渲染搜索框(没东西可搜)。
+  if (people.length === 0) {
+    return (
+      <div className="bg-card text-card-foreground rounded-lg border p-6 text-sm">
+        <p className="text-muted-foreground">
+          还没有人员。先到「人员」录入花名册后再打开详情。
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div className="bg-card text-card-foreground rounded-lg border p-6 text-sm">
-      <p className="text-muted-foreground">
-        还没有打开任何人员的详情。
-      </p>
-      <p className="text-muted-foreground mt-2 text-xs">
-        从「人员矩阵」点人名、⌘K 搜人员、或点任务条目的负责人都能打开子 tab。
-      </p>
+    <div className="flex flex-col gap-3">
+      <header className="flex items-center gap-2">
+        <label className="flex flex-1 items-center gap-2">
+          <span className="text-muted-foreground text-xs">搜索</span>
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="按姓名 / 子组名过滤…"
+            aria-label="按姓名 / 子组名搜索"
+            className="border-input bg-background flex-1 rounded-md border px-2 py-1 text-sm"
+          />
+        </label>
+        <span
+          className="text-muted-foreground text-xs tabular-nums"
+          aria-live="polite"
+        >
+          {filtered.length} / {people.length} 人
+        </span>
+      </header>
+
+      {filtered.length === 0 ? (
+        <p className="text-muted-foreground text-sm">
+          没有匹配的人员。换个关键字试试。
+        </p>
+      ) : (
+        <ul
+          aria-label="人员浏览网格"
+          className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+        >
+          {filtered.map((person) => (
+            <PersonBrowseCard
+              key={person.id}
+              person={person}
+              subTeamName={
+                subTeamsById.get(person.subTeamId)?.name ??
+                `未知子组 (id=${person.subTeamId})`
+              }
+              onOpen={() => onOpenPerson(person.id)}
+            />
+          ))}
+        </ul>
+      )}
     </div>
+  );
+}
+
+/**
+ * 浏览网格单卡：姓名 + 子组 + 在岗/离岗徽章 + 联系方式前 8 字。
+ *
+ * 卡片 = `<button>` —— 点栅格 = onOpen → 父层 openPerson,与其它真入
+ * 口（矩阵 / TaskDialog 负责人 / ⌘K）行为同形（Q10 决议）。hover 出
+ * 边框态暗示可交互。
+ */
+function PersonBrowseCard({
+  person,
+  subTeamName,
+  onOpen,
+}: {
+  person: Person;
+  subTeamName: string;
+  onOpen: () => void;
+}) {
+  const off = person.deactivatedAt != null;
+  // 联系方式前 8 字 —— 一条联系方式常常包含邮箱 / 长串分机,完整展示
+  // 在卡片上视觉挤,前 8 字足够给到「这是什么联系方式」的辨识度。
+  const contactShort = person.contact.slice(0, 8);
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`打开 ${person.name} 的详情`}
+        className="border-border/60 bg-card text-card-foreground hover:border-foreground/40 hover:bg-card/80 flex w-full flex-col gap-1.5 rounded-md border p-3 text-left text-sm transition-colors"
+      >
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="truncate font-medium" title={person.name}>
+            {person.name}
+          </span>
+          <span
+            className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+              off
+                ? "bg-muted text-muted-foreground"
+                : "bg-emerald-50 text-emerald-700"
+            }`}
+          >
+            {off ? "离岗" : "在岗"}
+          </span>
+        </div>
+        <div className="text-muted-foreground truncate text-xs" title={subTeamName}>
+          {subTeamName}
+        </div>
+        <div
+          className="text-muted-foreground truncate font-mono text-[11px]"
+          title={person.contact}
+        >
+          {contactShort + (person.contact.length > 8 ? "…" : "")}
+        </div>
+      </button>
+    </li>
   );
 }
 

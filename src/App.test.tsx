@@ -89,6 +89,33 @@ function 新建弹窗() {
   return screen.queryByRole("dialog", { name: "新建任务" });
 }
 
+/**
+ * 给一组默认 catalog —— 浏览网格（#85）的两个用例共享同一份人员 +
+ * 子组种子数据,避免每个用例各写一份造成漂移。其余 list* 系列保持 beforeEach
+ * 里的空数组默认(不关心时不应假手维护)。
+ */
+function mockRosterCatalog(): void {
+  vi.mocked(listPeople).mockResolvedValue([
+    {
+      id: 1,
+      name: "张三",
+      subTeamId: 1,
+      contact: "13800001234",
+      deactivatedAt: null,
+      createdAt: "2026-09-01 09:00:00",
+    },
+  ]);
+  vi.mocked(listSubTeams).mockResolvedValue([
+    {
+      id: 1,
+      name: "一组",
+      description: null,
+      sortOrder: 0,
+      createdAt: "2026-09-01 09:00:00",
+    },
+  ]);
+}
+
 describe("App · 全局新建入口", () => {
   it("顶栏按钮唤起新建弹窗", async () => {
     const user = userEvent.setup();
@@ -156,24 +183,28 @@ describe("App · 「人员详情」主 tab（tickets #80 / #84 T4）", () => {
     expect(screen.getByRole("button", { name: "节假日" })).toBeInTheDocument();
   });
 
-  it("切到「人员详情」tab 显示空态占位文案", async () => {
+  it("切到「人员详情」tab 显示浏览网格（搜索框 + 卡片）", async () => {
     const user = userEvent.setup();
+    mockRosterCatalog();
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "人员详情" }));
 
-    // 子 tab 列表空 → 「还没有打开任何人员的详情。」
+    // 子 tab 列表空 → 显示浏览网格（搜索框）
     expect(
-      await screen.findByText(/还没有打开任何人员的详情/),
+      await screen.findByRole("searchbox", { name: /姓名.*子组名/ }),
     ).toBeInTheDocument();
+    // 卡片渲染
+    expect(await screen.findByText("张三")).toBeInTheDocument();
   });
 
   it("切到「人员详情」tab 时,⌘N 仍唤起新建弹窗", async () => {
     const user = userEvent.setup();
+    mockRosterCatalog();
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "人员详情" }));
-    await screen.findByText(/还没有打开任何人员的详情/);
+    await screen.findByRole("searchbox", { name: /姓名.*子组名/ });
     await user.keyboard("{Meta>}n{/Meta}");
 
     await waitFor(() => expect(新建弹窗()).toBeInTheDocument());
