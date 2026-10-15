@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * 周期规则侧抽屉的组件级验证（ticket #24）。
  *

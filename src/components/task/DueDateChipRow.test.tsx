@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * 截止 chip 行的组件级验证（ticket #19 验收点：「前端组件级测试覆盖 chip 选值」）。
  *

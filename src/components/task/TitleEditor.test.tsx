@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * contenteditable 标题 + `@` 内联选人的组件级验证（ticket #19 验收点：
  * 「前端组件级测试覆盖 chip 选值与 `@` autocomplete 候选过滤」）。

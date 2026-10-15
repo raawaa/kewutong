@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * TrayStatusBanner（ticket #29）的组件级测试。
  *

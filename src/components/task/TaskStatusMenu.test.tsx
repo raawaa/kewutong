@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * 「点徽章 → 6 项菜单」手势的组件级验证（tickets #20 / #22）。
  *

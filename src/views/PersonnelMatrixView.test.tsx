@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * 「人员矩阵」视图的组件级验证（ticket #22）。
  *

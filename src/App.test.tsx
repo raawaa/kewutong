@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * App 外壳的组件级验证（ticket #19 验收点：「顶栏按钮与 ⌘N 都能在任意界面
  * 唤起新建弹窗」）。
@@ -137,6 +138,45 @@ describe("App · 全局新建入口", () => {
     await user.click(screen.getByRole("button", { name: /新建任务/ }));
 
     expect(新建弹窗()).toBeInTheDocument();
+  });
+});
+
+describe("App · 「人员详情」主 tab（tickets #80 / #84 T4）", () => {
+  it("「人员详情」tab 出现在主导航", async () => {
+    render(<App />);
+
+    // 6 个 tab 标签全可见（spec #80 §Implementation #1: TABS 5 → 6）
+    expect(
+      screen.getByRole("button", { name: "今日 / 本周" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "人员矩阵" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "项目" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "人员" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "人员详情" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "节假日" })).toBeInTheDocument();
+  });
+
+  it("切到「人员详情」tab 显示空态占位文案", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "人员详情" }));
+
+    // 子 tab 列表空 → 「还没有打开任何人员的详情。」
+    expect(
+      await screen.findByText(/还没有打开任何人员的详情/),
+    ).toBeInTheDocument();
+  });
+
+  it("切到「人员详情」tab 时,⌘N 仍唤起新建弹窗", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "人员详情" }));
+    await screen.findByText(/还没有打开任何人员的详情/);
+    await user.keyboard("{Meta>}n{/Meta}");
+
+    await waitFor(() => expect(新建弹窗()).toBeInTheDocument());
   });
 });
 

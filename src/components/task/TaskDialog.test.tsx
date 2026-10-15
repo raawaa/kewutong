@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * 新建 / 编辑弹窗的组件级验证（ticket #19）。
  *
