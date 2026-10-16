@@ -22,7 +22,7 @@ import {
   type TaskStatus,
   type TodayWeek as TodayWeekDto,
 } from "@/lib/api";
-import { STATUS_STYLE } from "@/lib/taskStatusStyle";
+import { STATUS_META } from "@/lib/taskStatus";
 
 /**
  * 「今日 / 本周」视图（ticket #21，默认落地页）。
@@ -347,10 +347,10 @@ function TaskCard({
   // 「已跳过」徽章)。其它 Cancelled 仍是软删,显示「已取消」。
   const isSkippedInstance =
     task.status === "Cancelled" && task.isRecurring === true;
-  const statusLabel = isSkippedInstance ? "已跳过" : STATUS_STYLE[task.status].label;
+  const statusLabel = isSkippedInstance ? "已跳过" : STATUS_META[task.status].label;
   const statusClass = isSkippedInstance
     ? "bg-muted text-muted-foreground line-through"
-    : STATUS_STYLE[task.status].className;
+    : STATUS_META[task.status].className;
   const owner = peopleById.get(task.ownerPersonId);
   return (
     <button

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { STATUS_STYLE } from "@/lib/taskStatusStyle";
+import { STATUS_META, TASK_STATUS_ORDER } from "@/lib/taskStatus";
 import { DueDateChipRow } from "./DueDateChipRow";
 import { RecurringSheet, defaultEndsDate } from "./RecurringSheet";
 import { TitleEditor } from "./TitleEditor";
@@ -37,18 +37,9 @@ export type TaskDialogTarget =
   | { mode: "edit"; task: Task; assignee: AssigneeCandidate | null; project: ProjectCandidate | null };
 
 /**
- * 状态 chip 行的渲染顺序。沿用后端命令层 `TASK_STATUSES` 的字面量顺
- * 序——在飞 4 态排前,收尾 2 态置后,与 `TaskStatusMenu` 的菜单顺序一
- * 致,改状态时心智模型不变。
+ * 状态 chip 行的渲染顺序由 `@/lib/taskStatus` 的 `TASK_STATUS_ORDER` 单
+ * 点决定。
  */
-const TASK_STATUS_ORDER: readonly TaskStatus[] = [
-  "Open",
-  "In-progress",
-  "Blocked",
-  "Waiting-on",
-  "Done",
-  "Cancelled",
-];
 
 /**
  * 全局新建 / 编辑任务弹窗（tickets #19 + #20 + #86 T6）。
@@ -369,7 +360,7 @@ export function TaskDialog({
           {/*
             #91：状态选择控件——6 状态枚举,新建默认 Open,编辑时跟着任务
             当前值走。chip 样式与 DueDateChipRow 同形;选中态用当前状态的
-            锁色板 className(STATUS_STYLE),不靠单一 primary 色,让"进行
+            锁色板 className(STATUS_META),不靠单一 primary 色,让"进行
             中 vs 已阻塞"在视觉上立即可分。
           */}
           <div className="grid grid-cols-[3.5rem_1fr] items-center gap-3">
@@ -377,7 +368,7 @@ export function TaskDialog({
             <div className="flex flex-wrap items-center gap-1.5">
               {TASK_STATUS_ORDER.map((s) => {
                 const selected = s === status;
-                const style = STATUS_STYLE[s];
+                const style = STATUS_META[s];
                 return (
                   <button
                     key={s}

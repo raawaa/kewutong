@@ -40,6 +40,7 @@ import type {
   UpdateSubTeamArgs,
 } from "../types.js";
 import {
+  BLOCKED_STATUSES,
   TASK_COLUMNS,
   fetchInFlightTasksForPerson,
   rowToTask,
@@ -423,8 +424,8 @@ export function personnelMatrix(
     const people: PersonnelMatrixPerson[] = filtered.map((person) => {
       const tasks = fetchInFlightTasksForPerson(state.db, person.id);
       const inFlightCount = tasks.length;
-      const blockedCount = tasks.filter(
-        (t) => t.status === "Blocked" || t.status === "Waiting-on",
+      const blockedCount = tasks.filter((t) =>
+        BLOCKED_STATUSES.includes(t.status),
       ).length;
       return { person, inFlightCount, blockedCount, tasks };
     });

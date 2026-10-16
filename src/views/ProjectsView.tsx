@@ -19,17 +19,10 @@ import {
   type Task,
   type TaskStatus,
 } from "@/lib/api";
-import { STATUS_STYLE } from "@/lib/taskStatusStyle";
+import { STATUS_META, TASK_STATUS_ORDER } from "@/lib/taskStatus";
 import { PROJECT_STATUS_STYLE } from "@/lib/projectStatusStyle";
 
-const STATUS_COLUMNS: TaskStatus[] = [
-  "Open",
-  "In-progress",
-  "Blocked",
-  "Waiting-on",
-  "Done",
-  "Cancelled",
-];
+/** 状态列渲染顺序由 `@/lib/taskStatus` 的 `TASK_STATUS_ORDER` 单点决定。 */
 
 interface BlockedDropPrompt {
   task: Task;
@@ -177,7 +170,7 @@ export function ProjectsView({
       map[t.status].push(t);
     }
     // 各自按 due_date / created_at 兜底
-    for (const status of STATUS_COLUMNS) {
+    for (const status of TASK_STATUS_ORDER) {
       map[status].sort((a, b) => {
         const da = a.dueDate ?? "";
         const db = b.dueDate ?? "";
@@ -476,7 +469,7 @@ function Board({
     if (!Number.isFinite(id)) return;
     // 在 tasksByStatus 里找到该任务
     let task: Task | null = null;
-    for (const status of STATUS_COLUMNS) {
+    for (const status of TASK_STATUS_ORDER) {
       const found = tasksByStatus[status].find((t) => t.id === id);
       if (found) {
         task = found;
@@ -498,7 +491,7 @@ function Board({
       </div>
 
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-6">
-        {STATUS_COLUMNS.map((status) => {
+        {TASK_STATUS_ORDER.map((status) => {
           const items = tasksByStatus[status];
           const isHover = hoverColumn === status;
           return (
@@ -513,9 +506,9 @@ function Board({
             >
               <div className="flex items-center justify-between gap-1 text-xs">
                 <span
-                  className={`rounded-full px-2 py-0.5 font-medium ${STATUS_STYLE[status].className}`}
+                  className={`rounded-full px-2 py-0.5 font-medium ${STATUS_META[status].className}`}
                 >
-                  {STATUS_STYLE[status].label}
+                  {STATUS_META[status].label}
                 </span>
                 <span className="text-muted-foreground">{items.length}</span>
               </div>
