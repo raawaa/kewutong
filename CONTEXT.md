@@ -83,3 +83,23 @@ _Avoid_: sortByStatus, getComparator
 **isWaitingOnOther**:
 `bucketByStatus` 内部谓词——「task 在等别人，且别人不是 task 自己 owner」，隐式签名（从 `task.ownerPersonId` 推导 owner），用于排除自反等待（owner = waitingOnPersonId）不进 `Waiting-on` 桶。
 _Avoid_: waitingOnFilter, excludeSelfWaiting
+
+**NavigationState**:
+`src/views/navigation/state.ts` reducer 持有的 6 字段状态——`tab: MainTabId` / `subTabs: OpenPersonTab[]` / `activeSubTabId: number | null` / `dialog: DialogTarget | null` / `palette: PaletteState | null` / `pendingIntent: PendingIntent | null`。App.tsx 进 `useReducer(navigationReducer, initialState)` 后整份状态下沉,shell 只剩 transient data(catalog / tray / refreshToken invalidation counter)与 4 类 `useState` hook(spec #96 §决策 1,ADR 0012 §决策 7)。
+_Avoid_: navState, appNavigation
+
+**NavigationEvent**:
+18 类事件的 discriminated union(来源同上)——`SetTab` / 9 类 sub-tab event(`OpenPerson` / `ActivatePersonTab` / `CloseActiveSubTab` / `ClosePersonTab` / 4 类批量关闭 / `ReorderPersonTabs`)+ 3 类 dialog event(`OpenTaskDialog` / `CloseTaskDialog` / `TaskSaved`)+ 4 类 palette event(`OpenPalette` / `ClosePalette` / `PalettePick` / `IntentConsumed`)+ 2 类「人员详情」+ 按钮专用(`OpenCreateProjectFor` / `OpenCreateTemplateFor`)。`_exhaustive: never` 在 reducer switch 末尾拦截漏改。子集类型 `PersonTabEvent` / `PersonDetailTabsEvent` 用 `Extract<T, U>` 自动派生,新增 sub-tab kind 不双写。
+_Avoid_: navCommand, navAction, navEvent
+
+**PendingIntent**:
+单 slot 的 sum-typed 字段——`{kind:"locateProject"; id:number}` / `{kind:"createProjectFor"; id:number}` / `{kind:"createTemplateFor"; subTeamId:number}`,外部统一以 `navigationState.pendingIntent: PendingIntent | null` 形式表达「有 / 无」。取代旧双 slot `pendingProjectId` + `pendingProjectCreateOwnerId`(issue #100,spec #96 §决策 11)。
+_Avoid_: pendingProject, pendingAction, pendingOp
+
+**navigationReducer**:
+`src/views/navigation/state.ts` 导出的纯函数——`(state: NavigationState, event: NavigationEvent) => NavigationState`,无 DOM / React / IPC 依赖,可用 `node` 环境单测。post-step `reconcileAfterTabsChange` 一行收敛 `activeSubTabId ∈ subTabs ∪ {null}` 不变量,取代旧 App.tsx `openPersonTabsRef` + 兜底 useEffect 双反模式(ADR 0012 §决策 6)。
+_Avoid_: navReducer, appReducer, rootReducer
+
+**PalettePick atomic**:
+`PalettePick(target)` 一条 reducer event 同时改多态(tab / pendingIntent / dialog / palette.open),reducer 同一帧返回 nextState —— React 不渲染中间帧(spec #96 §决策 10,issue #100 §AC #2)。4 子路由:`openCreateTask` / `openEditTask` / `openProject` / `openPerson`,等价于「显式多次派发(ClosePalette + OpenTaskDialog / SetTab + setPendingIntent / OpenPerson)的合取」在 reducer 内的原子实现。
+_Avoid_: combinedDispatch, multiStateAction
