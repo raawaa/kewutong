@@ -11,7 +11,11 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.main.json && tsc --noEmit -p tsconfig.preload.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "postinstall": "node node_modules/electron/install.js"
+  },
+  "config": {
+    "electron_mirror": "https://npmmirror.com/mirrors/electron/"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
