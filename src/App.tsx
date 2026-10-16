@@ -2,10 +2,7 @@ import { useCallback, useEffect, useReducer, useState } from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TaskDialog } from "@/components/task/TaskDialog";
-import {
-  CommandPalette,
-  type CommandPaletteTarget,
-} from "@/components/wayfinder/CommandPalette";
+import { CommandPalette } from "@/components/wayfinder/CommandPalette";
 import { TrayStatusBanner } from "@/components/tray/TrayStatusBanner";
 import { SampleDataBanner } from "@/components/SampleDataBanner";
 import { PersonnelMatrixView } from "@/views/PersonnelMatrixView";
@@ -28,8 +25,8 @@ import { toAssigneeCandidate } from "@/lib/assignee";
 import {
   initialState,
   navigationReducer,
-  PALETTE_KIND_OPEN_PERSON,
   type MainTabId,
+  type NavigationEvent,
 } from "@/views/navigation/state";
 
 /**
@@ -66,17 +63,20 @@ const TABS: { id: MainTabId; label: string }[] = [
  *
  * 5 类导航状态（主 tab / sub-tab + active / TaskDialog / palette /
  * pendingIntent）已落入 `useReducer(navigationReducer, initialState)`
- * （issues #97 sub-tab / #98 tab+keydown / #99 dialog）。`activeSubTabId
- * ∈ subTabs` 不变量由 reducer post-step `reconcileActive` 一行收敛
- * （parent spec #96 §决策 4,取代旧 stale-closure ref + fallback
- * `useEffect` 双反模式）。dialog 唯一性由 reducer `OpenTaskDialog`
- * case 守 —— 已有 dialog 时再开第二份是 no-op（issue #99 §dialog 唯
- * 一性）。
+ * （issues #97 sub-tab / #98 tab+keydown / #99 dialog / #100 palette +
+ * PalettePick + pendingIntent）。`activeSubTabId ∈ subTabs` 不变量由
+ * reducer post-step `reconcileActive` 一行收敛（parent spec #96 §决策
+ * 4,取代旧 stale-closure ref + fallback `useEffect` 双反模式）。dialog
+ * 唯一性由 reducer `OpenTaskDialog` case 守 —— 已有 dialog 时再开第二
+ * 份是 no-op（issue #99 §dialog 唯一性）。palette / pendingIntent 由
+ * reducer 接管：⌘K / Esc / 遮罩 / PalettePick 4 子路由 / IntentConsumed
+ * 全部走 reducer —— 一条 PalettePick 事件原子改多态（dialog / tab /
+ * pendingIntent / palette）,React 不渲染中间帧（issue #100 §What to
+ * build + AC #2）。
  *
- * 仍在 shell useState 的：palette 开 / 关（#100）、pending intent
- * （#100）、transient data（people / subTeams / projects / trayStatusDto）、
- * invalidation counter `refreshToken` —— reducer 不沾（spec #96 §决策 1、
- * #99 §决策 13）。
+ * 仍在 shell useState 的：transient data（people / subTeams / projects /
+ * trayStatusDto）、invalidation counter `refreshToken` —— reducer 不沾
+ * （spec #96 §决策 1、#99 §决策 13）。
  */
 export default function App() {
   // ----- reducer：5 类导航状态 -----
@@ -84,9 +84,10 @@ export default function App() {
   // （parent spec #96 §决策 3）,子视图不可自己 `useReducer`,
   // 只通过 `onNavigation={dispatch}` 派发事件。
   const [navState, dispatch] = useReducer(navigationReducer, initialState);
-  const { tab, subTabs, activeSubTabId, dialog } = navState;
+  const { tab, subTabs, activeSubTabId, dialog, palette, pendingIntent } =
+    navState;
 
-  // ----- shell useState：catalog / palette / pending intent / refreshToken -----
+  // ----- shell useState：catalog / refreshToken -----
   // 弹窗保存后 +1，让当前视图重新拉一次。refreshToken 不沾 reducer
   // —— reducer `TaskSaved` 只关 dialog,shell `onTaskSaved` 显式 bump
   // （spec #96 §决策 13、#99 §决策 13）。
@@ -98,23 +99,10 @@ export default function App() {
   const [subTeams, setSubTeams] = useState<SubTeam[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
 
-  // ⌘K 命令面板：开 / 关（palette 自身开关留 shell —— #100 才把
-  // palette 移进 reducer,本期不动）。
-  const [paletteOpen, setPaletteOpen] = useState(false);
-
   // 托盘可达性（ticket #29）：启动时拉一次。banner 只渲染不轮询——后续
   // Rust 端走事件总线推状态变化时再加 effect，本期只响应启动那一瞬。
   // `null` = 拉数据还没回来（不渲染，避免短暂闪烁）。
   const [trayStatusDto, setTrayStatusDto] = useState<TrayStatusDto | null>(null);
-
-  // 项目视图的"定位"——从命令面板跳过去时给一个 initialProjectId,
-  // 视图据此选中该项目的卡片。完成定位后清空。
-  const [pendingProjectId, setPendingProjectId] = useState<number | null>(null);
-  // 「人员详情」段 3 + 按钮（#83 T3）——切到「项目」tab 并打开新建
-  // 表单，把这个 owner 预填进去。ProjectsView 用完清。
-  const [pendingProjectCreateOwnerId, setPendingProjectCreateOwnerId] = useState<
-    number | null
-  >(null);
 
   /**
    * shell 处理 TaskDialog 保存结果 —— dispatch `TaskSaved` 让 reducer 关
@@ -134,19 +122,23 @@ export default function App() {
   }, []);
 
   /**
-   * 子 tab 入口收口 —— 4 个真入口（矩阵卡片 / PersonnelView 行 / TaskDialog
-   * 负责人 / ⌘K 命令面板）的 `OpenPerson` 行为全折叠到此一处派发。
-   *
-   * `add or focus + 切到 personDetail 主 tab` 语义由 reducer
-   * `reduceOpenPerson` 一处收敛（#97）;App.tsx 不再有 imperative
-   * 帮手 5 行 setOpenPersonTabs + setActivePersonId + setTab —— 4
-   * 个真入口直接派 `OpenPerson` 事件上到 reducer,add-or-focus 与
-   * 主 tab 切换在 reducer 同一帧完成。
-   *
-   * 子视图 `onOpenPerson` 入口在各 JSX 内联 lambda `(personId) =>
-   * dispatch({kind:"OpenPerson", personId})`,不再抽公共 callback 帮手
-   * —— 内联让派发路径在读 JSX 时一眼可见,reduce 后直接折叠。
+   * 「人员详情」段 2（#82 T2）的 + 按钮:把当前人员预填为负责人,
+   * 派 `OpenTaskDialog` reducer 事件。`subTeamName` 从 catalog 查;
+   * catalog 缺失时回退空串 —— 详情页本来就有 fallback 路径
+   * (`useMissingSubTeams`)兜底,这里不重复做。
    */
+  const onCreateTaskWithAssignee = useCallback(
+    (person: Person) => {
+      dispatch({
+        kind: "OpenTaskDialog",
+        target: {
+          mode: "create",
+          initialAssignee: toAssigneeCandidate(person, subTeams),
+        },
+      });
+    },
+    [dispatch, subTeams],
+  );
 
   // 启动 + 任一 tab 切换 + 任务保存后,都刷一次 catalog——各视图自身
   // 也用 refreshToken 触发,这里走同一份节奏避免漂移。
@@ -192,93 +184,18 @@ export default function App() {
   }, []);
 
   /**
-  ⌘K 命令面板选中一条候选后调这里——App 决定"跳到哪个 tab + 定位谁"。
-  - 新建任务：派 `OpenTaskDialog` reducer 事件（#99 实施后 dialog 状态
-    移入 reducer,这里直接 dispatch 由 reducer 维护 dialog 字段）。
-  - 已有任务：派 `OpenTaskDialog` reducer 事件（编辑即详情，ticket #19）。
-    `assignee` / `project` 候选由命令面板自己从 catalog 算,App 不重复打
-    IPC。
-  - 项目：切到项目 tab + pendingProjectId 选中。
-  - 人员：派 `OpenPerson` 事件（issue #98）—— reducer `OpenPerson` case
-    在 #97 已实施 add-or-focus + 切 personDetail 主 tab；原 App.tsx 的
-    multi-line imperative 帮手(5 行 setOpenPersonTabs + setActivePersonId
-    + setTab)已下线,view 端直接派 reducer 事件。
-  */
-  const handlePalettePick = useCallback(
-    (target: CommandPaletteTarget) => {
-      switch (target.kind) {
-        case "openCreateTask":
-          dispatch({ kind: "OpenTaskDialog", target: { mode: "create" } });
-          return;
-        case "openEditTask":
-          dispatch({
-            kind: "OpenTaskDialog",
-            target: {
-              mode: "edit",
-              task: target.task,
-              assignee: target.assignee,
-              project: target.project,
-            },
-          });
-          return;
-        case "openProject":
-          setPendingProjectId(target.projectId);
-          dispatch({ kind: "SetTab", tab: "projects" });
-          return;
-        case PALETTE_KIND_OPEN_PERSON:
-          // #86 T6：升级到 add-or-focus + 切到人员详情 tab。
-          // #98：派发路径不再走 imperative helper,直接 dispatch reducer。
-          dispatch({ kind: "OpenPerson", personId: target.personId });
-          return;
-      }
-    },
+   * PersonDetailTabsView 单一 nav 派发端口 —— 9 类 sub-tab event +
+   * OpenCreateProjectFor / OpenCreateTemplateFor 共 11 类 event 折叠到
+   * `onNavigation(event: NavigationEvent)`(issue #98 + #100)。子视图越
+   * 权 dispatch 受 TS 类型 `NavigationEvent` 约束 —— 不能传非 union 成
+   * 员(编译期报红)。
+   *
+   * 子视图对外只有「选中谁」「激活谁」「关谁」三种语义,内部翻译成对
+   * 应 reducer 事件 —— shell 这层不再持有 imperative helper。
+   */
+  const onPersonDetailNavigate = useCallback(
+    (event: NavigationEvent) => dispatch(event),
     [dispatch],
-  );
-
-  /**
-   * 「人员详情」段 3（#83 T3）的 + 按钮走这条路径：把当前人员预填
-   * 为新项目的负责人，切到「项目」tab 并触发 ProjectsView 的"开新建
-   * 表单 + 默认填该 owner"。比让用户再切 tab + 点新建 + 选负责人
-   * 省两步。
-   */
-  const openCreateProject = useCallback(
-    (person: Person) => {
-      setPendingProjectCreateOwnerId(person.id);
-      dispatch({ kind: "SetTab", tab: "projects" });
-    },
-    [dispatch],
-  );
-
-  /**
-   * 「人员详情」段 5（#83 T3）的 + 按钮走这条路径：切到「节假日」
-   * tab。模板创建 UI 当前在 holiday tab 内还未落地（独立 ticket），
-   * 本期 spec 只要求"切到 tab + 预填子组"——切到 tab 由本回调完
-   * 成；「预填子组」的具体形态等模板 UI 落地时再补。
-   */
-  const openCreateTemplate = useCallback((_subTeamId: number) => {
-    // `subTeamId` 入参暂未使用——保留参数等模板 UI 落地后从本回调
-    // 直接预填到新表单里。当前最小动作只是切 tab。
-    void _subTeamId;
-    dispatch({ kind: "SetTab", tab: "holiday" });
-  }, [dispatch]);
-
-  /**
-   * 「人员详情」段 2（#82 T2）的 + 按钮:把当前人员预填为负责人,
-   * 派 `OpenTaskDialog` reducer 事件。`subTeamName` 从 catalog 查;
-   * catalog 缺失时回退空串 —— 详情页本来就有 fallback 路径
-   * (`useMissingSubTeams`)兜底,这里不重复做。
-   */
-  const openCreateTaskWithAssignee = useCallback(
-    (person: Person) => {
-      dispatch({
-        kind: "OpenTaskDialog",
-        target: {
-          mode: "create",
-          initialAssignee: toAssigneeCandidate(person, subTeams),
-        },
-      });
-    },
-    [dispatch, subTeams],
   );
 
   // 顶栏「新建任务」按钮 + ⌘N / ⌘K 都在 window 层——保证在任意视图
@@ -298,6 +215,11 @@ export default function App() {
   // ⌘N 的 dialog 唯一性(issue #99 §dialog 唯一性):已有 dialog 时 ⌘N
   // 在 effect 层 gate 掉,不再 dispatch —— reducer 自身的唯一性兜底
   // 作为防御。`dialog` 直接从 `navState.dialog` 读。
+  //
+  // ⌘K(issue #100):派 `OpenPalette` reducer 事件 —— palette 字段已
+  // 入 reducer(`{ open: boolean } | null`),shell 不再为 palette 开关
+  // 持有独立 useState。Esc 与点遮罩 → `ClosePalette`(CommandPalette 内部
+  // onClose 回调 → 此处 dispatch)。PalettePick 4 子路由由 reducer 原子完成。
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const mod = event.metaKey || event.ctrlKey;
@@ -313,7 +235,7 @@ export default function App() {
       }
       if (mod && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setPaletteOpen(true);
+        dispatch({ kind: "OpenPalette" });
         return;
       }
       // 后续 2 条仅「人员详情」tab 生效 —— tabs 不命中时直接 return,
@@ -366,6 +288,10 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [dialog, tab, subTabs, activeSubTabId, dispatch]);
 
+  // palette 是否开启 = `palette != null`。CommandPalette 收到 `open` 布尔
+  // 透传显示 —— 关闭由组件内部 onClose 回调 → dispatch `ClosePalette`。
+  const paletteIsOpen = palette !== null;
+
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 p-6">
       <header className="flex items-center justify-between gap-4">
@@ -393,7 +319,7 @@ export default function App() {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setPaletteOpen(true)}
+            onClick={() => dispatch({ kind: "OpenPalette" })}
             aria-label="打开命令面板"
             title="⌘K 打开命令面板"
           >
@@ -447,10 +373,12 @@ export default function App() {
       ) : tab === "projects" ? (
         <ProjectsView
           refreshToken={refreshToken}
-          pendingProjectId={pendingProjectId}
-          onProjectLocated={() => setPendingProjectId(null)}
-          pendingCreateOwnerId={pendingProjectCreateOwnerId}
-          onCreateOwnerConsumed={() => setPendingProjectCreateOwnerId(null)}
+          // pendingIntent 单 slot —— locateProject / createProjectFor /
+          // createTemplateFor 三种意图取代旧双 slot (issue #100,前后两
+          // 个 useState 合并为 reducer 一个 sum-typed slot)。视图据
+          // `kind` 决定 prefill,再回调 onIntentConsumed 清 slot。
+          pendingIntent={pendingIntent}
+          onIntentConsumed={() => dispatch({ kind: "IntentConsumed" })}
         />
       ) : tab === "personnel" ? (
         <PersonnelView
@@ -465,16 +393,14 @@ export default function App() {
           people={people}
           subTeams={subTeams}
           refreshToken={refreshToken}
-          onNavigation={dispatch}
+          onNavigation={onPersonDetailNavigate}
           onOpenTask={(task, { assignee }) =>
             dispatch({
               kind: "OpenTaskDialog",
               target: { mode: "edit", task, assignee, project: null },
             })
           }
-          onCreateTask={(person) => openCreateTaskWithAssignee(person)}
-          onCreateProject={(person) => openCreateProject(person)}
-          onCreateTemplate={(subTeamId) => openCreateTemplate(subTeamId)}
+          onCreateTask={(person) => onCreateTaskWithAssignee(person)}
         />
       ) : (
         <HolidayCalendarView refreshToken={refreshToken} />
@@ -495,10 +421,15 @@ export default function App() {
       )}
 
       <CommandPalette
-        open={paletteOpen}
+        open={paletteIsOpen}
         catalog={{ people, subTeams, projects }}
-        onClose={() => setPaletteOpen(false)}
-        onPick={handlePalettePick}
+        // Esc / 点遮罩 / × 关闭 —— reducer `ClosePalette` case 体原子
+        // 设 palette = null(issue #100 §AC #1)。
+        onClose={() => dispatch({ kind: "ClosePalette" })}
+        // 选中条目 —— reducer `PalettePick(target)` 一条事件原子改多态
+        // (issue #100 §AC #2:PalettePick(openProject) = pendingIntent
+        // 设 + tab projects + palette null 一帧完成,React 不渲染中间帧)。
+        onPick={(target) => dispatch({ kind: "PalettePick", target })}
       />
     </main>
   );

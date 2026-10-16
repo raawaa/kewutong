@@ -17,7 +17,7 @@ import {
 } from "@/lib/api";
 import type {
   OpenPersonTab,
-  PersonTabEvent,
+  PersonDetailTabsEvent,
 } from "@/views/navigation/state";
 
 /**
@@ -33,11 +33,16 @@ import type {
  *
  * 业务规则在 `PersonDetailView` 与主进程命令层；本视图只管"开 / 关 / 重排 / 浏览"。
  *
- * App-shell 只留 sub-tab event 单一派发端口（issue #98）：
- * `OpenPerson` / 激活 / 关闭 / 重排 8 个 callback 折叠为一个 `onNavigation`
- * 端口,事件 type 由 `PersonTabEvent` (sub-tab event 子集) TS 编译期锁定
- * —— 子视图越权 dispatch 主 tab(`SetTab`)等非子 tab 事件,直接编译报红
- * (parent spec #96 §决策 14 + issue #98 AC)。
+ * App-shell 只留 sub-tab + 段 3/5 + 按钮事件 单一派发端口(issue #98 +
+ * #100):9 类 sub-tab event + 2 类「+」按钮 intent 事件
+ * (`OpenCreateProjectFor` / `OpenCreateTemplateFor`)共 11 类折叠到
+ * `onNavigation` 端口,事件 type 由 `PersonDetailTabsEvent` 锁
+ * —— 子视图越权 dispatch `SetTab` 等无 intent 的主 tab 切换,直接编译报红。
+ *
+ * `onOpenTask` / `onCreateTask` 仍是直接回调 —— 这两条对应 TaskDialog
+ * 状态而非纯导航(issue #99 dialog 状态入 reducer 后由 App 层
+ * `dispatch OpenTaskDialog` 翻译),后续 reducer 接入 TaskDialog 时一并
+ * 折叠进 `onNavigation`。当前保留直接回调形式以维持本期 scope 收敛。
  */
 
 export function PersonDetailTabsView({
@@ -49,8 +54,6 @@ export function PersonDetailTabsView({
   onNavigation,
   onOpenTask,
   onCreateTask,
-  onCreateProject,
-  onCreateTemplate,
 }: {
   /** 已开子 tab 列表 —— 物理顺序即子 tab 显示顺序（spec #80 §Impl #11）。 */
   openPersonTabs: ReadonlyArray<OpenPersonTab>;
@@ -63,25 +66,28 @@ export function PersonDetailTabsView({
   /** 父层保存后 +1，触发所有已开子 tab 重拉（spec #80 §Impl #19）。 */
   refreshToken: number;
   /**
-   * 单一派发端口 —— 8 类 sub-tab event（`OpenPerson` / 激活 / 关闭 / 重排）
-   * 全折叠到此 prop 上。事件 type 锁 `PersonTabEvent`（sub-tab event 子集），
-   * 子视图越权 dispatch 主 tab（`SetTab`）/ dialog（`OpenTaskDialog` 等），
-   * TS 编译期报红（issue #98 AC + parent #96 §决策 14）。
+   * 单一派发端口 —— 11 类事件(`OpenPerson` / 激活 / 关闭 / 重排 +
+   * `OpenCreateProjectFor` / `OpenCreateTemplateFor`)全折叠到此 prop 上。
+   * 事件 type 锁 `PersonDetailTabsEvent` —— 子视图越权 dispatch
+   * `SetTab` / `OpenPalette` 等非此视图职责的事件,TS 编译期报红
+   * (issue #98 AC + #100 §What to build + parent #96 §决策 14)。
    *
    * `SetTab` 不在子视图端口 —— 主 tab 由 App 顶层 TABS 按钮直接
-   * dispatch（spec #96 §决策 5：主导航与子 tab 正交）。
+   * dispatch(spec #96 §决策 5:主导航与子 tab 正交)。
+   * `OpenCreateProjectFor` / `OpenCreateTemplateFor` 故意改主 tab
+   * (projects / holiday) —— 这是「人员详情」段 3/5 + 按钮的明确语义
+   * (`person → projects / holiday`,带 prefill intent)。
    */
-  onNavigation: (event: PersonTabEvent) => void;
+  onNavigation: (event: PersonDetailTabsEvent) => void;
   /**
-   * 内容区回调 —— 透传给 PersonDetailView（5 段聚合打开弹窗 / 新建）。
-   * 不走 `onNavigation` —— 这些对应的是 dialog / pendingIntent 端口,
-   * 实施由 issue #99 / #101 接力,本视图先以直接回调形式承载,
-   * 保持 reducer 折叠的范围聚焦 sub-tab + tab（issue #98 范围）。
+   * 内容区回调 —— 透传给 PersonDetailView(5 段聚合打开弹窗 / 新建)。
+   * 不走 `onNavigation` —— 这些对应的是 dialog 状态(dispatch
+   * `OpenTaskDialog` 走 App 层 reducer 翻译)。TaskDialog 入 reducer 后
+   * (issue #99) 由 App.tsx 显式派发,本视图保持直接回调形式以维持本
+   * 期 scope 收敛到 #100(palette / intent slot)。
    */
   onOpenTask: (task: Task, extras: { assignee: AssigneeCandidate }) => void;
   onCreateTask: (person: Person) => void;
-  onCreateProject: (person: Person) => void;
-  onCreateTemplate: (subTeamId: number) => void;
 }) {
   const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
 
@@ -129,6 +135,24 @@ export function PersonDetailTabsView({
   // personDetail 主 tab。
   const onOpenPersonFromBrowseGrid = useCallback(
     (personId: number) => onNavigation({ kind: "OpenPerson", personId }),
+    [onNavigation],
+  );
+
+  // 「人员详情」段 3 / 段 5 + 按钮(issue #100)—— 走 onNavigation
+  // 派 `OpenCreateProjectFor` / `OpenCreateTemplateFor` 原子事件
+  // (reducer 一帧完成 tab 切换 + pendingIntent 设置)。原 App.tsx 的
+  // `openCreateProject` / `openCreateTemplate` imperative helper 已下
+  // 线 —— 本视图自带这两条 wrapper,继续以 `(person) => void` /
+  // `(subTeamId) => void` 形态透传给 PersonDetailView,内部翻译成
+  // reducer 事件。
+  const onCreateProject = useCallback(
+    (person: Person) =>
+      onNavigation({ kind: "OpenCreateProjectFor", personId: person.id }),
+    [onNavigation],
+  );
+  const onCreateTemplate = useCallback(
+    (subTeamId: number) =>
+      onNavigation({ kind: "OpenCreateTemplateFor", subTeamId }),
     [onNavigation],
   );
 

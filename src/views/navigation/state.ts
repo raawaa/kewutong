@@ -1,5 +1,5 @@
 /**
- * Navigation reducer — App.tsx 路由的纯函数 seam(tickets #96 / #97)。
+ * Navigation reducer — App.tsx 路由的纯函数 seam(tickets #96 / #97 / #99 / #100)。
  *
  * 设计意图:
  * - 5 类状态全入 reducer —— 主 tab / sub-tab 列表 + active / TaskDialog /
@@ -11,18 +11,18 @@
  *   外的 useEffect fallback + openPersonTabsRef 反模式(parent spec
  *   #96 §决策 4)。
  *
- * 本期 (#97) 实现的 case:
- *   - SetTab / OpenPerson / ActivatePersonTab
- *   - CloseActiveSubTab / ClosePersonTab
- *   - CloseOtherPersonTabs / CloseAllPersonTabs
- *   - CloseLeftPersonTabs / CloseRightPersonTabs
- *   - ReorderPersonTabs
- *   - post-step 收敛 `activeSubTabId` ∈ subTabs
- *
- * union 已就位但 case 体延后到 #98-#101 实施的 kind(本期收到它们返
- * 回 state 不变,消费路径尚未接线,语义兜底):OpenTaskDialog /
- * CloseTaskDialog / TaskSaved / OpenPalette / ClosePalette / PalettePick /
- * IntentConsumed。
+ * 已实施的 case:
+ *   - SetTab / OpenPerson / ActivatePersonTab (#97)
+ *   - CloseActiveSubTab / ClosePersonTab (#97)
+ *   - CloseOtherPersonTabs / CloseAllPersonTabs (#97)
+ *   - CloseLeftPersonTabs / CloseRightPersonTabs (#97)
+ *   - ReorderPersonTabs (#97)
+ *   - post-step 收敛 `activeSubTabId` ∈ subTabs (#97)
+ *   - OpenTaskDialog / CloseTaskDialog / TaskSaved (#99 dialog 唯一性)
+ *   - OpenPalette / ClosePalette / PalettePick(4 子路由) / IntentConsumed
+ *     (#100 PalettePick 原子 + pendingIntent slot)
+ *   - OpenCreateProjectFor / OpenCreateTemplateFor (#100 「人员详情」段 3/5
+ *     + 按钮专用事件)
  *
  * 父 spec (#96 §决策 14) 同型 `navigationReducer(state, event) → newState`
  * 签名;reducer 落入调用方 `useReducer(navigationReducer, initialState)`。
@@ -166,28 +166,35 @@ export type NavigationEvent =
   | { kind: "CloseLeftPersonTabs"; personId: number }
   | { kind: "CloseRightPersonTabs"; personId: number }
   | { kind: "ReorderPersonTabs"; from: number; to: number }
-  // dialog / palette / intent 的 case 骨架在 union 里就位,case 体在
-  // #98-#101 实施 —— 本期 reducer 对未实现的 kind 返回 state 不变,
-  // consumption path 还未接线,语义兜底。
+  // dialog —— issue #99 实施的 case 体(唯一性 gate)。
   | { kind: "OpenTaskDialog"; target: DialogTarget }
   | { kind: "CloseTaskDialog" }
   | { kind: "TaskSaved" }
+  // palette / intent —— issue #100 实施。PalettePick 原子改多态;
+  // IntentConsumed 清 pendingIntent slot;OpenPalette/ClosePalette 切
+  // palette 字段(单一开关)。
   | { kind: "OpenPalette" }
   | { kind: "ClosePalette" }
   | { kind: "PalettePick"; target: PalettePickTarget }
-  | { kind: "IntentConsumed" };
+  | { kind: "IntentConsumed" }
+  // 「人员详情」段 3/5 的 + 按钮专用事件 —— 原子切 tab + 设
+  // pendingIntent(createProjectFor / createTemplateFor),替代旧
+  // App.tsx 的 openCreateProject / openCreateTemplate 回调。
+  // issue #101 cleanup 与本文件协同删除 helper。
+  | { kind: "OpenCreateProjectFor"; personId: number }
+  | { kind: "OpenCreateTemplateFor"; subTeamId: number };
 
 /**
  * Sub-tab event 子集(issue #98 §AC + spec #96 §决策 14 + 7)。
  *
- * `PersonDetailTabsView`/`PersonSubTabBar`/`PersonBrowseGrid` 等子 tab 子视
- * 图只派发这 9 类事件(`SetTab` 不在内 — 主 tab 由 App 顶层 TABS 按钮
- * 直接 dispatch,不走子视图 onNavigation 端口)。
+ * `PersonSubTabBar`/`PersonBrowseGrid` 等纯子 tab 子视图只派发这 9 类
+ * 事件(`SetTab` 不在内 — 主 tab 由 App 顶层 TABS 按钮直接 dispatch,
+ * 不走子视图 onNavigation 端口)。
  *
  * 抽取此窄类型作公开 API:
- * - `onNavigation` prop 在子视图层只允许派发这 9 类 — dispatch 端能传
- *   `SetTab` 等「非子 tab」事件的话,编译期报红(子视图不该越权改主
- *   tab)。
+ * - `onNavigation` prop 在纯子视图层只允许派发这 9 类 — dispatch 端能
+ *   传 `SetTab` 等「非子 tab」事件的话,编译期报红(子视图不该越权改
+ *   主 tab)。
  * - App 顶层 onNavigation 路由仍用全 `NavigationEvent`,逐 kind 决策
  *   dispatch / 直接 setDialog / 直接 setPaletteOpen。
  *
@@ -208,6 +215,31 @@ type PersonTabEventKind =
 export type PersonTabEvent = Extract<
   NavigationEvent,
   { kind: PersonTabEventKind }
+>;
+
+/**
+ * 「人员详情」主 tab 子视图的事件子集(issue #100 §What to build + #98
+ * 子视图组件同步段)—— 9 类 sub-tab event + 「段 3 / 段 5」+ 按钮专用
+ * `OpenCreateProjectFor` / `OpenCreateTemplateFor` 原子事件。
+ *
+ * `OpenCreateProjectFor` / `OpenCreateTemplateFor` 故意改了主 tab
+ * (`projects` / `holiday`)—— 这是「人员详情」段 3 / 段 5 + 按钮的明确
+ * 语义(`person → projects / holiday`,带 prefill intent)。与
+ * `PersonTabEvent` 子集(只派 sub-tab event)的纯子 tab 视图区分,本类型
+ * 用于 PersonDetailTabsView 顶层 —— 子视图允许派这两条「intent + 主
+ * tab 切换」事件,但仍**不允许**直接 `SetTab` 等无 intent 的主 tab 切换。
+ *
+ * 用 `Extract<T, U>` 从 union 派生,新增相关 kind 时 `NavigationEvent`
+ * 一改,本类型自动跟着扩展 —— 不双写、不漂移(ADR 0011 §正面 决策)。
+ */
+type PersonDetailTabsEventKind =
+  | PersonTabEventKind
+  | "OpenCreateProjectFor"
+  | "OpenCreateTemplateFor";
+
+export type PersonDetailTabsEvent = Extract<
+  NavigationEvent,
+  { kind: PersonDetailTabsEventKind }
 >;
 
 /**
@@ -316,15 +348,59 @@ export function navigationReducer(
       // to build + spec #96 §决策 13)。
       return state.dialog == null ? state : { ...state, dialog: null };
 
-    // ----- palette / intent (本期未实施,case 体在 #100 / #101 接入) -----
+    // ----- palette (issue #100 实施) -----
     //
-    // 暂时返 state 不变:消费路径尚未接到这里,API 已就位;一旦新增 case
-    // 体,返回类型仍兼容(都是 `NavigationState`)。
+    // palette 字段 = `{ open: boolean } | null` —— null = 关,non-null = 开。
+    // `OpenPalette` 幂等(已开时是 state 引用不变),`ClosePalette` 在
+    // palette 已是 null 时也是 no-op(防御性,Esc / 遮罩点击入口常触发)。
     case "OpenPalette":
+      return state.palette?.open ? state : { ...state, palette: { open: true } };
     case "ClosePalette":
+      return state.palette == null ? state : { ...state, palette: null };
+
+    // ----- PalettePick 4 子路由原子(issue #100 §What to build + AC #2) -----
+    //
+    // 一条 PalettePick 事件同时改 tab / pendingIntent / dialog / palette
+    // 多态 —— React 不渲染中间帧(reducer 同一帧返回完整 nextState)。
+    // 子路由对应 PalettePickTarget.kind:
+    //   - openCreateTask → dialog.create + palette = null
+    //   - openEditTask   → dialog.edit  + palette = null
+    //   - openProject    → tab projects + pendingIntent.locateProject + palette = null
+    //   - openPerson     → add-or-focus subTab + active 切 + tab personDetail + palette = null
+    //   (openPerson 子路由复用 reduceOpenPerson —— 与 OpenPerson(personId)
+    //   共享同一份 add-or-focus + 主 tab 切换语义,仅外加 palette = null)
+    //
+    // dialog 唯一性(issue #99):PalettePick(openCreateTask / openEditTask)
+    // 已有 dialog 时不替换 —— 与 OpenTaskDialog 同形兜底,但仍关 palette。
     case "PalettePick":
+      return reducePalettePick(state, event.target);
+
+    // ----- IntentConsumed(issue #100) -----
+    //
+    // ProjectsView 选中具体卡片后 dispatch 清空 pendingIntent slot;已 null 时
+    // 引用不变(防御性)。
     case "IntentConsumed":
-      return state;
+      return state.pendingIntent == null
+        ? state
+        : { ...state, pendingIntent: null };
+
+    // ----- 「人员详情」段 3/5 + 按钮专用事件(issue #100) -----
+    //
+    // 替代旧 App.tsx `openCreateProject` / `openCreateTemplate` 回调
+    // —— 后者原本两步: setPendingProjectCreateOwnerId + dispatch SetTab。
+    // 一条事件原子设 pendingIntent + tab,React 不渲染中间帧。
+    case "OpenCreateProjectFor":
+      return {
+        ...state,
+        tab: "projects",
+        pendingIntent: { kind: "createProjectFor", id: event.personId },
+      };
+    case "OpenCreateTemplateFor":
+      return {
+        ...state,
+        tab: "holiday",
+        pendingIntent: { kind: "createTemplateFor", subTeamId: event.subTeamId },
+      };
 
     default: {
       // Exhaustiveness 检查:union 一旦新增 kind 且未被本 switch 处理,此处
@@ -488,6 +564,64 @@ function reduceReorderPersonTabs(
   // 顺序变了但 personId 不变 —— activeSubTabId post-step 收敛:
   // 若原本 active 还在表内(顺序变了人物没变),维持 active。
   return reconcileAfterTabsChange(state, nextTabs);
+}
+
+// ---------------------------------------------------------------------------
+// 主路径 —— PalettePick 4 子路由
+// ---------------------------------------------------------------------------
+
+/**
+ * `PalettePick(target)` 一条事件内同时改 tab / pendingIntent / dialog /
+ * palette.open —— 原子派发,React 不渲染中间帧(spec #96 §决策 10)。
+ *
+ * 4 条子路由：
+ *   - `openCreateTask`: 已有 dialog 时不替换(issue #99 §dialog 唯一性),
+ *     但**仍关 palette**(否则 palette 留下,用户得手动 Esc)。
+ *   - `openEditTask`: 同上 —— dialog 不替换但 palette = null。
+ *   - `openProject`: pendingIntent = `{kind:"locateProject", id}`,
+ *     tab 切 projects, palette = null。
+ *   - `openPerson`: 复用 `reduceOpenPerson` 的 add-or-focus + 切
+ *     personDetail 主 tab 语义,再叠加 palette = null —— 等价于
+ *     「OpenPerson(personId) + ClosePalette」一条事件内同帧完成(issue
+ *     #100 §AC #4 与矩阵卡点击终点同 state 的合约)。
+ */
+function reducePalettePick(
+  state: NavigationState,
+  target: PalettePickTarget,
+): NavigationState {
+  switch (target.kind) {
+    case "openCreateTask": {
+      const nextDialog: DialogTarget =
+        state.dialog != null ? state.dialog : { mode: "create" };
+      return { ...state, palette: null, dialog: nextDialog };
+    }
+    case "openEditTask": {
+      const nextDialog: DialogTarget =
+        state.dialog != null
+          ? state.dialog
+          : {
+              mode: "edit",
+              task: target.task,
+              assignee: target.assignee,
+              project: target.project,
+            };
+      return { ...state, palette: null, dialog: nextDialog };
+    }
+    case "openProject":
+      return {
+        ...state,
+        palette: null,
+        tab: "projects",
+        pendingIntent: { kind: "locateProject", id: target.projectId },
+      };
+    case PALETTE_KIND_OPEN_PERSON:
+      // add-or-focus + 切 personDetail 主 tab —— 与 reduceOpenPerson
+      // 共享语义,只外加 palette = null。等价 dispatch 子集:矩阵卡点
+      // 击 `dispatch OpenPerson(personId)` 与命令面板 `dispatch
+      // PalettePick({kind:"openPerson", personId})` 在 reducer state
+      // 上产出同形结果(spec #96 §决策 10 + issue #100 §AC #4)。
+      return { ...reduceOpenPerson(state, target.personId), palette: null };
+  }
 }
 
 // ---------------------------------------------------------------------------

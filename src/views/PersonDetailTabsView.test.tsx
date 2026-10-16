@@ -33,7 +33,7 @@ import {
   type SubTeam,
   type Task,
 } from "@/lib/api";
-import type { PersonTabEvent } from "@/views/navigation/state";
+import type { PersonDetailTabsEvent } from "@/views/navigation/state";
 
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
@@ -362,7 +362,7 @@ describe("PersonDetailTabsView · 浏览网格（#85）", () => {
 
   it("点击网格卡片派发 OpenPerson(personId)", async () => {
     const user = userEvent.setup();
-    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
+    const onNavigation = vi.fn<(event: PersonDetailTabsEvent) => void>();
     render(
       <Harness
         people={[makePerson(42, { name: "王五" })]}
@@ -389,7 +389,7 @@ describe("PersonDetailTabsView · 浏览网格（#85）", () => {
   });
 
   it("关闭最后一个子 tab → 自动回到网格", async () => {
-    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
+    const onNavigation = vi.fn<(event: PersonDetailTabsEvent) => void>();
     // 单元视图层的合同是「openPersonTabs=[] → 渲染浏览网格」。
     // 父层 App.tsx 的 reducer `CloseActiveSubTab` (issue #98) 已实
     // 现「最后一条关闭时,activeSubTabId→null + 数组清空」的同步收敛
@@ -446,7 +446,7 @@ describe("PersonDetailTabsView · 浏览网格（#85）", () => {
 describe("PersonDetailTabsView · 切换 / 关闭", () => {
   it("点击子 tab 派发 ActivatePersonTab", async () => {
     const user = userEvent.setup();
-    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
+    const onNavigation = vi.fn<(event: PersonDetailTabsEvent) => void>();
     render(
       <Harness
         openPersonTabs={[{ personId: 1 }, { personId: 2 }]}
@@ -465,7 +465,7 @@ describe("PersonDetailTabsView · 切换 / 关闭", () => {
 
   it("点 × 派发 ClosePersonTab（不附带 ActivatePersonTab）", async () => {
     const user = userEvent.setup();
-    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
+    const onNavigation = vi.fn<(event: PersonDetailTabsEvent) => void>();
     render(
       <Harness
         openPersonTabs={[{ personId: 1 }, { personId: 2 }]}
@@ -526,7 +526,7 @@ describe("PersonDetailTabsView · 右键菜单", () => {
 
   it("点「关闭此」派发 ClosePersonTab", async () => {
     const user = userEvent.setup();
-    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
+    const onNavigation = vi.fn<(event: PersonDetailTabsEvent) => void>();
     render(
       <Harness
         openPersonTabs={[{ personId: 1 }, { personId: 2 }]}
@@ -550,7 +550,7 @@ describe("PersonDetailTabsView · 右键菜单", () => {
 
   it("点「关闭其他」派发 CloseOtherPersonTabs", async () => {
     const user = userEvent.setup();
-    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
+    const onNavigation = vi.fn<(event: PersonDetailTabsEvent) => void>();
     render(
       <Harness
         openPersonTabs={[
@@ -580,7 +580,7 @@ describe("PersonDetailTabsView · 右键菜单", () => {
 
   it("点「关闭全部」派发 CloseAllPersonTabs", async () => {
     const user = userEvent.setup();
-    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
+    const onNavigation = vi.fn<(event: PersonDetailTabsEvent) => void>();
     render(
       <Harness
         openPersonTabs={[{ personId: 1 }, { personId: 2 }]}
@@ -603,7 +603,7 @@ describe("PersonDetailTabsView · 右键菜单", () => {
 
   it("点「关闭左侧」派发 CloseLeftPersonTabs", async () => {
     const user = userEvent.setup();
-    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
+    const onNavigation = vi.fn<(event: PersonDetailTabsEvent) => void>();
     render(
       <Harness
         openPersonTabs={[
@@ -633,7 +633,7 @@ describe("PersonDetailTabsView · 右键菜单", () => {
 
   it("点「关闭右侧」派发 CloseRightPersonTabs", async () => {
     const user = userEvent.setup();
-    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
+    const onNavigation = vi.fn<(event: PersonDetailTabsEvent) => void>();
     render(
       <Harness
         openPersonTabs={[
@@ -753,7 +753,7 @@ describe("PersonDetailTabsView · 右键菜单", () => {
 
 describe("PersonDetailTabsView · 拖拽重排", () => {
   it("拖拽派发 ReorderPersonTabs(from, to)", () => {
-    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
+    const onNavigation = vi.fn<(event: PersonDetailTabsEvent) => void>();
     render(
       <Harness
         openPersonTabs={[{ personId: 1 }, { personId: 2 }, { personId: 3 }]}
@@ -944,7 +944,7 @@ interface HarnessProps {
    * event-shape 而不是命令名,贴合 reducer table-driven 测试风格
    * (`src/views/navigation/state.test.ts`)。
    */
-  onNavigation?: (event: PersonTabEvent) => void;
+  onNavigation?: (event: PersonDetailTabsEvent) => void;
   /** 内容区 dialog / pendingIntent 端口（非 sub-tab 事件），parent #99 /
    * #101 接 reducer case 体后,本视图承接的方式再议。 */
   onOpenTask?: (
@@ -952,8 +952,6 @@ interface HarnessProps {
     extras: { assignee: { personId: number; name: string; subTeamName: string } },
   ) => void;
   onCreateTask?: (person: Person) => void;
-  onCreateProject?: (person: Person) => void;
-  onCreateTemplate?: (subTeamId: number) => void;
 }
 
 function Harness(props: HarnessProps) {
@@ -973,8 +971,6 @@ function Harness(props: HarnessProps) {
       onNavigation={props.onNavigation ?? vi.fn()}
       onOpenTask={props.onOpenTask ?? vi.fn()}
       onCreateTask={props.onCreateTask ?? vi.fn()}
-      onCreateProject={props.onCreateProject ?? vi.fn()}
-      onCreateTemplate={props.onCreateTemplate ?? vi.fn()}
     />
   );
 }

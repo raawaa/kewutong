@@ -21,6 +21,7 @@ import {
 } from "@/lib/api";
 import { STATUS_META, TASK_STATUS_ORDER } from "@/lib/taskStatus";
 import { PROJECT_STATUS_STYLE } from "@/lib/projectStatusStyle";
+import type { PendingIntent } from "@/views/navigation/state";
 
 /** 状态列渲染顺序由 `@/lib/taskStatus` 的 `TASK_STATUS_ORDER` 单点决定。 */
 
@@ -45,27 +46,27 @@ interface BlockedDropPrompt {
 
 export function ProjectsView({
   refreshToken,
-  pendingProjectId,
-  onProjectLocated,
-  pendingCreateOwnerId,
-  onCreateOwnerConsumed,
+  pendingIntent,
+  onIntentConsumed,
 }: {
   refreshToken: number;
   /**
-   * 命令面板（ticket #28）选中一个项目时传过来——视图据此直接选中该项目
-   * 卡（覆盖默认选第一个）。`onProjectLocated` 在定位完成后被调用,父层
-   * 把这个 pending 状态清掉,避免下一次进视图时再次跳转。
+   * 单 slot 之 sum-typed intent(issue #100)—— 取代旧 `pendingProjectId`
+   * + `pendingCreateOwnerId` 双 slot。视图据 `kind` 决定 prefill:
+   *
+   * - `locateProject(id)` — 命令面板选中一个项目跳过来,视图据此直接
+   *   选中该项目卡(覆盖默认选第一个);
+   * - `createProjectFor(id)` — 「人员详情」段 3 + 按钮跳过来,开新建
+   *   表单并把 `id` 作为负责人预填;
+   * - `createTemplateFor(subTeamId)` — 「人员详情」段 5 + 按钮跳过来,
+   *   本视图不直接消费,透传 —— 由 HolidaysView / 模板 UI 自身判断;
+   * - `null` — 无 intent,常规浏览。
+   *
+   * 消费后回调 `onIntentConsumed` —— App 层 dispatch `IntentConsumed`
+   * 清空 reducer slot,避免下次重渲染重复打开表单 / 重新定位。
    */
-  pendingProjectId?: number | null;
-  onProjectLocated?: () => void;
-  /**
-   * 「人员详情」段 3（#83 T3）的 + 按钮走这条路径：切到「项目」tab
-   * 后开新建表单,把这个 owner 作为新项目的负责人预填进去。
-   * `onCreateOwnerConsumed` 在表单开起来后被调用,父层清掉这个
-   * pending 状态。
-   */
-  pendingCreateOwnerId?: number | null;
-  onCreateOwnerConsumed?: () => void;
+  pendingIntent?: PendingIntent | null;
+  onIntentConsumed?: () => void;
 }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [subTeams, setSubTeams] = useState<SubTeam[]>([]);
@@ -97,31 +98,38 @@ export function ProjectsView({
     }
   }, [projects, selectedProjectId]);
 
-  // 命令面板跳过来：覆盖默认,选中 pendingProjectId。注意要在 projects
-  // 拉到之后才生效——pendingProjectId 比 projects 早出现时这条 effect
-  // 第一次不会命中(列表空),projects 拉完后再 fire 一次。
+  // pendingIntent 消费：单 slot 三种意图 —— ProjectsView 据 `kind`
+  // 决定 prefill,用户选中具体卡片后回调 `onIntentConsumed` 让 App
+  // dispatch `IntentConsumed` 清 slot。
+  //
+  // 注意各分支要在 projects / people 拉到之后才生效 —— 切 tab 后
+  // pendingIntent 比列表数据早出现时第一次不会命中(列表空),列表
+  // 拉完后再 fire 一次。`prefillOwnerId` / `selectedProjectId` 一旦
+  // 塞进对应状态就是该次「开表单 / 定位」的快照 —— 后续无关 reset
+  // 不会带回来。
   useEffect(() => {
-    if (pendingProjectId == null) return;
-    if (projects.some((p) => p.id === pendingProjectId)) {
-      setSelectedProjectId(pendingProjectId);
-      onProjectLocated?.();
+    if (pendingIntent == null) return;
+    if (pendingIntent.kind === "locateProject") {
+      // 命令面板选中项目跳过来：覆盖默认,选中 pendingIntent.id。
+      // 列表里找不到该项目(id 失效 / 已删除)时不强消费,等列表刷新。
+      if (projects.some((p) => p.id === pendingIntent.id)) {
+        setSelectedProjectId(pendingIntent.id);
+        onIntentConsumed?.();
+      }
+      return;
     }
-  }, [pendingProjectId, projects, onProjectLocated]);
-
-  // 「人员详情」段 3（#83 T3）+ 按钮跳过来：开新建表单,把
-  // pendingCreateOwnerId 作为负责人预填。注意要在 people 拉到之后才
-  // 生效——people 比 candidates 时主表单负责人 select 没候选可填,
-  // people 拉完后再 fire 一次。`prefillOwnerId` 一旦塞进 `editing`
-  // 状态就是该次"开表单"的快照——后续无关的 editing reset 不会带回
-  // 来。消费完立刻调 onCreateOwnerConsumed 清掉 pending,避免下次
-  // 重渲染重复打开表单。
-  useEffect(() => {
-    if (pendingCreateOwnerId == null) return;
-    if (people.some((p) => p.id === pendingCreateOwnerId)) {
-      setEditing({ kind: "new", prefillOwnerId: pendingCreateOwnerId });
-      onCreateOwnerConsumed?.();
+    if (pendingIntent.kind === "createProjectFor") {
+      // 「人员详情」段 3（#83 T3）+ 按钮跳过来：开新建表单,把
+      // pendingIntent.id 作为负责人预填。people 拉完后再 fire 一次。
+      if (people.some((p) => p.id === pendingIntent.id)) {
+        setEditing({ kind: "new", prefillOwnerId: pendingIntent.id });
+        onIntentConsumed?.();
+      }
+      return;
     }
-  }, [pendingCreateOwnerId, people, onCreateOwnerConsumed]);
+    // createTemplateFor —— 本视图不直接消费,UI 跟进;不消费即不清 slot,
+    // 留给 HolidayCalendarView 自身处理(issue #101 接力)。
+  }, [pendingIntent, projects, people, onIntentConsumed]);
 
   async function refreshAll() {
     setBusy(true);

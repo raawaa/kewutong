@@ -946,27 +946,484 @@ describe("Scenario: dialog 唯一性 (#99)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// palette / PalettePick / IntentConsumed —— 延后到 #100 / #101,本期
-// reducer 收到它们返 state 不变(消费路径尚未接线)。
+// palette —— OpenPalette / ClosePalette (issue #100)
+//
+// palette 字段为 `{ open: boolean } | null` —— non-null = 开,null = 关。
+// 二次开是幂等(已是 open 时再 OpenPalette 不重建对象);无 palette 时关是 no-op。
 // ---------------------------------------------------------------------------
 
-describe("navigationReducer · 延后 kind 在本期是 no-op 兜底", () => {
-  it("OpenPalette / ClosePalette / PalettePick / IntentConsumed → state 不变", () => {
+describe("navigationReducer · OpenPalette", () => {
+  it("空 palette → palette = { open: true }", () => {
+    const next = navigationReducer(initialState, { kind: "OpenPalette" });
+    expect(next.palette).toEqual({ open: true });
+  });
+
+  it("已是 open 时再 OpenPalette → state 引用不变(幂等)", () => {
+    const state: NavigationState = { ...initialState, palette: { open: true } };
+    const next = navigationReducer(state, { kind: "OpenPalette" });
+    expect(next).toBe(state);
+  });
+
+  it("OpenPalette 不动其它字段(tab / subTabs / dialog / pendingIntent)", () => {
     const state: NavigationState = {
       ...initialState,
+      tab: "matrix",
       subTabs: [tab(1), tab(2)],
       activeSubTabId: 1,
+      dialog: { mode: "create" },
+      pendingIntent: { kind: "locateProject", id: 5 },
     };
-    for (const ev of [
-      { kind: "OpenPalette" as const },
-      { kind: "ClosePalette" as const },
-      {
-        kind: "PalettePick" as const,
-        target: { kind: "openCreateTask" as const },
+    const next = navigationReducer(state, { kind: "OpenPalette" });
+    expect(next.palette).toEqual({ open: true });
+    expect(next.tab).toBe("matrix");
+    expect(next.subTabs).toEqual([tab(1), tab(2)]);
+    expect(next.activeSubTabId).toBe(1);
+    expect(next.dialog).toEqual({ mode: "create" });
+    expect(next.pendingIntent).toEqual({ kind: "locateProject", id: 5 });
+  });
+});
+
+describe("navigationReducer · ClosePalette", () => {
+  it("open 时 ClosePalette → palette = null", () => {
+    const state: NavigationState = { ...initialState, palette: { open: true } };
+    const next = navigationReducer(state, { kind: "ClosePalette" });
+    expect(next.palette).toBeNull();
+  });
+
+  it("已 null 时 ClosePalette → state 引用不变(防御性)", () => {
+    const next = navigationReducer(initialState, { kind: "ClosePalette" });
+    expect(next).toBe(initialState);
+  });
+
+  it("ClosePalette 不动其它字段(dialog / pendingIntent / subTabs 等)", () => {
+    const state: NavigationState = {
+      ...initialState,
+      tab: "projects",
+      subTabs: [tab(1)],
+      activeSubTabId: 1,
+      dialog: { mode: "edit", task: taskFixture(1), assignee: assignee(1), project: null },
+      palette: { open: true },
+      pendingIntent: { kind: "locateProject", id: 5 },
+    };
+    const next = navigationReducer(state, { kind: "ClosePalette" });
+    expect(next.palette).toBeNull();
+    expect(next.dialog).toEqual({
+      mode: "edit",
+      task: taskFixture(1),
+      assignee: assignee(1),
+      project: null,
+    });
+    expect(next.pendingIntent).toEqual({ kind: "locateProject", id: 5 });
+    expect(next.tab).toBe("projects");
+    expect(next.subTabs).toEqual([tab(1)]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PalettePick —— 4 条子路由原子（issue #100 §What to build）
+//
+// 一条 PalettePick 事件同时改 tab / pendingIntent / dialog / palette.open
+// 多态 —— React 不渲染中间帧(reducer 同一帧返回完整 nextState)。
+// ---------------------------------------------------------------------------
+
+describe("navigationReducer · PalettePick · openCreateTask", () => {
+  it("PalettePick(openCreateTask) → dialog = {mode:'create'} + palette = null(原子)", () => {
+    const state: NavigationState = { ...initialState, palette: { open: true } };
+    const next = navigationReducer(state, {
+      kind: "PalettePick",
+      target: { kind: "openCreateTask" },
+    });
+    expect(next.dialog).toEqual({ mode: "create" });
+    expect(next.palette).toBeNull();
+  });
+
+  it("PalettePick(openCreateTask) 已有 dialog 时不打开新 dialog(唯一性)", () => {
+    const first: DialogTarget = { mode: "create", initialAssignee: assignee(1) };
+    const state: NavigationState = {
+      ...initialState,
+      dialog: first,
+      palette: { open: true },
+    };
+    const next = navigationReducer(state, {
+      kind: "PalettePick",
+      target: { kind: "openCreateTask" },
+    });
+    expect(next.dialog).toBe(first); // 维持原 dialog 引用
+    expect(next.palette).toBeNull(); // 但 palette 仍要关
+  });
+});
+
+describe("navigationReducer · PalettePick · openEditTask", () => {
+  it("PalettePick(openEditTask) → dialog = edit + palette = null(原子)", () => {
+    const t = taskFixture(42);
+    const a = assignee(7);
+    const p = project(99);
+    const state: NavigationState = { ...initialState, palette: { open: true } };
+    const next = navigationReducer(state, {
+      kind: "PalettePick",
+      target: { kind: "openEditTask", task: t, assignee: a, project: p },
+    });
+    expect(next.dialog).toEqual({ mode: "edit", task: t, assignee: a, project: p });
+    expect(next.palette).toBeNull();
+  });
+
+  it("PalettePick(openEditTask) 已有 dialog 时不替换(唯一性 + 仍关 palette)", () => {
+    const first: DialogTarget = { mode: "create", initialAssignee: assignee(1) };
+    const state: NavigationState = {
+      ...initialState,
+      dialog: first,
+      palette: { open: true },
+    };
+    const next = navigationReducer(state, {
+      kind: "PalettePick",
+      target: {
+        kind: "openEditTask",
+        task: taskFixture(2),
+        assignee: assignee(3),
+        project: null,
       },
-      { kind: "IntentConsumed" as const },
+    });
+    expect(next.dialog).toBe(first);
+    expect(next.palette).toBeNull();
+  });
+});
+
+describe("navigationReducer · PalettePick · openProject", () => {
+  it("PalettePick(openProject, 42) 原子: pendingIntent 设 + tab projects + palette null", () => {
+    const state: NavigationState = {
+      ...initialState,
+      tab: "today",
+      palette: { open: true },
+    };
+    const next = navigationReducer(state, {
+      kind: "PalettePick",
+      target: { kind: "openProject", projectId: 42 },
+    });
+    expect(next.pendingIntent).toEqual({ kind: "locateProject", id: 42 });
+    expect(next.tab).toBe("projects");
+    expect(next.palette).toBeNull();
+  });
+
+  it("PalettePick(openProject) 不动 subTabs / activeSubTabId / dialog", () => {
+    const state: NavigationState = {
+      ...initialState,
+      tab: "today",
+      subTabs: [tab(1), tab(2)],
+      activeSubTabId: 1,
+      palette: { open: true },
+    };
+    const next = navigationReducer(state, {
+      kind: "PalettePick",
+      target: { kind: "openProject", projectId: 7 },
+    });
+    expect(next.subTabs).toEqual([tab(1), tab(2)]);
+    expect(next.activeSubTabId).toBe(1);
+    expect(next.dialog).toBeNull();
+  });
+
+  it("PalettePick(openProject) palette 已 null 时仍生效(用户可直派)", () => {
+    const state: NavigationState = { ...initialState, tab: "today" };
+    const next = navigationReducer(state, {
+      kind: "PalettePick",
+      target: { kind: "openProject", projectId: 7 },
+    });
+    expect(next.pendingIntent).toEqual({ kind: "locateProject", id: 7 });
+    expect(next.tab).toBe("projects");
+    expect(next.palette).toBeNull();
+  });
+});
+
+describe("navigationReducer · PalettePick · openPerson", () => {
+  it("PalettePick(openPerson, 3) 原子: add-or-focus subTab + active 切 + tab personDetail + palette null", () => {
+    const state: NavigationState = {
+      ...initialState,
+      tab: "today",
+      palette: { open: true },
+    };
+    const next = navigationReducer(state, {
+      kind: "PalettePick",
+      target: { kind: "openPerson", personId: 3 },
+    });
+    expect(next.tab).toBe("personDetail");
+    expect(next.subTabs).toEqual([tab(3)]);
+    expect(next.activeSubTabId).toBe(3);
+    expect(next.palette).toBeNull();
+  });
+
+  it("PalettePick(openPerson, 2) 已有 [1,2,3] active=1 → 不重复增 + 激活 2 + palette null", () => {
+    const state: NavigationState = {
+      ...initialState,
+      tab: "today",
+      subTabs: [tab(1), tab(2), tab(3)],
+      activeSubTabId: 1,
+      palette: { open: true },
+    };
+    const next = navigationReducer(state, {
+      kind: "PalettePick",
+      target: { kind: "openPerson", personId: 2 },
+    });
+    expect(next.subTabs).toEqual([tab(1), tab(2), tab(3)]);
+    expect(next.activeSubTabId).toBe(2);
+    expect(next.tab).toBe("personDetail");
+    expect(next.palette).toBeNull();
+  });
+
+  it("PalettePick(openPerson) 终点与 OpenPerson(personId) 同 state(矩阵卡等价 dispatch)", () => {
+    // 等价契约(issue #100 AC #4):命令面板「人员」路径与矩阵卡点击终点同
+    // state —— 同一 reducer state 上的等价 dispatch 子集。
+    const s0: NavigationState = {
+      ...initialState,
+      tab: "matrix",
+      subTabs: [tab(1)],
+      activeSubTabId: 1,
+      palette: { open: true },
+    };
+    const viaPalette = navigationReducer(s0, {
+      kind: "PalettePick",
+      target: { kind: "openPerson", personId: 7 },
+    });
+    // 抹掉 palette 字段后,应与 OpenPerson(7) 结果相同。
+    const s0WithoutPalette: NavigationState = { ...s0, palette: null };
+    const viaOpenPerson = navigationReducer(s0WithoutPalette, {
+      kind: "OpenPerson",
+      personId: 7,
+    });
+    expect({
+      tab: viaPalette.tab,
+      subTabs: viaPalette.subTabs,
+      activeSubTabId: viaPalette.activeSubTabId,
+      dialog: viaPalette.dialog,
+      pendingIntent: viaPalette.pendingIntent,
+    }).toEqual({
+      tab: viaOpenPerson.tab,
+      subTabs: viaOpenPerson.subTabs,
+      activeSubTabId: viaOpenPerson.activeSubTabId,
+      dialog: viaOpenPerson.dialog,
+      pendingIntent: viaOpenPerson.pendingIntent,
+    });
+    expect(viaPalette.palette).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IntentConsumed —— 清 pendingIntent slot (issue #100)
+//
+// ProjectsView 选中具体卡片后 dispatch IntentConsumed 清空 slot ——
+// 等同于旧 App.tsx onProjectLocated + onCreateOwnerConsumed 双 callback。
+// ---------------------------------------------------------------------------
+
+describe("navigationReducer · IntentConsumed", () => {
+  it("有 pendingIntent → 置 null", () => {
+    const state: NavigationState = {
+      ...initialState,
+      pendingIntent: { kind: "locateProject", id: 5 },
+    };
+    const next = navigationReducer(state, { kind: "IntentConsumed" });
+    expect(next.pendingIntent).toBeNull();
+  });
+
+  it("已 null 时 IntentConsumed → state 引用不变(防御性)", () => {
+    const next = navigationReducer(initialState, { kind: "IntentConsumed" });
+    expect(next).toBe(initialState);
+  });
+
+  it("createProjectFor / createTemplateFor 也走同条 IntentConsumed", () => {
+    for (const initial of [
+      { kind: "createProjectFor" as const, id: 7 },
+      { kind: "createTemplateFor" as const, subTeamId: 3 },
     ]) {
-      expect(navigationReducer(state, ev)).toBe(state);
+      const state: NavigationState = { ...initialState, pendingIntent: initial };
+      const next = navigationReducer(state, { kind: "IntentConsumed" });
+      expect(next.pendingIntent).toBeNull();
     }
+  });
+
+  it("IntentConsumed 不动其它字段(palette / subTabs / dialog 等)", () => {
+    const state: NavigationState = {
+      ...initialState,
+      tab: "projects",
+      subTabs: [tab(1), tab(2)],
+      activeSubTabId: 1,
+      dialog: { mode: "edit", task: taskFixture(1), assignee: assignee(1), project: null },
+      palette: { open: true },
+      pendingIntent: { kind: "locateProject", id: 5 },
+    };
+    const next = navigationReducer(state, { kind: "IntentConsumed" });
+    expect(next.pendingIntent).toBeNull();
+    expect(next.palette).toEqual({ open: true });
+    expect(next.tab).toBe("projects");
+    expect(next.subTabs).toEqual([tab(1), tab(2)]);
+    expect(next.dialog).toEqual({
+      mode: "edit",
+      task: taskFixture(1),
+      assignee: assignee(1),
+      project: null,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OpenCreateProjectFor / OpenCreateTemplateFor —— PersonDetailTabsView
+// 「+」按钮专用事件,代替旧 App.tsx 的 openCreateProject / openCreateTemplate
+// 回调(setPendingProjectCreateOwnerId + dispatch SetTab 两步)。
+// 一条事件原子设置 tab + pendingIntent。
+// ---------------------------------------------------------------------------
+
+describe("navigationReducer · OpenCreateProjectFor", () => {
+  it("OpenCreateProjectFor(7) → tab projects + pendingIntent createProjectFor(7)", () => {
+    const state: NavigationState = { ...initialState, tab: "personDetail" };
+    const next = navigationReducer(state, {
+      kind: "OpenCreateProjectFor",
+      personId: 7,
+    });
+    expect(next.tab).toBe("projects");
+    expect(next.pendingIntent).toEqual({ kind: "createProjectFor", id: 7 });
+  });
+
+  it("OpenCreateProjectFor 不动 palette / subTabs / dialog", () => {
+    const state: NavigationState = {
+      ...initialState,
+      tab: "personDetail",
+      subTabs: [tab(1), tab(2)],
+      activeSubTabId: 1,
+      dialog: { mode: "create" },
+      palette: { open: true },
+    };
+    const next = navigationReducer(state, {
+      kind: "OpenCreateProjectFor",
+      personId: 9,
+    });
+    expect(next.palette).toEqual({ open: true });
+    expect(next.subTabs).toEqual([tab(1), tab(2)]);
+    expect(next.activeSubTabId).toBe(1);
+    expect(next.dialog).toEqual({ mode: "create" });
+  });
+});
+
+describe("navigationReducer · OpenCreateTemplateFor", () => {
+  it("OpenCreateTemplateFor(3) → tab holiday + pendingIntent createTemplateFor(3)", () => {
+    const state: NavigationState = { ...initialState, tab: "personDetail" };
+    const next = navigationReducer(state, {
+      kind: "OpenCreateTemplateFor",
+      subTeamId: 3,
+    });
+    expect(next.tab).toBe("holiday");
+    expect(next.pendingIntent).toEqual({ kind: "createTemplateFor", subTeamId: 3 });
+  });
+
+  it("OpenCreateTemplateFor 不动 palette / subTabs / dialog", () => {
+    const state: NavigationState = {
+      ...initialState,
+      tab: "personDetail",
+      subTabs: [tab(1)],
+      activeSubTabId: 1,
+      dialog: { mode: "edit", task: taskFixture(2), assignee: assignee(1), project: null },
+    };
+    const next = navigationReducer(state, {
+      kind: "OpenCreateTemplateFor",
+      subTeamId: 5,
+    });
+    expect(next.palette).toBeNull();
+    expect(next.subTabs).toEqual([tab(1)]);
+    expect(next.activeSubTabId).toBe(1);
+    expect(next.dialog).toEqual({
+      mode: "edit",
+      task: taskFixture(2),
+      assignee: assignee(1),
+      project: null,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario: PalettePick 4 条子路由同帧原子(issue #100 §AC)
+//
+// 锁定 UX 契约 —— PalettePick 一条事件内同帧多状态变化,React 不渲染中间帧。
+// 对每条 PalettePick 子路由,验证:
+//   1. palette 一定归 null(关窗)
+//   2. 副作用字段(tab / pendingIntent / dialog / subTabs / active)与"显式
+//      走 OpenPerson / OpenTaskDialog / SetTab + setIntent"两步派发结果同
+//   3. 不被影响的字段不动
+// ---------------------------------------------------------------------------
+
+describe("Scenario: PalettePick(openCreateTask) 原子", () => {
+  it("一条 PalettePick 同时关 palette + 开 dialog.create,中间帧无 paint", () => {
+    const state: NavigationState = { ...initialState, palette: { open: true } };
+    const next = navigationReducer(state, {
+      kind: "PalettePick",
+      target: { kind: "openCreateTask" },
+    });
+    // 同一 nextState 内 palette=null + dialog=create —— 中间帧不存在。
+    expect(next.palette).toBeNull();
+    expect(next.dialog).toEqual({ mode: "create" });
+  });
+});
+
+describe("Scenario: PalettePick(openEditTask) 原子", () => {
+  it("一条 PalettePick 同时关 palette + 开 dialog.edit,中间帧无 paint", () => {
+    const t = taskFixture(11);
+    const a = assignee(3);
+    const state: NavigationState = { ...initialState, palette: { open: true } };
+    const next = navigationReducer(state, {
+      kind: "PalettePick",
+      target: { kind: "openEditTask", task: t, assignee: a, project: null },
+    });
+    expect(next.palette).toBeNull();
+    expect(next.dialog).toEqual({ mode: "edit", task: t, assignee: a, project: null });
+  });
+});
+
+describe("Scenario: PalettePick(openProject) 原子 —— 三态同帧", () => {
+  it("一条 PalettePick 同时关 palette + 切 tab + 设 pendingIntent,中间帧无 paint", () => {
+    const state: NavigationState = {
+      ...initialState,
+      tab: "today",
+      palette: { open: true },
+    };
+    const next = navigationReducer(state, {
+      kind: "PalettePick",
+      target: { kind: "openProject", projectId: 42 },
+    });
+    expect(next.palette).toBeNull();
+    expect(next.tab).toBe("projects");
+    expect(next.pendingIntent).toEqual({ kind: "locateProject", id: 42 });
+  });
+
+  it("PalettePick(openProject) 完成后 dispatch IntentConsumed 清 slot —— ProjectsView 选中卡片路径", () => {
+    const state: NavigationState = {
+      ...initialState,
+      tab: "today",
+      palette: { open: true },
+    };
+    const picked = navigationReducer(state, {
+      kind: "PalettePick",
+      target: { kind: "openProject", projectId: 42 },
+    });
+    // ProjectsView 拿到 pendingIntent,选中卡片 → dispatch IntentConsumed
+    const consumed = navigationReducer(picked, { kind: "IntentConsumed" });
+    expect(consumed.pendingIntent).toBeNull();
+    expect(consumed.tab).toBe("projects"); // tab 不回滚
+  });
+});
+
+describe("Scenario: PalettePick(openPerson) 原子 —— 等价于 OpenPerson + 关 palette", () => {
+  it("一条 PalettePick 走完 subTabs add-or-focus + active 切 + tab personDetail + palette null", () => {
+    const state: NavigationState = {
+      ...initialState,
+      tab: "today",
+      subTabs: [tab(1)],
+      activeSubTabId: 1,
+      palette: { open: true },
+    };
+    const next = navigationReducer(state, {
+      kind: "PalettePick",
+      target: { kind: "openPerson", personId: 7 },
+    });
+    // 5 个字段同一帧确定 —— 中间帧不存在。
+    expect(next.palette).toBeNull();
+    expect(next.tab).toBe("personDetail");
+    expect(next.subTabs).toEqual([tab(1), tab(7)]);
+    expect(next.activeSubTabId).toBe(7);
+    expect(next.dialog).toBeNull();
   });
 });
