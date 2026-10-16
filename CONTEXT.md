@@ -59,3 +59,27 @@ _Avoid_: 阻塞优先
 **人员浏览网格**:
 「人员详情」tab 内子 tab 全空时显示的全员卡片网格；每张卡片 = 姓名 + 子组名 + 在岗/离岗徽章 + 联系方式前 8 字，可按姓名/子组名子串即时过滤；**不**显示在飞任务数（与人员矩阵「任务负载」维度区分）。
 _Avoid_: 全员视图
+
+**STATUS_META**:
+renderer 侧 6 状态的元数据（中文 label + 锁定色板），居所 `src/lib/taskStatus.ts`；全 app 任何视图里展示状态徽章都走这里，不在视图里再各自定义一份。
+_Avoid_: STATUS_STYLE, 状态色板
+
+**IN_FLIGHT**:
+`TaskStatus` 联合的派生子集——Open / In-progress / Blocked / Waiting-on，类型 `Exclude<TaskStatus, "Done" | "Cancelled">`；值列表由 `src/lib/taskStatus.ts` 单点声明，main 端镜像在 `src/main/task/index.ts:IN_FLIGHT_STATUSES`，drift test 守两边同步。
+_Avoid_: 在飞任务列表, in-flight status 集合
+
+**BLOCKED**:
+`TaskStatus` 联合的派生子集——Blocked / Waiting-on，类型 `Extract<TaskStatus, "Blocked" | "Waiting-on">`；renderer 视图层用 `BLOCKED.includes(task.status)` 替代 `task.status === "Blocked" || task.status === "Waiting-on"` 字面比较；main 镜像在 `BLOCKED_STATUSES`。
+_Avoid_: 阻塞集合, blocked statuses
+
+**inflight_sort**:
+`src/main/task/inflight_sort.ts` 模块——主进程唯一排序权威，导出三个具名 comparator + `comparatorFor(status)` 聚合入口；`bucketByStatus` 调用 `comparatorFor(status)` 调度，对 status 集零感知，新增 status 由 `Record<TaskStatus, Comparator>` 缺键编译期拦截。
+_Avoid_: 比较器, sort helper
+
+**comparatorFor**:
+`inflight_sort` 模块的聚合函数——给定 `TaskStatus` 返回对应 `Comparator<Task>`；长 stuck / due date / updated at 三类比较器按 status 映射（Open / In-progress 走 dueDate null排末；Blocked / Waiting-on 走 blockedAt 最长优先；Done / Cancelled 走 updatedAt 最新优先）。
+_Avoid_: sortByStatus, getComparator
+
+**isWaitingOnOther**:
+`bucketByStatus` 内部谓词——「task 在等别人，且别人不是 task 自己 owner」，隐式签名（从 `task.ownerPersonId` 推导 owner），用于排除自反等待（owner = waitingOnPersonId）不进 `Waiting-on` 桶。
+_Avoid_: waitingOnFilter, excludeSelfWaiting
