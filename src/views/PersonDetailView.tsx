@@ -17,7 +17,7 @@ import {
   type TaskStatus,
 } from "@/lib/api";
 import { toAssigneeCandidate } from "@/lib/assignee";
-import { STATUS_STYLE } from "@/lib/taskStatusStyle";
+import { STATUS_META } from "@/lib/taskStatus";
 import { PROJECT_STATUS_STYLE } from "@/lib/projectStatusStyle";
 
 /**
@@ -371,7 +371,7 @@ function SegmentBlock({
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? tasks : tasks.slice(0, DEFAULT_COLLAPSED_COUNT);
   const hidden = tasks.length - visible.length;
-  const style = STATUS_STYLE[status];
+  const style = STATUS_META[status];
 
   return (
     <article

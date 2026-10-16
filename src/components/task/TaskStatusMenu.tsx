@@ -13,31 +13,13 @@
  * - 不在 Save 上自己做校验细节——交给后端命令层（中文错误回传即可）。
  */
 import { useEffect, useRef, useState } from "react";
-import { STATUS_STYLE } from "@/lib/taskStatusStyle";
+import { STATUS_META, TASK_STATUS_ORDER } from "@/lib/taskStatus";
 import {
   listAssigneeCandidates,
   type AssigneeCandidate,
   type Task,
   type TaskStatus,
 } from "@/lib/api";
-
-const STATUSES: TaskStatus[] = [
-  "Open",
-  "In-progress",
-  "Blocked",
-  "Waiting-on",
-  "Done",
-  "Cancelled",
-];
-
-const STATUS_LABELS: Record<TaskStatus, string> = {
-  Open: "待开始",
-  "In-progress": "进行中",
-  Blocked: "已阻塞",
-  "Waiting-on": "等待中",
-  Done: "已完成",
-  Cancelled: "已取消",
-};
 
 export function TaskStatusMenu({
   task,
@@ -139,7 +121,7 @@ export function TaskStatusMenu({
     close();
   }
 
-  const style = STATUS_STYLE[task.status];
+  const style = STATUS_META[task.status];
 
   return (
     <span ref={rootRef} className="relative inline-block">
@@ -163,7 +145,7 @@ export function TaskStatusMenu({
         >
           {pending == null ? (
             <ul className="flex flex-col">
-              {STATUSES.map((status) => {
+              {TASK_STATUS_ORDER.map((status) => {
                 const selected = status === task.status;
                 return (
                   <li key={status}>
@@ -177,9 +159,9 @@ export function TaskStatusMenu({
                     >
                       <span className="flex items-center gap-2">
                         <span
-                          className={`rounded-full px-1.5 py-0.5 text-[10px] ${STATUS_STYLE[status].className}`}
+                          className={`rounded-full px-1.5 py-0.5 text-[10px] ${STATUS_META[status].className}`}
                         >
-                          {STATUS_LABELS[status]}
+                          {STATUS_META[status].label}
                         </span>
                       </span>
                       {selected && <span aria-hidden>✓</span>}
