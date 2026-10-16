@@ -5,13 +5,18 @@
  * - 子 tab 条渲染（标题 / × / （离岗）徽章 / （已删除）徽章 / 激活态切换）
  * - × 关闭单条 / 右键菜单 4 项（关闭其他 / 全部 / 左 / 右）
  * - 同一 personId 重复 → 不新增、只激活
- * - 拖拽重排（直接调 onReorder callback —— jsdom 不支持完整 HTML5 DnD 事件链）
+ * - 拖拽重排（通过 onNavigation dispatch `ReorderPersonTabs` 验证 —— jsdom
+ *   不支持完整 HTML5 DnD 事件链,fireDnd 直接 fire 原生事件触发 React 合成）
  * - 子 tab 列表空 → 占位文案
  * - 内容区 `hidden` 隐藏非激活 tab —— PersonDetailView 始终挂载,
  *   useState 保留(Q23)
  *
  * 命令层覆盖在 `src/main/personnel/personnel.test.ts`；本视图只测"拿到
  * catalog + 收到 IPC 失败后,前端怎么展示 + 用户怎么操作"。
+ *
+ * 派发端口:issue #98 把 8 类 sub-tab 事件折到 `onNavigation(PersonTabEvent)`
+ * 一端口;断言用 `toHaveBeenCalledWith({kind:"...",...})` 落 event-shape,
+ * 与 reducer table-driven 测试 (`src/views/navigation/state.test.ts`) 口径一致。
  *
  * @vitest-environment jsdom
  */
@@ -28,6 +33,7 @@ import {
   type SubTeam,
   type Task,
 } from "@/lib/api";
+import type { PersonTabEvent } from "@/views/navigation/state";
 
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
@@ -354,13 +360,13 @@ describe("PersonDetailTabsView · 浏览网格（#85）", () => {
     expect(vi.mocked(listPeople)).not.toHaveBeenCalled();
   });
 
-  it("点击网格卡片触发 onOpenPerson(personId)", async () => {
+  it("点击网格卡片派发 OpenPerson(personId)", async () => {
     const user = userEvent.setup();
-    const onOpenPerson = vi.fn();
+    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
     render(
       <Harness
         people={[makePerson(42, { name: "王五" })]}
-        onOpenPerson={onOpenPerson}
+        onNavigation={onNavigation}
       />,
     );
 
@@ -368,7 +374,10 @@ describe("PersonDetailTabsView · 浏览网格（#85）", () => {
     const card = screen.getByRole("button", { name: /王五/ });
     await user.click(card);
 
-    expect(onOpenPerson).toHaveBeenCalledWith(42);
+    expect(onNavigation).toHaveBeenCalledWith({
+      kind: "OpenPerson",
+      personId: 42,
+    });
   });
 
   it("catalog 为空时显示「还没有人员」提示(不显示搜索框)", () => {
@@ -380,12 +389,13 @@ describe("PersonDetailTabsView · 浏览网格（#85）", () => {
   });
 
   it("关闭最后一个子 tab → 自动回到网格", async () => {
-    const onClose = vi.fn();
+    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
     // 单元视图层的合同是「openPersonTabs=[] → 渲染浏览网格」。
-    // 父层 App.tsx 的 closePersonTab（tickets #84 T4）已实现「最后
-    // 一条关闭时,activePersonId→null + 数组清空」的同步收敛；本测试
-    // 不重复测 App 状态机,只断言「只要上层给空数组 + null 激活,网
-    // 格自动现身」。
+    // 父层 App.tsx 的 reducer `CloseActiveSubTab` (issue #98) 已实
+    // 现「最后一条关闭时,activeSubTabId→null + 数组清空」的同步收敛
+    // （state.ts:reduceCloseActiveSubTab post-step reconcileActive）;
+    // 本测试不重复测 App 状态机,只断言「只要上层给空数组 + null 激
+    // 活,网格自动现身」（视图合同,不变量归 reducer）。
     const { rerender } = render(
       <Harness
         people={[
@@ -394,7 +404,7 @@ describe("PersonDetailTabsView · 浏览网格（#85）", () => {
         ]}
         openPersonTabs={[{ personId: 1 }]}
         activePersonId={1}
-        onClose={onClose}
+        onNavigation={onNavigation}
       />,
     );
 
@@ -434,32 +444,33 @@ describe("PersonDetailTabsView · 浏览网格（#85）", () => {
 // ---------------------------------------------------------------------------
 
 describe("PersonDetailTabsView · 切换 / 关闭", () => {
-  it("点击子 tab 触发 onActivate", async () => {
+  it("点击子 tab 派发 ActivatePersonTab", async () => {
     const user = userEvent.setup();
-    const onActivate = vi.fn();
+    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
     render(
       <Harness
         openPersonTabs={[{ personId: 1 }, { personId: 2 }]}
         activePersonId={1}
-        onActivate={onActivate}
+        onNavigation={onNavigation}
       />,
     );
 
     await user.click(screen.getByRole("tab", { name: "张三2" }));
 
-    expect(onActivate).toHaveBeenCalledWith(2);
+    expect(onNavigation).toHaveBeenCalledWith({
+      kind: "ActivatePersonTab",
+      personId: 2,
+    });
   });
 
-  it("点 × 触发 onClose（不触发 onActivate）", async () => {
+  it("点 × 派发 ClosePersonTab（不附带 ActivatePersonTab）", async () => {
     const user = userEvent.setup();
-    const onActivate = vi.fn();
-    const onClose = vi.fn();
+    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
     render(
       <Harness
         openPersonTabs={[{ personId: 1 }, { personId: 2 }]}
         activePersonId={1}
-        onActivate={onActivate}
-        onClose={onClose}
+        onNavigation={onNavigation}
       />,
     );
 
@@ -469,8 +480,15 @@ describe("PersonDetailTabsView · 切换 / 关闭", () => {
     });
     await user.click(closeButton);
 
-    expect(onClose).toHaveBeenCalledWith(1);
-    expect(onActivate).not.toHaveBeenCalled();
+    expect(onNavigation).toHaveBeenCalledWith({
+      kind: "ClosePersonTab",
+      personId: 1,
+    });
+    // 没有附带 ActivatePersonTab —— × 单纯关闭不切激活
+    const activateCalls = onNavigation.mock.calls.filter(
+      ([event]) => event.kind === "ActivatePersonTab",
+    );
+    expect(activateCalls).toHaveLength(0);
   });
 });
 
@@ -506,14 +524,14 @@ describe("PersonDetailTabsView · 右键菜单", () => {
     ]);
   });
 
-  it("点「关闭此」触发 onClose", async () => {
+  it("点「关闭此」派发 ClosePersonTab", async () => {
     const user = userEvent.setup();
-    const onClose = vi.fn();
+    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
     render(
       <Harness
         openPersonTabs={[{ personId: 1 }, { personId: 2 }]}
         activePersonId={1}
-        onClose={onClose}
+        onNavigation={onNavigation}
       />,
     );
 
@@ -524,12 +542,15 @@ describe("PersonDetailTabsView · 右键菜单", () => {
       within(screen.getByRole("menu")).getByRole("menuitem", { name: "关闭此" }),
     );
 
-    expect(onClose).toHaveBeenCalledWith(1);
+    expect(onNavigation).toHaveBeenCalledWith({
+      kind: "ClosePersonTab",
+      personId: 1,
+    });
   });
 
-  it("点「关闭其他」触发 onCloseOthers", async () => {
+  it("点「关闭其他」派发 CloseOtherPersonTabs", async () => {
     const user = userEvent.setup();
-    const onCloseOthers = vi.fn();
+    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
     render(
       <Harness
         openPersonTabs={[
@@ -538,7 +559,7 @@ describe("PersonDetailTabsView · 右键菜单", () => {
           { personId: 3 },
         ]}
         activePersonId={2}
-        onCloseOthers={onCloseOthers}
+        onNavigation={onNavigation}
       />,
     );
 
@@ -551,17 +572,20 @@ describe("PersonDetailTabsView · 右键菜单", () => {
       within(screen.getByRole("menu")).getByRole("menuitem", { name: "关闭其他" }),
     );
 
-    expect(onCloseOthers).toHaveBeenCalledWith(2);
+    expect(onNavigation).toHaveBeenCalledWith({
+      kind: "CloseOtherPersonTabs",
+      personId: 2,
+    });
   });
 
-  it("点「关闭全部」触发 onCloseAll", async () => {
+  it("点「关闭全部」派发 CloseAllPersonTabs", async () => {
     const user = userEvent.setup();
-    const onCloseAll = vi.fn();
+    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
     render(
       <Harness
         openPersonTabs={[{ personId: 1 }, { personId: 2 }]}
         activePersonId={1}
-        onCloseAll={onCloseAll}
+        onNavigation={onNavigation}
       />,
     );
 
@@ -574,12 +598,12 @@ describe("PersonDetailTabsView · 右键菜单", () => {
       within(screen.getByRole("menu")).getByRole("menuitem", { name: "关闭全部" }),
     );
 
-    expect(onCloseAll).toHaveBeenCalledTimes(1);
+    expect(onNavigation).toHaveBeenCalledWith({ kind: "CloseAllPersonTabs" });
   });
 
-  it("点「关闭左侧」触发 onCloseLeft", async () => {
+  it("点「关闭左侧」派发 CloseLeftPersonTabs", async () => {
     const user = userEvent.setup();
-    const onCloseLeft = vi.fn();
+    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
     render(
       <Harness
         openPersonTabs={[
@@ -588,7 +612,7 @@ describe("PersonDetailTabsView · 右键菜单", () => {
           { personId: 3 },
         ]}
         activePersonId={2}
-        onCloseLeft={onCloseLeft}
+        onNavigation={onNavigation}
       />,
     );
 
@@ -601,12 +625,15 @@ describe("PersonDetailTabsView · 右键菜单", () => {
       within(screen.getByRole("menu")).getByRole("menuitem", { name: "关闭左侧" }),
     );
 
-    expect(onCloseLeft).toHaveBeenCalledWith(2);
+    expect(onNavigation).toHaveBeenCalledWith({
+      kind: "CloseLeftPersonTabs",
+      personId: 2,
+    });
   });
 
-  it("点「关闭右侧」触发 onCloseRight", async () => {
+  it("点「关闭右侧」派发 CloseRightPersonTabs", async () => {
     const user = userEvent.setup();
-    const onCloseRight = vi.fn();
+    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
     render(
       <Harness
         openPersonTabs={[
@@ -615,7 +642,7 @@ describe("PersonDetailTabsView · 右键菜单", () => {
           { personId: 3 },
         ]}
         activePersonId={2}
-        onCloseRight={onCloseRight}
+        onNavigation={onNavigation}
       />,
     );
 
@@ -628,7 +655,10 @@ describe("PersonDetailTabsView · 右键菜单", () => {
       within(screen.getByRole("menu")).getByRole("menuitem", { name: "关闭右侧" }),
     );
 
-    expect(onCloseRight).toHaveBeenCalledWith(2);
+    expect(onNavigation).toHaveBeenCalledWith({
+      kind: "CloseRightPersonTabs",
+      personId: 2,
+    });
   });
 
   it("第一条子 tab 时「关闭左侧」禁用", async () => {
@@ -722,13 +752,13 @@ describe("PersonDetailTabsView · 右键菜单", () => {
 // ---------------------------------------------------------------------------
 
 describe("PersonDetailTabsView · 拖拽重排", () => {
-  it("拖拽触发 onReorder(fromIndex, toIndex)", () => {
-    const onReorder = vi.fn();
+  it("拖拽派发 ReorderPersonTabs(from, to)", () => {
+    const onNavigation = vi.fn<(event: PersonTabEvent) => void>();
     render(
       <Harness
         openPersonTabs={[{ personId: 1 }, { personId: 2 }, { personId: 3 }]}
         activePersonId={1}
-        onReorder={onReorder}
+        onNavigation={onNavigation}
       />,
     );
 
@@ -742,8 +772,11 @@ describe("PersonDetailTabsView · 拖拽重排", () => {
     fireDnd(target, "dragover");
     fireDnd(target, "drop");
 
-    expect(onReorder).toHaveBeenCalledTimes(1);
-    expect(onReorder).toHaveBeenCalledWith(0, 2);
+    expect(onNavigation).toHaveBeenCalledWith({
+      kind: "ReorderPersonTabs",
+      from: 0,
+      to: 2,
+    });
   });
 });
 
@@ -901,13 +934,19 @@ interface HarnessProps {
   people?: ReadonlyArray<Person>;
   subTeams?: SubTeam[];
   refreshToken?: number;
-  onActivate?: (personId: number) => void;
-  onClose?: (personId: number) => void;
-  onCloseOthers?: (personId: number) => void;
-  onCloseAll?: () => void;
-  onCloseLeft?: (personId: number) => void;
-  onCloseRight?: (personId: number) => void;
-  onReorder?: (fromIndex: number, toIndex: number) => void;
+  /**
+   * 子 tab 单派发端口 —— PersonDetailTabsView 上 8 类 sub-tab 行为（`OpenPerson`
+   * / 激活 / 关闭 / 重排）全折叠到这一个 callback（issue #98 AC：`PersonDetailTabsView`
+   * props 仅留 `onNavigation` 一项 sub-tab event dispatch）。事件 type 由
+   * `PersonTabEvent`（reducer 视图 sub-tab event 子集）TS 编译期锁定 —— 本
+   * Harness 不暴露具体 `kind` 的窄 cb,只暴露完整的 `onNavigation`,断言
+   * 侧 `expect(onNavigation).toHaveBeenCalledWith({ kind:"...", ... })` 落
+   * event-shape 而不是命令名,贴合 reducer table-driven 测试风格
+   * (`src/views/navigation/state.test.ts`)。
+   */
+  onNavigation?: (event: PersonTabEvent) => void;
+  /** 内容区 dialog / pendingIntent 端口（非 sub-tab 事件），parent #99 /
+   * #101 接 reducer case 体后,本视图承接的方式再议。 */
   onOpenTask?: (
     task: Task,
     extras: { assignee: { personId: number; name: string; subTeamName: string } },
@@ -915,7 +954,6 @@ interface HarnessProps {
   onCreateTask?: (person: Person) => void;
   onCreateProject?: (person: Person) => void;
   onCreateTemplate?: (subTeamId: number) => void;
-  onOpenPerson?: (personId: number) => void;
 }
 
 function Harness(props: HarnessProps) {
@@ -932,18 +970,11 @@ function Harness(props: HarnessProps) {
       people={people}
       subTeams={subTeams}
       refreshToken={props.refreshToken ?? 0}
-      onActivate={props.onActivate ?? vi.fn()}
-      onClose={props.onClose ?? vi.fn()}
-      onCloseOthers={props.onCloseOthers ?? vi.fn()}
-      onCloseAll={props.onCloseAll ?? vi.fn()}
-      onCloseLeft={props.onCloseLeft ?? vi.fn()}
-      onCloseRight={props.onCloseRight ?? vi.fn()}
-      onReorder={props.onReorder ?? vi.fn()}
+      onNavigation={props.onNavigation ?? vi.fn()}
       onOpenTask={props.onOpenTask ?? vi.fn()}
       onCreateTask={props.onCreateTask ?? vi.fn()}
       onCreateProject={props.onCreateProject ?? vi.fn()}
       onCreateTemplate={props.onCreateTemplate ?? vi.fn()}
-      onOpenPerson={props.onOpenPerson ?? vi.fn()}
     />
   );
 }

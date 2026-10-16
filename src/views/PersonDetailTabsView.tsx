@@ -15,6 +15,10 @@ import {
   type SubTeam,
   type Task,
 } from "@/lib/api";
+import type {
+  OpenPersonTab,
+  PersonTabEvent,
+} from "@/views/navigation/state";
 
 /**
  * 「人员详情」主 tab 的子 tab 列表 + 内容区（tickets #80 / #84 T4 / #85 T5）。
@@ -28,12 +32,13 @@ import {
  *    入口（矩阵 / PersonnelView / TaskDialog / ⌘K）行为同形（Q10）。
  *
  * 业务规则在 `PersonDetailView` 与主进程命令层；本视图只管"开 / 关 / 重排 / 浏览"。
+ *
+ * App-shell 只留 sub-tab event 单一派发端口（issue #98）：
+ * `OpenPerson` / 激活 / 关闭 / 重排 8 个 callback 折叠为一个 `onNavigation`
+ * 端口,事件 type 由 `PersonTabEvent` (sub-tab event 子集) TS 编译期锁定
+ * —— 子视图越权 dispatch 主 tab(`SetTab`)等非子 tab 事件,直接编译报红
+ * (parent spec #96 §决策 14 + issue #98 AC)。
  */
-
-/** 一条已开子 tab = 一位人员的详情容器（spec #80 §Implementation #3）。 */
-export interface OpenPersonTab {
-  personId: number;
-}
 
 export function PersonDetailTabsView({
   openPersonTabs,
@@ -41,18 +46,11 @@ export function PersonDetailTabsView({
   people,
   subTeams,
   refreshToken,
-  onActivate,
-  onClose,
-  onCloseOthers,
-  onCloseAll,
-  onCloseLeft,
-  onCloseRight,
-  onReorder,
+  onNavigation,
   onOpenTask,
   onCreateTask,
   onCreateProject,
   onCreateTemplate,
-  onOpenPerson,
 }: {
   /** 已开子 tab 列表 —— 物理顺序即子 tab 显示顺序（spec #80 §Impl #11）。 */
   openPersonTabs: ReadonlyArray<OpenPersonTab>;
@@ -64,33 +62,75 @@ export function PersonDetailTabsView({
   subTeams: ReadonlyArray<SubTeam>;
   /** 父层保存后 +1，触发所有已开子 tab 重拉（spec #80 §Impl #19）。 */
   refreshToken: number;
-  /** 子 tab 点击 → 激活。 */
-  onActivate: (personId: number) => void;
-  /** × 关闭 / 右键菜单「关闭此」→ 从列表移除。 */
-  onClose: (personId: number) => void;
-  /** 右键菜单「关闭其他」→ 保留此人，关闭其余。 */
-  onCloseOthers: (personId: number) => void;
-  /** 右键菜单「关闭全部」→ 清空列表。 */
-  onCloseAll: () => void;
-  /** 右键菜单「关闭左侧」→ 关闭此左侧所有。 */
-  onCloseLeft: (personId: number) => void;
-  /** 右键菜单「关闭右侧」→ 关闭此右侧所有。 */
-  onCloseRight: (personId: number) => void;
-  /** 拖拽重排 → 用数组新顺序重排 openPersonTabs。 */
-  onReorder: (fromIndex: number, toIndex: number) => void;
-  /** 内容区回调 —— 透传给 PersonDetailView（5 段聚合打开弹窗 / 新建）。 */
+  /**
+   * 单一派发端口 —— 8 类 sub-tab event（`OpenPerson` / 激活 / 关闭 / 重排）
+   * 全折叠到此 prop 上。事件 type 锁 `PersonTabEvent`（sub-tab event 子集），
+   * 子视图越权 dispatch 主 tab（`SetTab`）/ dialog（`OpenTaskDialog` 等），
+   * TS 编译期报红（issue #98 AC + parent #96 §决策 14）。
+   *
+   * `SetTab` 不在子视图端口 —— 主 tab 由 App 顶层 TABS 按钮直接
+   * dispatch（spec #96 §决策 5：主导航与子 tab 正交）。
+   */
+  onNavigation: (event: PersonTabEvent) => void;
+  /**
+   * 内容区回调 —— 透传给 PersonDetailView（5 段聚合打开弹窗 / 新建）。
+   * 不走 `onNavigation` —— 这些对应的是 dialog / pendingIntent 端口,
+   * 实施由 issue #99 / #101 接力,本视图先以直接回调形式承载,
+   * 保持 reducer 折叠的范围聚焦 sub-tab + tab（issue #98 范围）。
+   */
   onOpenTask: (task: Task, extras: { assignee: AssigneeCandidate }) => void;
   onCreateTask: (person: Person) => void;
   onCreateProject: (person: Person) => void;
   onCreateTemplate: (subTeamId: number) => void;
-  /**
-   * 浏览网格（T5 #85）点击卡片 → App 的 openPerson —— 与其它真入口
-   * （矩阵 / PersonnelView / TaskDialog 负责人 / ⌘K）行为同形（Q10）。
-   * 同一 personId 重复 add → 聚焦已开，本回调仍正常调用，App 层负责去重。
-   */
-  onOpenPerson: (personId: number) => void;
 }) {
   const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
+
+  // sub-tab 8 个 callback 折叠为单端口 —— `PersonSubTabBar` /
+  // `PersonBrowseGrid` 内部仍按各自 callback 取（便于右键菜单 / 拖拽
+  // 等小区域独立测试），外层在此把 onNavigation 派发回包,只透 1 个
+  // 端口给父层。
+  const onActivate = useCallback(
+    (personId: number) =>
+      onNavigation({ kind: "ActivatePersonTab", personId }),
+    [onNavigation],
+  );
+  const onClose = useCallback(
+    (personId: number) =>
+      onNavigation({ kind: "ClosePersonTab", personId }),
+    [onNavigation],
+  );
+  const onCloseOthers = useCallback(
+    (personId: number) =>
+      onNavigation({ kind: "CloseOtherPersonTabs", personId }),
+    [onNavigation],
+  );
+  const onCloseAll = useCallback(
+    () => onNavigation({ kind: "CloseAllPersonTabs" }),
+    [onNavigation],
+  );
+  const onCloseLeft = useCallback(
+    (personId: number) =>
+      onNavigation({ kind: "CloseLeftPersonTabs", personId }),
+    [onNavigation],
+  );
+  const onCloseRight = useCallback(
+    (personId: number) =>
+      onNavigation({ kind: "CloseRightPersonTabs", personId }),
+    [onNavigation],
+  );
+  const onReorder = useCallback(
+    (fromIndex: number, toIndex: number) =>
+      onNavigation({ kind: "ReorderPersonTabs", from: fromIndex, to: toIndex }),
+    [onNavigation],
+  );
+  // 浏览网格卡点击 = `OpenPerson` —— 与矩阵 / PersonnelView /
+  // TaskDialog 负责人 / ⌘K 行为同形（Q10）：在子 tab 层走 onNavigation
+  // 派发,父层 reducer `OpenPerson` case 负责 add-or-focus + 切
+  // personDetail 主 tab。
+  const onOpenPersonFromBrowseGrid = useCallback(
+    (personId: number) => onNavigation({ kind: "OpenPerson", personId }),
+    [onNavigation],
+  );
 
   return (
     <div className="flex flex-col gap-4">
@@ -107,7 +147,7 @@ export function PersonDetailTabsView({
         <PersonBrowseGrid
           people={people}
           subTeams={subTeams}
-          onOpenPerson={onOpenPerson}
+          onOpenPerson={onOpenPersonFromBrowseGrid}
         />
       ) : (
         <>

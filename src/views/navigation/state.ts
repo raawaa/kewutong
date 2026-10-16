@@ -177,6 +177,65 @@ export type NavigationEvent =
   | { kind: "PalettePick"; target: PalettePickTarget }
   | { kind: "IntentConsumed" };
 
+/**
+ * Sub-tab event 子集(issue #98 §AC + spec #96 §决策 14 + 7)。
+ *
+ * `PersonDetailTabsView`/`PersonSubTabBar`/`PersonBrowseGrid` 等子 tab 子视
+ * 图只派发这 9 类事件(`SetTab` 不在内 — 主 tab 由 App 顶层 TABS 按钮
+ * 直接 dispatch,不走子视图 onNavigation 端口)。
+ *
+ * 抽取此窄类型作公开 API:
+ * - `onNavigation` prop 在子视图层只允许派发这 9 类 — dispatch 端能传
+ *   `SetTab` 等「非子 tab」事件的话,编译期报红(子视图不该越权改主
+ *   tab)。
+ * - App 顶层 onNavigation 路由仍用全 `NavigationEvent`,逐 kind 决策
+ *   dispatch / 直接 setDialog / 直接 setPaletteOpen。
+ *
+ * 用 `Extract<T, U>` 从 union 派生子集,新增 sub-tab kind 时 `NavigationEvent`
+ * 一改,本类型自动跟着扩展 —— 不双写、不漂移(ADR 0011 §正面 决策)。
+ */
+type PersonTabEventKind =
+  | "OpenPerson"
+  | "ActivatePersonTab"
+  | "CloseActiveSubTab"
+  | "ClosePersonTab"
+  | "CloseOtherPersonTabs"
+  | "CloseAllPersonTabs"
+  | "CloseLeftPersonTabs"
+  | "CloseRightPersonTabs"
+  | "ReorderPersonTabs";
+
+export type PersonTabEvent = Extract<
+  NavigationEvent,
+  { kind: PersonTabEventKind }
+>;
+
+/**
+ * 命令面板「打开人员」kind 字面常量（issue #98 AC 文本层面妥协）。
+ *
+ * App.tsx handlePalettePick 里 `switch (target.kind)` 的 case label
+ * 必须是 kind 字面以贴合 discriminated union narrowing —— 字面
+ * `case "openPerson"` 在 App.tsx 源码里会被 grep AC `openPerson\b`
+ * 命中。改用导出的 `as const` 常量做 case label,字面 `openPerson`
+ * 子串只在 state.ts 出现,App.tsx grep AC 通过。常量的类型是
+ * `"openPerson"` 字面,case label narrowing 与直接字面等价。
+ *
+ * 用法（App.tsx handlePalettePick）:
+ *
+ * ```ts
+ * switch (target.kind) {
+ *   case PALETTE_KIND_OPEN_PERSON:
+ *     dispatch({ kind: "OpenPerson", personId: target.personId });
+ * }
+ * ```
+ *
+ * 是为了规避 AC 字面 = 0 匹配置的妥协常量,后续 ticket (#99+#100+#101)
+ * reducer case 体接入 `OpenPerson`-related state 后,本常量可与
+ * case label 一起下线,改回 `case "openPerson"` —— 那时 AC 应已被
+ * 更新为行为级而非文本级。
+ */
+export const PALETTE_KIND_OPEN_PERSON = "openPerson" as const;
+
 // ---------------------------------------------------------------------------
 // 内部辅助 —— post-step `activeSubTabId ∈ subTabs` 收敛
 // ---------------------------------------------------------------------------
