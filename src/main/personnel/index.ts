@@ -41,10 +41,10 @@ import type {
 import {
   TASK_COLUMNS,
   fetchInFlightTasksForPerson,
-  inFlightTaskOrderBy,
   rowToTask,
   type TaskRow,
 } from "../task/index.js";
+import { comparatorFor } from "../task/inflight_sort.js";
 import { listProjectsForOwner } from "../project/index.js";
 import { listTemplatesForSubTeam } from "../recurring_template/index.js";
 import { withTx } from "../sqlite.js";
@@ -439,79 +439,84 @@ export function personnelMatrix(
 // ---------------------------------------------------------------------------
 
 /**
- * 拉取 owner = 本人 的所有任务（不限状态）——6 状态分桶的源数据。
+ * 拉取 owner 或 waitingOn 的任务——`getPersonDetail` 第 2 / 第 4 段共用
+ * 一条 SQL 模式（ticket #92 C1 P1：合并 `fetchAllTasksForPerson` +
+ * `fetchWaitingOnTasksForPerson`）。
  *
- * 单条 SQL 把 6 状态全捞出来,再在 TS 里按 `status` 分桶 + 段内排——
- * 避免在 SQL 端打 6 个 `IN (...)` 拼装。每条仍走 [`TASK_COLUMNS`] +
- * [`rowToTask`] 的同源 mapping,与 [`fetchInFlightTasksForPerson`] 共
- * 用 DTO 形状。
+ * **XOR 签名**：`{owner: number; waitingOn?: never}` 或
+ * `{waitingOn: number; owner?: never}`，TS 编译期拦下两个都设。
  *
- * 段内排序由 [`bucketByStatus`]（#82 T2）一次性给齐,SQL 端走
- * [`inFlightTaskOrderBy`] 兜底——单人员全状态的任务量极小,顺序先
- * 后不影响 TS 端按段语义最终拍板。
+ * **WHERE 分支**：
+ * - `owner`：`WHERE owner_person_id = ?` —— 单列索引，避免 table scan；
+ * - `waitingOn`：`WHERE waiting_on_person_id = ? AND status = 'Waiting-on'`
+ *   —— 显式 status backstop 守住 DB CHECK 不变约束（`waiting_on_person_id
+ *   IS NULL OR status = 'Waiting-on'`），让 invariant 不 load-bearing 在 DDL。
+ *
+ * **ORDER BY**：`id ASC` 兜底 tiebreaker。段内语义排序由调用方
+ * (`bucketByStatus` → `comparatorFor`) 在 TS 端做，SQL 不背语义。
  */
-function fetchAllTasksForPerson(
-  db: DatabaseSync,
-  ownerPersonId: number,
-): Task[] {
-  const rows = db
-    .prepare<[number], TaskRow>(
-      `SELECT ${TASK_COLUMNS}
-         FROM task
-        WHERE owner_person_id = ?
-        ORDER BY ${inFlightTaskOrderBy("")}`,
-    )
-    .all(ownerPersonId);
-  return rows.map(rowToTask);
-}
+type FetchTasksForPersonArgs =
+  | { owner: number; waitingOn?: never }
+  | { waitingOn: number; owner?: never };
 
-/**
- * 拉取 `task.waiting_on_person_id = 本人` 的任务——「别人等的任务由本人推动」。
- *
- * 显式加 `status = 'Waiting-on'` 兜底——DB CHECK 强制 `waiting_on_
- * person_id IS NULL OR status = 'Waiting-on'`,理论上走 `WHERE
- * waiting_on_person_id = ?` 已足以,但显式 status 让 invariant 不再
- *  load-bearing 在 DDL 上。排序按 `blocked_at` 升序,卡最久的在前——
- * 与段 2 的 Blocked / Waiting-on 段同语义（longest-stuck first）。
- */
-function fetchWaitingOnTasksForPerson(
+function fetchTasksForPerson(
   db: DatabaseSync,
-  waitingOnPersonId: number,
+  args: FetchTasksForPersonArgs,
 ): Task[] {
+  if ("owner" in args) {
+    const rows = db
+      .prepare<[number], TaskRow>(
+        `SELECT ${TASK_COLUMNS}
+           FROM task
+          WHERE owner_person_id = ?
+          ORDER BY id ASC`,
+      )
+      .all(args.owner);
+    return rows.map(rowToTask);
+  }
   const rows = db
     .prepare<[number], TaskRow>(
       `SELECT ${TASK_COLUMNS}
          FROM task
         WHERE waiting_on_person_id = ?
-           AND status = 'Waiting-on'
-        ORDER BY blocked_at ASC, id ASC`,
+          AND status = 'Waiting-on'
+        ORDER BY id ASC`,
     )
-    .all(waitingOnPersonId);
+    .all(args.waitingOn);
   return rows.map(rowToTask);
 }
 
 /**
- * 任务按 6 状态分桶——把一条 task 放到对应桶里,再按各段语义排序。
+ * 「task 在等别人,且别人不是 task 自己 owner」的判断（ticket #92 C1 Q10 / Q31）。
  *
- * **`waitingOn` 桶额外过滤 `waiting_on_person_id != 本人`**——「本人
- * 在等别人」与「本人在等自己」（自反,DB 允许）的拆分：自反等待不进
- * waitingOn 桶,因为语义是"卡在某处等审批",不是"等别人推动"。原
- * spec 写的是「owner=本人 且 waiting_on_person_id 是别人」,这里
- * 精确还原。
- *
- * **段内排序由 [`bucketByStatus`] 一次性给齐**（#82 T2）：
- * - `Open` / `In-progress` ——`due_date` 升序,NULL 排末；
- * - `Blocked` / `Waiting-on` ——`blocked_at` 升序,longest-stuck 最靠前；
- * - `Done` / `Cancelled` ——`updated_at` 降序,最近完成的先看。
- *
- * 排序在 TS 里跑（不在 SQL）——上层已经用一条 `WHERE owner_person_id
- * = ?` 把该人员的所有任务拉回来,数据量是单人员全状态,6 个桶都极小,
- * 内存排一遍比再发 6 条 SQL 便宜,也避免把 SQL 拼得四处散落。
+ * 自反等待（owner = waitingOnPersonId）的语义不是「等别人推动」，
+ * 所以不进「等待 TA 推动」桶。隐式签名：owner 从 `task.ownerPersonId`
+ * 推导，谓词的语义是 task 内部字段关系，调用方无需传第二参。
  */
-function bucketByStatus(
-  tasks: Task[],
-  ownerPersonId: number,
-): PersonDetailInFlight {
+function isWaitingOnOther(task: Task): boolean {
+  return (
+    task.waitingOnPersonId !== null &&
+    task.waitingOnPersonId !== task.ownerPersonId
+  );
+}
+
+/**
+ * 任务按 6 状态分桶 + 自反等待排除 + 各桶语义排序（ticket #92 C1 P1）。
+ *
+ * **自反等待排除** —— `Waiting-on` 桶额外过滤 `isWaitingOnOther(task)`，
+ * 「owner=本人 且 waiting_on_person_id=本人」不进 waitingOn 桶（语义
+ * 是"卡在某处等审批",不是"等别人推动"）。
+ *
+ * **段内排序** —— `comparatorFor(status)` 走 task/inflight_sort 模块。
+ * P1 阶段输出形状仍为 `{open, inProgress, blocked, waitingOn, done,
+ * cancelled}`（与重构前一致），6 行 sort 调用保留；P2 切到
+ * `Record<TaskStatus, Task[]>` 后这 6 行可收敛成循环。
+ *
+ * 排序在 TS 里跑——上层 [`fetchTasksForPerson`] 已经把该人员的所
+ * 有任务拉回来，数据量是单人员全状态，6 个桶都极小，内存排一遍比
+ * 再发 6 条 SQL 便宜，也避免 SQL 拼得四处散落。
+ */
+function bucketByStatus(tasks: Task[]): PersonDetailInFlight {
   const buckets: PersonDetailInFlight = {
     open: [],
     inProgress: [],
@@ -532,10 +537,7 @@ function bucketByStatus(
         buckets.blocked.push(task);
         break;
       case "Waiting-on":
-        if (
-          task.waitingOnPersonId !== null &&
-          task.waitingOnPersonId !== ownerPersonId
-        ) {
+        if (isWaitingOnOther(task)) {
           buckets.waitingOn.push(task);
         }
         break;
@@ -548,49 +550,17 @@ function bucketByStatus(
     }
   }
 
-  // 各桶按段语义排——见函数头注释。`nullish` 用 `<` / `>` 在 `null`
-  // 与字符串之间比较时,JS 会做字典序,「非空先排」语义自然达成；要
-  // 「NULL 排末」就把 null 反向排（DESC 等价）。
-  buckets.open.sort(compareByDueDateAscNullLast);
-  buckets.inProgress.sort(compareByDueDateAscNullLast);
-  buckets.blocked.sort(compareByBlockedAtAsc);
-  buckets.waitingOn.sort(compareByBlockedAtAsc);
-  buckets.done.sort(compareByUpdatedAtDesc);
-  buckets.cancelled.sort(compareByUpdatedAtDesc);
+  // 各桶按段语义排——comparatorFor 走 task/inflight_sort 模块的唯一
+  // 入口（Q3 / Q6 决策）；P2 切 Record<TaskStatus, Task[]> 后这 6 行
+  // 可收敛成单循环。
+  buckets.open.sort(comparatorFor("Open"));
+  buckets.inProgress.sort(comparatorFor("In-progress"));
+  buckets.blocked.sort(comparatorFor("Blocked"));
+  buckets.waitingOn.sort(comparatorFor("Waiting-on"));
+  buckets.done.sort(comparatorFor("Done"));
+  buckets.cancelled.sort(comparatorFor("Cancelled"));
 
   return buckets;
-}
-
-/** `due_date` 升序,NULL 排末——Open / In-progress 共用。 */
-function compareByDueDateAscNullLast(a: Task, b: Task): number {
-  if (a.dueDate === null && b.dueDate === null) return a.id - b.id;
-  if (a.dueDate === null) return 1; // null 排末
-  if (b.dueDate === null) return -1;
-  if (a.dueDate < b.dueDate) return -1;
-  if (a.dueDate > b.dueDate) return 1;
-  return a.id - b.id;
-}
-
-/** `blocked_at` 升序——Blocked / Waiting-on 共用（longest-stuck first）。 */
-function compareByBlockedAtAsc(a: Task, b: Task): number {
-  const aAt = a.blockedAt;
-  const bAt = b.blockedAt;
-  // 这两个状态的 `blocked_at` 走 [`setTaskStatus`] 写库,DB NOT NULL 强
-  // 制——这里收 null 兜底但断言「不可能出现」,一旦出现就把 null 排末
-  // 让观察者看到而非吞错。
-  if (aAt === null && bAt === null) return a.id - b.id;
-  if (aAt === null) return 1;
-  if (bAt === null) return -1;
-  if (aAt < bAt) return -1;
-  if (aAt > bAt) return 1;
-  return a.id - b.id;
-}
-
-/** `updated_at` 降序——Done / Cancelled 共用（最近完成的先看）。 */
-function compareByUpdatedAtDesc(a: Task, b: Task): number {
-  if (a.updatedAt > b.updatedAt) return -1;
-  if (a.updatedAt < b.updatedAt) return 1;
-  return b.id - a.id;
 }
 
 /**
@@ -617,11 +587,17 @@ export function getPersonDetail(state: AppState, args: PersonIdArgs): PersonDeta
     throw AppError.invalid("人员不存在或已被删除。");
   }
 
-  // 段 2 + 段 4：owner = 本人 拉一次,wantingOnPersonId = 本人 拉一次,
-  // 不合并——两条 SQL 各自只走 owner_person_id 或 waiting_on_person_id
-  // 单列索引(若有),合一条会让 where 同时卡两列,触发 table scan。
-  const ownedTasks = fetchAllTasksForPerson(state.db, person.id);
-  const waitingOnTasks = fetchWaitingOnTasksForPerson(state.db, person.id);
+  // 段 2 + 段 4：owner = 本人 拉一次,wantingOnPersonId = 本人 拉一次。
+  // 两条 SQL 各自只走 owner_person_id 或 waiting_on_person_id 单列索引
+  // （若有），合一条会让 where 同时卡两列，触发 table scan。
+  // ticket #92 C1 P1：合并为 `fetchTasksForPerson` XOR 签名版；SQL 端
+  // ORDER BY 仅 `id ASC` 兜底，段内语义排序由调用方 `comparatorFor` 兜。
+  const ownedTasks = fetchTasksForPerson(state.db, { owner: person.id });
+  const waitingOnTasks = fetchTasksForPerson(state.db, { waitingOn: person.id });
+  // 段 4 的语义是「等 TA 推动」，与段 2 的 Waiting-on 桶同语义——
+  // longest-stuck first。ticket #92 Q3：排序唯一权威在 TS。`comparatorFor`
+  // 不感知调用上下文，重复一次 sort 不会让规则双权威。
+  waitingOnTasks.sort(comparatorFor("Waiting-on"));
 
   // 段 3：跨组也算 owner 关系；`listProjectsForOwner` 已按 due_date / id 排序。
   const ownedProjects = listProjectsForOwner(state.db, person.id);
@@ -632,7 +608,7 @@ export function getPersonDetail(state: AppState, args: PersonIdArgs): PersonDeta
 
   return {
     person,
-    inFlight: bucketByStatus(ownedTasks, person.id),
+    inFlight: bucketByStatus(ownedTasks),
     ownedProjects,
     waitingOnTasks,
     subTeamTemplates,
