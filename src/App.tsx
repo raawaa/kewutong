@@ -89,8 +89,6 @@ export default function App() {
   // 项目视图的"定位"——从命令面板跳过去时给一个 initialProjectId,
   // 视图据此选中该项目的卡片。完成定位后清空。
   const [pendingProjectId, setPendingProjectId] = useState<number | null>(null);
-  // 人员矩阵的"定位"——同理,跳过去时滚到该人员卡片。完成后清空。
-  const [pendingPersonId, setPendingPersonId] = useState<number | null>(null);
   // 「人员详情」段 3 + 按钮（#83 T3）——切到「项目」tab 并打开新建
   // 表单,把这个 owner 预填进去。ProjectsView 用完清。
   const [pendingProjectCreateOwnerId, setPendingProjectCreateOwnerId] = useState<
@@ -98,10 +96,9 @@ export default function App() {
   >(null);
 
   // 「人员详情」主 tab（tickets #80 / #84 T4）——子 tab 列表 + 激活态。
-  // session 内持久（关 app 清空），与既有 pendingProjectId / pendingPersonId
-  // 同一思路，不引入持久化层。`openPersonTabs` 的物理顺序即子 tab 显
-  // 示顺序：默认按打开时间（左旧右新），拖拽重排后按数组顺序（Q11 /
-  // Q12 决议）。
+  // session 内持久（关 app 清空），与既有 pendingProjectId 同一思路，
+  // 不引入持久化层。`openPersonTabs` 的物理顺序即子 tab 显示顺序：
+  // 默认按打开时间（左旧右新），拖拽重排后按数组顺序（Q11 / Q12 决议）。
   const [openPersonTabs, setOpenPersonTabs] = useState<OpenPersonTab[]>([]);
   const [activePersonId, setActivePersonId] = useState<number | null>(null);
 
@@ -219,11 +216,37 @@ export default function App() {
   );
 
   /**
+   * 「人员详情」子 tab 基础设施（tickets #80 / #84 T4）+ 4 个外部入口
+   * 共享入口（#86 T6）。
+   *
+   * 必须在 `handlePalettePick` 之前声明——下面 `useCallback` 的 deps
+   * 直接列了 `openPerson`，TDZ 顺序敏感。
+   *
+   * - 矩阵卡片 / PersonnelView 行 / TaskDialog 负责人 / TaskDialog 等
+   *   待谁 / ⌘K 命令面板。
+   * - 同一 personId 重复 add → 聚焦已开，不重复新增（Q10 决议）。
+   * - 总是切到「人员详情」tab + 激活该子 tab——入口的语义就是"展开
+   *   这人的详情"，不把"切到 tab"留给上层记挂。
+   */
+  const openPerson = useCallback((personId: number) => {
+    setOpenPersonTabs((tabs) => {
+      if (tabs.some((t) => t.personId === personId)) return tabs;
+      return [...tabs, { personId }];
+    });
+    setActivePersonId(personId);
+    setTab("personDetail");
+  }, []);
+
+  /**
   ⌘K 命令面板选中一条候选后调这里——App 决定"跳到哪个 tab + 定位谁"。
   - 新建任务：直接开弹窗。
   - 已有任务：开弹窗（编辑即详情,ticket #19）。
   - 项目：切到项目 tab + pendingProjectId 选中。
-  - 人员：切到人员矩阵 tab + pendingPersonId 滚到。
+  - 人员：调 `openPerson`(ticket #86 T6) ——"add or focus + 切到人员详情
+    tab"。原来的"切到矩阵 + 滚到卡片"路径已废弃:该行为在 spec #86 §Impl
+    #22 决议里被"升级到人员详情子 tab"覆盖,矩阵上不再提供"定位到该
+    人卡片"的入口(矩阵视图本身保留打开,但 `pendingPersonId` 整套
+    seam 同步下线)。
   */
   const handlePalettePick = useCallback(
     (target: CommandPaletteTarget) => {
@@ -244,12 +267,12 @@ export default function App() {
           setTab("projects");
           return;
         case "openPerson":
-          setPendingPersonId(target.personId);
-          setTab("matrix");
+          // #86 T6：升级到 openPerson(add or focus + 切到人员详情 tab)。
+          openPerson(target.personId);
           return;
       }
     },
-    [openCreate],
+    [openCreate, openPerson],
   );
 
   /**
@@ -280,23 +303,15 @@ export default function App() {
   }, []);
 
   /**
-   * 「人员详情」子 tab 基础设施（tickets #80 / #84 T4）。
+   * 「人员详情」子 tab 基础设施（tickets #80 / #84 T4）+ 4 个外部入口
+   * 共享入口（#86 T6）。
    *
-   * `openPerson` 是 5 个外部入口（#86 T6）共用入口：
    * - 矩阵卡片 / PersonnelView 行 / TaskDialog 负责人 / TaskDialog 等
-   *   待谁 / ⌘K 命令面板 + dev 临时按钮。
+   *   待谁 / ⌘K 命令面板。
    * - 同一 personId 重复 add → 聚焦已开，不重复新增（Q10 决议）。
    * - 总是切到「人员详情」tab + 激活该子 tab——入口的语义就是"展开
    *   这人的详情"，不把"切到 tab"留给上层记挂。
    */
-  const openPerson = useCallback((personId: number) => {
-    setOpenPersonTabs((tabs) => {
-      if (tabs.some((t) => t.personId === personId)) return tabs;
-      return [...tabs, { personId }];
-    });
-    setActivePersonId(personId);
-    setTab("personDetail");
-  }, []);
 
   /**
    * 最新 openPersonTabs 的镜像 —— `closePersonTab` 需要"刚被关闭
@@ -351,7 +366,8 @@ export default function App() {
     }
   }, [openPersonTabs, activePersonId]);
 
-  /** 关闭所有非 `personId` 的子 tab（右键菜单「关闭其他」）。 */
+  /** 关闭所有非 `personId` 的子 tab（右键菜单「关闭其他」）。
+   * "非 personId" = 留 `personId` 一条,其余全关——filter 保留 t.personId === personId。 */
   const closeOtherPersonTabs = useCallback((personId: number) => {
     setOpenPersonTabs((tabs) => tabs.filter((t) => t.personId === personId));
     setActivePersonId(personId);
@@ -451,8 +467,7 @@ export default function App() {
         <PersonnelMatrixView
           refreshToken={refreshToken}
           onOpenTask={openEditTask}
-          pendingPersonId={pendingPersonId}
-          onPersonLocated={() => setPendingPersonId(null)}
+          onOpenPerson={openPerson}
         />
       ) : tab === "projects" ? (
         <ProjectsView
@@ -463,7 +478,7 @@ export default function App() {
           onCreateOwnerConsumed={() => setPendingProjectCreateOwnerId(null)}
         />
       ) : tab === "personnel" ? (
-        <PersonnelView />
+        <PersonnelView onOpenPerson={openPerson} />
       ) : tab === "personDetail" ? (
         <PersonDetailTabsView
           openPersonTabs={openPersonTabs}
@@ -490,29 +505,9 @@ export default function App() {
         <HolidayCalendarView refreshToken={refreshToken} />
       )}
 
-      {/* Dev-only: 临时打开人员详情视图（tickets #81 T1 / #82 T2 / #84 T4 · 端到端 seam）。
-       * 仅 dev 模式下出现,Vite 注入 `import.meta.env.DEV = true`、
-       * 注入 `import.meta.env.MODE = 'development'`；生产构建时两个都
-       * 不是预期值,按钮自动消失。test 模式 (`MODE = 'test'`) 也不渲
-       * 染,避免污染 App.test 的断言。
-       * T4 起本按钮调 openPerson(1)（替代 T1 的内联 PersonDetailView）
-       * —— 真实「人员详情」tab + 子 tab 列表是 T4 落地后的渲染路径。
-       * T6 (#86) 移除本按钮,改由 5 个真入口（矩阵 / PersonnelView /
-       * TaskDialog / ⌘K）触发 openPerson。 */}
-      {import.meta.env.DEV && import.meta.env.MODE !== "test" && (
-        <div className="border-warning/40 bg-warning/10 rounded-md border p-3 text-xs">
-          <div className="text-warning mb-2 font-medium">
-            DEV · 临时打开人员详情子 tab（id=1,T4 起 → T6 移除）
-          </div>
-          <button
-            type="button"
-            onClick={() => openPerson(1)}
-            className="bg-warning text-warning-foreground hover:bg-warning/80 rounded-md px-2 py-1 text-xs"
-          >
-            打开 person id=1 的子 tab
-          </button>
-        </div>
-      )}
+      {/* Ticket #86 T6 完成：4 个真入口（矩阵 / PersonnelView / TaskDialog
+       * / ⌘K）已替代 T1 临时按钮（#84 T4 起的 dev-only 「打开 person id=1
+       * 的子 tab」按钮）。T1 的临时 seam 在生产路径里已下线，本段整体删除。 */}
 
       {dialog && (
         <TaskDialog
@@ -521,6 +516,8 @@ export default function App() {
           target={dialog}
           onClose={closeDialog}
           onSaved={onTaskSaved}
+          // #86 T6：任务详情弹窗的「负责人」「等待谁」字段可点。
+          onOpenPerson={openPerson}
         />
       )}
 

@@ -181,7 +181,7 @@ describe("PersonnelMatrixView", () => {
     vi.mocked(personnelMatrix).mockResolvedValue(matrixFor(false));
 
     render(
-      <PersonnelMatrixView refreshToken={0} onOpenTask={vi.fn()} />,
+      <PersonnelMatrixView refreshToken={0} onOpenTask={vi.fn()} onOpenPerson={vi.fn()} />,
     );
 
     // 暖通段 + 电气段 + 段头
@@ -210,7 +210,7 @@ describe("PersonnelMatrixView", () => {
     vi.mocked(personnelMatrix).mockResolvedValue({ segments: [] });
 
     render(
-      <PersonnelMatrixView refreshToken={0} onOpenTask={vi.fn()} />,
+      <PersonnelMatrixView refreshToken={0} onOpenTask={vi.fn()} onOpenPerson={vi.fn()} />,
     );
 
     expect(
@@ -264,6 +264,7 @@ describe("PersonnelMatrixView", () => {
       <PersonnelMatrixView
         refreshToken={0}
         onOpenTask={vi.fn()}
+        onOpenPerson={vi.fn()}
       />,
     );
 
@@ -300,7 +301,7 @@ describe("PersonnelMatrixView", () => {
 
     const user = userEvent.setup();
     render(
-      <PersonnelMatrixView refreshToken={0} onOpenTask={vi.fn()} />,
+      <PersonnelMatrixView refreshToken={0} onOpenTask={vi.fn()} onOpenPerson={vi.fn()} />,
     );
 
     const openBadges = await screen.findAllByRole("button", {
@@ -337,7 +338,7 @@ describe("PersonnelMatrixView", () => {
 
     const user = userEvent.setup();
     render(
-      <PersonnelMatrixView refreshToken={0} onOpenTask={vi.fn()} />,
+      <PersonnelMatrixView refreshToken={0} onOpenTask={vi.fn()} onOpenPerson={vi.fn()} />,
     );
 
     const openBadges = await screen.findAllByRole("button", {
@@ -395,7 +396,7 @@ describe("PersonnelMatrixView", () => {
 
     const user = userEvent.setup();
     render(
-      <PersonnelMatrixView refreshToken={0} onOpenTask={vi.fn()} />,
+      <PersonnelMatrixView refreshToken={0} onOpenTask={vi.fn()} onOpenPerson={vi.fn()} />,
     );
 
     // 初次渲染:没有赵六
@@ -409,5 +410,79 @@ describe("PersonnelMatrixView", () => {
     await user.click(toggle);
 
     expect(await screen.findByText("赵六")).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 入口① 矩阵卡片姓名 / 头像区可点 → onOpenPerson(#86 T6)
+// ---------------------------------------------------------------------------
+
+describe("PersonnelMatrixView · 矩阵卡片姓名点击（#86 T6 入口①）", () => {
+  it("点卡片姓名触发 onOpenPerson(personId)", async () => {
+    vi.mocked(personnelMatrix).mockResolvedValue(matrixFor(false));
+    const user = userEvent.setup();
+    const onOpenPerson = vi.fn();
+
+    render(
+      <PersonnelMatrixView
+        refreshToken={0}
+        onOpenTask={vi.fn()}
+        onOpenPerson={onOpenPerson}
+      />,
+    );
+
+    // 等卡片渲染完——找"张三"卡片上的姓名 button[data-person-name-link]
+    const 张三名链接 = await screen.findByRole("button", {
+      name: /打开 张三 的详情/,
+    });
+    await user.click(张三名链接);
+
+    expect(onOpenPerson).toHaveBeenCalledWith(ROSTER[0]!.id);
+  });
+
+  it("点「王五」卡片姓名也触发 onOpenPerson(王五.id)", async () => {
+    vi.mocked(personnelMatrix).mockResolvedValue(matrixFor(false));
+    const user = userEvent.setup();
+    const onOpenPerson = vi.fn();
+
+    render(
+      <PersonnelMatrixView
+        refreshToken={0}
+        onOpenTask={vi.fn()}
+        onOpenPerson={onOpenPerson}
+      />,
+    );
+
+    const 王五链接 = await screen.findByRole("button", {
+      name: /打开 王五 的详情/,
+    });
+    await user.click(王五链接);
+
+    expect(onOpenPerson).toHaveBeenCalledWith(ROSTER[2]!.id);
+  });
+
+  it("点卡片姓名不会触发 onOpenTask(任务开弹窗路径互不串扰)", async () => {
+    // 矩阵卡片上既有"开任务详情"按钮(任务条目),又有"开人员详情"链接
+    // (姓名)——两条入口共用卡片,但回调不同。点姓名应只触发 onOpenPerson。
+    vi.mocked(personnelMatrix).mockResolvedValue(matrixFor(false));
+    const user = userEvent.setup();
+    const onOpenPerson = vi.fn();
+    const onOpenTask = vi.fn();
+
+    render(
+      <PersonnelMatrixView
+        refreshToken={0}
+        onOpenTask={onOpenTask}
+        onOpenPerson={onOpenPerson}
+      />,
+    );
+
+    const 张三名链接 = await screen.findByRole("button", {
+      name: /打开 张三 的详情/,
+    });
+    await user.click(张三名链接);
+
+    expect(onOpenPerson).toHaveBeenCalledTimes(1);
+    expect(onOpenTask).not.toHaveBeenCalled();
   });
 });

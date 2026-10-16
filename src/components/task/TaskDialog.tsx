@@ -35,19 +35,34 @@ export type TaskDialogTarget =
   | { mode: "edit"; task: Task; assignee: AssigneeCandidate | null; project: ProjectCandidate | null };
 
 /**
- * 全局新建 / 编辑任务弹窗（tickets #19 + #20）。
+ * 全局新建 / 编辑任务弹窗（tickets #19 + #20 + #86 T6）。
  *
  * 科长想到一件事就能立刻录进去：打字写标题、`@` 挑人 / `#` 挑项目、chip 点
  * 截止日，一句话录完一条任务。
+ *
+ * #86 T6：「负责人」「等待谁」两个字段可点 → 父层 `onOpenPerson(id)`，
+ * 与矩阵 / PersonnelView / ⌘K 共用同一入口。负责人从 dialog 的 assignee
+ * state 读；等待谁仅在编辑模式且 `task.waitingOnPersonId != null` 时显
+ * 示——SQL 约束 `waiting_on_person_id IS NULL OR status = 'Waiting-on'`
+ * 由命令层兜底,前端不重复判定。dialog 自己**不**闭合也不切走
+ * —— 父层拿到 openPerson 调用后,会切到「人员详情」tab 并 add or focus
+ * 子 tab。
  */
 export function TaskDialog({
   target,
   onClose,
   onSaved,
+  onOpenPerson,
 }: {
   target: TaskDialogTarget;
   onClose: () => void;
   onSaved: (task: Task) => void;
+  /**
+   * #86 T6 入口之一（③④）：点负责人 / 等待谁字段 → 父层 `openPerson(id)`。
+   * 不传时相关字段退化成纯文本——这层兜底保证 ticket #19 时代写的弹窗
+   * 不变量在 #86 不被打断（早期测试基线曾传 NULL,本组件不强制依赖）。
+   */
+  onOpenPerson?: (personId: number) => void;
 }) {
   const editing = target.mode === "edit" ? target.task : null;
 
@@ -133,6 +148,15 @@ export function TaskDialog({
     assignee != null &&
     !saving &&
     !(recurringOn && (project == null)); // 周期任务必挂项目——子组级 + 项目级二选一(本弹窗只有项目)
+
+  /**
+   * #86 T6：等 TA 字段——只在编辑模式 + `task.waitingOnPersonId != null`
+   * 时出现；点击 → `onOpenPerson(waitingOnPersonId)`。负责人不在时此
+   * 行不渲染,避免空字段。无 `onOpenPerson` 时(测试 mock 部分场景)也
+   * 不渲染按钮——防御性 null check。
+   */
+  const waitingOnId: number | null =
+    editing && editing.waitingOnPersonId != null ? editing.waitingOnPersonId : null;
 
   async function save() {
     if (!canSave || assignee == null) return;
@@ -220,6 +244,55 @@ export function TaskDialog({
             fetchProjectCandidates={(query) => listProjectCandidates({ query })}
             onSubmit={() => void save()}
           />
+
+          {/*
+            #86 T6：负责人 / 等待谁 两个字段——文字 label + 可点按钮。
+            按钮若不可点(`onOpenPerson` 未给)就退化成纯文本——这层兜底
+            保证 ticket #19 时代写的弹窗不变量在 #86 不被打断。等待谁
+            仅编辑模式 + waitingOnPersonId 非空时显示。
+          */}
+          <div className="grid grid-cols-[3.5rem_1fr] items-center gap-3">
+            <span className="text-muted-foreground text-xs">负责人</span>
+            {assignee == null ? (
+              <span className="text-muted-foreground text-xs">—</span>
+            ) : onOpenPerson ? (
+              <button
+                type="button"
+                data-task-field="assignee"
+                onClick={() => onOpenPerson(assignee.personId)}
+                className="hover:bg-muted/60 inline-flex w-fit cursor-pointer items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs text-blue-800 transition-colors hover:underline"
+                title={`打开 ${assignee.name} 的详情`}
+                aria-label={`打开 ${assignee.name} 的详情`}
+              >
+                @{assignee.name}
+                <span className="text-muted-foreground">· {assignee.subTeamName}</span>
+              </button>
+            ) : (
+              <span className="text-xs">@{assignee.name} · {assignee.subTeamName}</span>
+            )}
+          </div>
+
+          {editing && (
+            <div className="grid grid-cols-[3.5rem_1fr] items-center gap-3">
+              <span className="text-muted-foreground text-xs">等待谁</span>
+              {waitingOnId == null ? (
+                <span className="text-muted-foreground text-xs">—</span>
+              ) : onOpenPerson ? (
+                <button
+                  type="button"
+                  data-task-field="waitingOn"
+                  onClick={() => onOpenPerson(waitingOnId)}
+                  className="hover:bg-muted/60 inline-flex w-fit cursor-pointer items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs text-violet-800 transition-colors hover:underline"
+                  title={`打开 id=${waitingOnId} 的详情`}
+                  aria-label={`打开等待人 id=${waitingOnId} 的详情`}
+                >
+                  等 id={waitingOnId}
+                </button>
+              ) : (
+                <span className="text-xs">等 id={waitingOnId}</span>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-[3.5rem_1fr] items-center gap-3">
             <span className="text-muted-foreground text-xs">截止</span>

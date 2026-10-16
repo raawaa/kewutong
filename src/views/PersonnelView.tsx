@@ -20,14 +20,28 @@ import {
 } from "@/lib/api";
 
 /**
- * 人员管理界面（ticket #17）。
+ * 人员管理界面（ticket #17 / #86 T6）。
  *
  * 左侧：子组列表——增删改、按上下箭头重排。
  * 右侧：所选子组下的人员——增删改、离岗 / 复岗。
  *
  * 业务规则一律在后端命令层实现；前端只负责展示与触发。
+ *
+ * #86 T6：人员行整行可点 → 父层 `onOpenPerson(personId)` ——「add or
+ * focus 子 tab + 切到「人员详情」tab」。按钮（编辑 / 删除 / 离岗 / 复
+ * 岗）的 `stopPropagation` 把它们与"点行 = openPerson"分开,避免误触
+ * ——同一行内两种手势并存但行为明确。
  */
-export function PersonnelView() {
+export function PersonnelView({
+  onOpenPerson,
+}: {
+  /**
+   * #86 T6 入口之一：点整行 = `openPerson(personId)`,与其它真入口
+   * （矩阵 / TaskDialog 负责人 / TaskDialog 等待谁 / ⌘K）共用 App 的
+   * `openPerson`。
+   */
+  onOpenPerson: (personId: number) => void;
+}) {
   // —— 数据 ——
   const [subTeams, setSubTeams] = useState<SubTeam[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -122,7 +136,7 @@ export function PersonnelView() {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-muted-foreground text-sm">
-        人员管理 · 分子组、调岗、离岗 / 复岗
+        人员管理 · 分子组、调岗、离岗 / 复岗 · 点人员行可看详情
       </p>
 
       {error && (
@@ -247,6 +261,7 @@ export function PersonnelView() {
               people={people.filter((p) => p.subTeamId === selectedSubTeamId)}
               subTeams={subTeams}
               busy={busy}
+              onOpenPerson={onOpenPerson}
               onEdit={(person) => setEditingPerson({ kind: "edit", person })}
               onDeactivate={async (person) => {
                 await runCommand(() => deactivatePerson({ id: person.id }));
@@ -318,6 +333,7 @@ function PeopleList({
   people,
   subTeams,
   busy,
+  onOpenPerson,
   onEdit,
   onDeactivate,
   onReactivate,
@@ -326,6 +342,11 @@ function PeopleList({
   people: Person[];
   subTeams: SubTeam[];
   busy: boolean;
+  /**
+   * #86 T6：整行可点 → `onOpenPerson(personId)`,与各按钮(编辑/离岗/
+   * 复岗/删除)互不误触 —— 后者 `stopPropagation` 阻断。
+   */
+  onOpenPerson: (personId: number) => void;
   onEdit: (person: Person) => void;
   onDeactivate: (person: Person) => void;
   onReactivate: (person: Person) => void;
@@ -343,11 +364,21 @@ function PeopleList({
         return (
           <li
             key={person.id}
+            data-person-row-id={person.id}
+            // #86 T6：整行 = button,点击行空白处触发 openPerson。
+            // 行内按钮(编辑/离岗/复岗/删除)各自 `stopPropagation`,
+            // 不会误触发 openPerson。`aria-label` 用姓名,屏幕阅读器
+            // 把整行宣读为"打开 张三 的详情"。
             className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm ${
               off ? "bg-muted/40 text-muted-foreground" : ""
             }`}
           >
-            <div className="flex-1">
+            <button
+              type="button"
+              onClick={() => onOpenPerson(person.id)}
+              aria-label={`打开 ${person.name} 的详情`}
+              className="flex flex-1 cursor-pointer flex-col items-start text-left"
+            >
               <div className="font-medium">
                 {person.name}
                 {off && (
@@ -359,12 +390,15 @@ function PeopleList({
               <div className="text-muted-foreground text-xs">
                 {team?.name ?? "?"} · {person.contact}
               </div>
-            </div>
+            </button>
             {!off && (
               <Button
                 size="icon-xs"
                 variant="ghost"
-                onClick={() => onDeactivate(person)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void onDeactivate(person);
+                }}
                 disabled={busy}
                 aria-label="离岗"
                 title="离岗"
@@ -376,7 +410,10 @@ function PeopleList({
               <Button
                 size="icon-xs"
                 variant="ghost"
-                onClick={() => onReactivate(person)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void onReactivate(person);
+                }}
                 disabled={busy}
                 aria-label="复岗"
                 title="复岗"
@@ -387,7 +424,10 @@ function PeopleList({
             <Button
               size="icon-xs"
               variant="ghost"
-              onClick={() => onEdit(person)}
+              onClick={(event) => {
+                event.stopPropagation();
+                onEdit(person);
+              }}
               disabled={busy}
               aria-label="编辑"
             >
@@ -396,7 +436,10 @@ function PeopleList({
             <Button
               size="icon-xs"
               variant="ghost"
-              onClick={() => onDelete(person)}
+              onClick={(event) => {
+                event.stopPropagation();
+                void onDelete(person);
+              }}
               disabled={busy}
               aria-label="删除"
             >

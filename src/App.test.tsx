@@ -7,7 +7,7 @@
  * 之后再验一遍。
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import {
@@ -19,6 +19,7 @@ import {
   listProjects,
   listSubTeams,
   listTasks,
+  personnelMatrix,
   todayWeek,
   trayStatus,
 } from "@/lib/api";
@@ -36,6 +37,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   isSampleDataPresent: vi.fn(),
   dataFileLocation: vi.fn(),
   getPersonDetail: vi.fn(),
+  personnelMatrix: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -208,6 +210,219 @@ describe("App · 「人员详情」主 tab（tickets #80 / #84 T4）", () => {
     await user.keyboard("{Meta>}n{/Meta}");
 
     await waitFor(() => expect(新建弹窗()).toBeInTheDocument());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ticket #86 T6：dev-only「打开 person id=1 的子 tab」按钮已下线。
+//
+// 本期验证 T1 临时 seam **不再渲染**——4 个真入口（矩阵 / PersonnelView
+// / TaskDialog / ⌘K）已替代该按钮。test 模式下 `import.meta.env.DEV` 不
+// 为 true,但测试也覆盖了 prod 隐藏语义：DOM 中不该有"打开 person id=1"
+// 按钮。
+// ---------------------------------------------------------------------------
+
+describe("App · T1 临时按钮已下线（#86 T6）", () => {
+  it("test 模式不渲染 DEV 临时按钮", () => {
+    render(<App />);
+
+    expect(
+      screen.queryByRole("button", { name: /打开 person id=1/ }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ticket #86 T6 配套：openPerson 共享入口的「add or focus」行为 + 子 tab
+// 「关闭其他」锁定行为（review 时发现 closeOtherPersonTabs 之前曾被
+// 误改成 !== —— 该用法与 JSDoc / 函数名相反，本块用集成测试锁死正确
+// 行为 = filter 保留被点名的子 tab）。
+// ---------------------------------------------------------------------------
+
+describe("App · openPerson + 子 tab 关闭（#86 T6）", () => {
+  /**
+   * 给 App 准备一份足以让 4 个真入口（矩阵 / PersonnelView / TaskDialog
+   * / ⌘K）都跑通转的最小 catalog：1 个子组 + 2 个不同人 + 一些任务，
+   * 让矩阵卡片与 PersonnelView 行都各能点开两个不同 person。
+   *
+   * 测试既验证 openPerson 升级后的行为，又验证「关闭其他」语义——
+   * 这里跑了一个端到端集成；openPerson 的命令面板分支单独写在
+   * CommandPalette.test.tsx。
+   */
+  function setupCatalog() {
+    vi.mocked(listPeople).mockResolvedValue([
+      {
+        id: 1,
+        name: "张三",
+        subTeamId: 1,
+        contact: "13800000001",
+        deactivatedAt: null,
+        createdAt: "2026-09-01 09:00:00",
+      },
+      {
+        id: 2,
+        name: "李四",
+        subTeamId: 1,
+        contact: "13800000002",
+        deactivatedAt: null,
+        createdAt: "2026-09-01 09:00:00",
+      },
+    ]);
+    vi.mocked(listSubTeams).mockResolvedValue([
+      {
+        id: 1,
+        name: "暖通",
+        description: null,
+        sortOrder: 0,
+        createdAt: "2026-09-01 09:00:00",
+      },
+    ]);
+    vi.mocked(personnelMatrix).mockResolvedValue({
+      segments: [
+        {
+          subTeam: {
+            id: 1,
+            name: "暖通",
+            description: null,
+            sortOrder: 0,
+            createdAt: "2026-09-01 09:00:00",
+          },
+          people: [
+            {
+              person: {
+                id: 1,
+                name: "张三",
+                subTeamId: 1,
+                contact: "13800000001",
+                deactivatedAt: null,
+                createdAt: "2026-09-01 09:00:00",
+              },
+              inFlightCount: 0,
+              blockedCount: 0,
+              tasks: [],
+            },
+            {
+              person: {
+                id: 2,
+                name: "李四",
+                subTeamId: 1,
+                contact: "13800000002",
+                deactivatedAt: null,
+                createdAt: "2026-09-01 09:00:00",
+              },
+              inFlightCount: 0,
+              blockedCount: 0,
+              tasks: [],
+            },
+          ],
+        },
+      ],
+    });
+    vi.mocked(getPersonDetail).mockImplementation(async ({ id }) => ({
+      person: {
+        id,
+        name: id === 1 ? "张三" : "李四",
+        subTeamId: 1,
+        contact: id === 1 ? "13800000001" : "13800000002",
+        deactivatedAt: null,
+        createdAt: "2026-09-01 09:00:00",
+      },
+      inFlight: {
+        open: [],
+        inProgress: [],
+        blocked: [],
+        waitingOn: [],
+        done: [],
+        cancelled: [],
+      },
+      ownedProjects: [],
+      waitingOnTasks: [],
+      subTeamTemplates: [],
+    }));
+  }
+
+  it("矩阵点两个不同人 → 打开两个子 tab;再点其中一个 → 切到该子 tab(聚焦,不复新增)", async () => {
+    const user = userEvent.setup();
+    setupCatalog();
+    render(<App />);
+
+    // 切到「人员矩阵」,两张卡片渲染完
+    await user.click(screen.getByRole("button", { name: "人员矩阵" }));
+    const zhangBtn = await screen.findByRole("button", {
+      name: /打开 张三 的详情/,
+    });
+    await user.click(zhangBtn);
+
+    // 子 tab 渲染,切到「人员详情」tab
+    await user.click(screen.getByRole("button", { name: "人员详情" }));
+    const zhangTab = await screen.findByRole("tab", { name: /张三/ });
+    expect(zhangTab).toBeInTheDocument();
+
+    // 回矩阵再点李四 → 应**新增**第二条子 tab
+    await user.click(screen.getByRole("button", { name: "人员矩阵" }));
+    const liBtn = await screen.findByRole("button", {
+      name: /打开 李四 的详情/,
+    });
+    await user.click(liBtn);
+    await user.click(screen.getByRole("button", { name: "人员详情" }));
+
+    // 两条子 tab 都出现
+    expect(screen.getByRole("tab", { name: /张三/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /李四/ })).toBeInTheDocument();
+
+    // 再点张三(已开) → 应聚焦已开条,**不新增第三条**
+    await user.click(screen.getByRole("button", { name: "人员矩阵" }));
+    const zhangBtn2 = await screen.findByRole("button", {
+      name: /打开 张三 的详情/,
+    });
+    await user.click(zhangBtn2);
+    await user.click(screen.getByRole("button", { name: "人员详情" }));
+
+    // tab 总数仍 = 2;不新增
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+  });
+
+  it("右键菜单「关闭其他」仅保留被点名的子 tab(锁定 review 发现过的回归)", async () => {
+    // ticket #84 T4 起的 closeOtherPersonTabs 语义是"保留 personId
+    // 这一条,关闭其余"。本块用集成测试锁死该合约——之前曾被误改为
+    // `!==` 把被点名的也关掉了,review 时发现并修正。
+    const user = userEvent.setup();
+    setupCatalog();
+    render(<App />);
+
+    // 开两个人
+    await user.click(screen.getByRole("button", { name: "人员矩阵" }));
+    await user.click(
+      await screen.findByRole("button", { name: /打开 张三 的详情/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "人员详情" }));
+
+    await user.click(screen.getByRole("button", { name: "人员矩阵" }));
+    await user.click(
+      await screen.findByRole("button", { name: /打开 李四 的详情/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "人员详情" }));
+
+    // 等两条子 tab 都在
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+
+    // 右键「张三」tab → 「关闭其他」
+    await user.pointer({
+      target: screen.getByRole("tab", { name: /张三/ }),
+      keys: "[MouseRight]",
+    });
+    await user.click(
+      within(screen.getByRole("menu")).getByRole("menuitem", {
+        name: "关闭其他",
+      }),
+    );
+
+    // 现在只剩「张三」一条 ——李四这条被关闭,而不是张三自己
+    expect(screen.getAllByRole("tab")).toHaveLength(1);
+    expect(screen.getByRole("tab", { name: /张三/ })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: /李四/ }),
+    ).not.toBeInTheDocument();
   });
 });
 

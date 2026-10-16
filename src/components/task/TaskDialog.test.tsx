@@ -399,3 +399,163 @@ describe("TaskDialog · 周期性", () => {
     expect(screen.getByText(/周期性任务需要挂一个项目/)).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// ticket #86 T6：负责人 / 等待谁 两个字段可点 → onOpenPerson(personId)
+//
+// 入口 ③ = 任务详情弹窗负责人字段；入口 ④ = 等待谁字段。
+// 本块验证「弹窗里点该字段」触发回调,不破坏 #19 时代的既有行为(创建
+// 按钮、关闭、转派等仍按原合约)。
+// ---------------------------------------------------------------------------
+
+describe("TaskDialog · 入口③④ #86 T6 负责人 / 等待谁 可点", () => {
+  it("编辑模式有负责人时:显示负责人按钮,点击触发 onOpenPerson(personId)", async () => {
+    const user = userEvent.setup();
+    const onOpenPerson = vi.fn();
+    render(
+      <TaskDialog
+        target={{
+          mode: "edit",
+          task: 已有任务,
+          assignee: 张三,
+          project: null,
+        }}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        onOpenPerson={onOpenPerson}
+      />,
+    );
+
+    await screen.findByRole("button", { name: "今天" });
+    // 等任务标题铺出来,确认弹窗已就绪再点
+    await screen.findByRole("textbox", { name: "任务标题" });
+
+    const 负责人按钮 = screen.getByRole("button", {
+      name: /打开 张三 的详情/,
+    });
+    await user.click(负责人按钮);
+
+    expect(onOpenPerson).toHaveBeenCalledWith(张三.personId);
+  });
+
+  it("编辑模式负责人按钮不点任务标题里的 pill:两条入口互不串扰", async () => {
+    // 标题里的 @张三 pill 是「转派 = 改负责人」的入口;新加的「负责人」
+    // 按钮是「openPerson = 看档案」的入口。点负责人按钮不应触发 onSaved
+    // / onClose / 转派,只触发 onOpenPerson。
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+    const onOpenPerson = vi.fn();
+
+    render(
+      <TaskDialog
+        target={{
+          mode: "edit",
+          task: 已有任务,
+          assignee: 张三,
+          project: null,
+        }}
+        onClose={onClose}
+        onSaved={onSaved}
+        onOpenPerson={onOpenPerson}
+      />,
+    );
+
+    await screen.findByRole("textbox", { name: "任务标题" });
+    await user.click(
+      screen.getByRole("button", { name: /打开 张三 的详情/ }),
+    );
+
+    expect(onOpenPerson).toHaveBeenCalledTimes(1);
+    expect(onOpenPerson).toHaveBeenCalledWith(张三.personId);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it("编辑模式有 waitingOnPersonId 时:显示「等待谁」按钮,点击触发 onOpenPerson", async () => {
+    const user = userEvent.setup();
+    const onOpenPerson = vi.fn();
+    const 编辑用任务: Task = {
+      ...已有任务,
+      status: "Waiting-on",
+      waitingOnPersonId: 999,
+      blockedAt: "2026-09-09 10:00:00",
+      blockedReason: "等对方",
+    };
+    render(
+      <TaskDialog
+        target={{ mode: "edit", task: 编辑用任务, assignee: 张三, project: null }}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        onOpenPerson={onOpenPerson}
+      />,
+    );
+    await screen.findByRole("textbox", { name: "任务标题" });
+
+    const 等TA按钮 = screen.getByRole("button", {
+      name: /打开等待人 id=999 的详情/,
+    });
+    await user.click(等TA按钮);
+
+    expect(onOpenPerson).toHaveBeenCalledWith(999);
+  });
+
+  it("编辑模式无 waitingOnPersonId 时:「等待谁」字段显示 — 文本", async () => {
+    // 已有任务 waitingOnPersonId = null —— 字段退化为占位,不可点。
+    const onOpenPerson = vi.fn();
+    render(
+      <TaskDialog
+        target={{
+          mode: "edit",
+          task: 已有任务,
+          assignee: 张三,
+          project: null,
+        }}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        onOpenPerson={onOpenPerson}
+      />,
+    );
+    await screen.findByRole("textbox", { name: "任务标题" });
+
+    expect(
+      screen.getByText("等待谁"),
+    ).toBeInTheDocument();
+    // 「等待谁」行没有任何按钮可点。
+    expect(
+      screen.queryByRole("button", { name: /打开等待人/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("新建模式无 assignee 时:「负责人」字段显示 — 文本(不可点)", async () => {
+    renderDialog({ mode: "create" });
+    await screen.findByRole("button", { name: "今天" });
+
+    // 新建模式下,assignee 还没选——负责人字段退化为 — 文本。
+    expect(screen.getByText("负责人")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /打开.*的详情/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("未传 onOpenPerson 时:弹窗仍能渲染,字段降级为纯文本", async () => {
+    // 防御合约:command 层不强制传 onOpenPerson 时,弹窗仍按 ticket #19
+    // 行为渲染 / 保存。这条约束避免 #86 的接口扩展打断既有调用方。
+    const { onSaved } = renderDialog({
+      mode: "edit",
+      task: 已有任务,
+      assignee: 张三,
+      project: null,
+    });
+
+    await screen.findByRole("button", { name: "今天" });
+    expect(
+      screen.queryByRole("button", { name: /打开 张三 的详情/ }),
+    ).not.toBeInTheDocument();
+    // 字段退化为纯文本 —— 标题里 @张三 pill 也算一处匹配,这里只断
+    // 言「字段区出现子组名」即可(不能简单 byText("@张三"):标题 pill
+    // 与新字段都会命中)。
+    expect(screen.getByText(/暖通/)).toBeInTheDocument();
+    expect(onSaved).not.toHaveBeenCalled(); // 没保存
+  });
+});

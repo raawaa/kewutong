@@ -309,10 +309,11 @@ describe("CommandPalette (⌘K 全局命令面板)", () => {
     input.focus();
     await user.keyboard("{ArrowDown}"); // 跳过"新建任务"
     await user.keyboard("{Enter}");
+    // ticket #86 T6：openPerson 不再带 subTeamId —— 切到人员详情 tab
+    // 由 App 层的 openPerson(personId) 完成,不需要子组 id。
     expect(onPick).toHaveBeenCalledWith({
       kind: "openPerson",
       personId: 42,
-      subTeamId: 1,
     });
   });
 

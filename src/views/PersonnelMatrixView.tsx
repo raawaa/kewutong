@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, CalendarOff } from "lucide-react";
 import { TaskStatusMenu } from "@/components/task/TaskStatusMenu";
 import {
@@ -21,12 +21,13 @@ import {
 } from "@/lib/api";
 
 /**
- * 「人员矩阵」视图（ticket #22）。
+ * 「人员矩阵」视图（ticket #22 / #86 T6）。
  *
  * 布局：
  * - 每个子组一段瀑布流——段内用 CSS multi-column（columns: 258px）让
  *   窗口宽度决定列数，**横向永远不出现滚动条**（spec 验收）。
- * - 每张人员卡片：姓名 + 在飞任务数 / 阻塞数两个计数（命令层算出）+ 在飞任务列表。
+ * - 每张人员卡片：姓名（可点 → openPerson #86）+ 在飞任务数 / 阻塞数
+ *   两个计数（命令层算出）+ 在飞任务列表（任务条目走原有详情流）。
  * - 任务列表上的状态徽章走「点徽章 → 6 项菜单」手势（`TaskStatusMenu`），
  *   与项目看板、详情视图共用同一组件。
  *
@@ -34,6 +35,9 @@ import {
  * - 顶部一个「显示离岗人员」开关，默认关。
  * - 卡片任务就地改状态成功后**乐观更新本地卡片**——`refreshToken` 由父层
  *   控制以做全屏重拉；单击卡片打开 TaskDialog 走原有详情流。
+ * - 卡片姓名 = `onOpenPerson(personId)` 入口（#86 T6）。点击**只**触发
+ *   openPerson，不会触发明细弹窗——避免误点——与"#86 T6 入口矩阵"规
+ *   范一致：5 个真入口共用 App 的 `openPerson`。
  * - 不做按子组的折叠（spec #67-71 没要求）；后续如要加，按人员段头加即可。
  * - 不引拖拽——拖拽语义全 app 唯一 = 改状态（在项目看板里），矩阵里走菜单。
  */
@@ -43,8 +47,7 @@ const TASK_CARD_WIDTH_PX = 258;
 export function PersonnelMatrixView({
   refreshToken,
   onOpenTask,
-  pendingPersonId,
-  onPersonLocated,
+  onOpenPerson,
 }: {
   /** 父层保存任务后 +1，触发重新拉取。 */
   refreshToken: number;
@@ -56,12 +59,11 @@ export function PersonnelMatrixView({
     },
   ) => void;
   /**
-   * 命令面板（ticket #28）选中一位人员时传过来——视图挂载后
-   * `scrollIntoView` 把该人员的卡片滚进视野,并通知父层清掉 pending。
-   * `null` = 无定位。
+   * #86 T6 入口之一：点人员卡片姓名 / 头像区 → 父层 `openPerson(id)` —
+   * 「add or focus 子 tab + 切到「人员详情」tab」。矩阵不再做"滚动到
+   * 卡片"的定位（合 #86 §Impl #22 —— 定位行为升级到 openPerson）。
    */
-  pendingPersonId?: number | null;
-  onPersonLocated?: () => void;
+  onOpenPerson: (personId: number) => void;
 }) {
   const [view, setView] = useState<PersonnelMatrixDto | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
@@ -213,59 +215,12 @@ export function PersonnelMatrixView({
                 project: projectOf(task),
               })
             }
+            onOpenPerson={onOpenPerson}
           />
         ))
       )}
-
-      {/* 命令面板（ticket #28）选中人员时滚到对应卡片——按 ref 找 */}
-      <PersonLocator
-        {...(pendingPersonId !== undefined && { pendingPersonId })}
-        peopleById={peopleById}
-        {...(onPersonLocated !== undefined && { onLocated: onPersonLocated })}
-      />
     </div>
   );
-}
-
-/**
- * 命令面板选中人员后,滚动到该人员卡片。`peopleById` 已经包含在岗 /
- * 离岗全量——矩阵视图内部用 `includeDeactivated` 过滤掉离岗的,但仍
- * 需要在父容器里也能找到该 id 对应的 DOM(矩阵卡片有 `data-person-id`)。
- */
-function PersonLocator({
-  pendingPersonId,
-  peopleById,
-  onLocated,
-}: {
-  pendingPersonId?: number | null;
-  peopleById: Map<number, Person>;
-  onLocated?: () => void;
-}) {
-  // 缓存"最近滚到过的 id"——同一 id 在同一次"打开面板 → 选人 → 关闭"
-  // 周期里不重复滚(避免矩阵内其它原因触发同 pendingPersonId 时抖一次)。
-  // 关键:`pendingPersonId` 回到 `null` 时立刻清缓存,这样下一轮
-  // ⌘K → 选同一人 还能再滚——bug 是之前的实现把 ref 永久锁住了。
-  const lastScrolledRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (pendingPersonId == null) {
-      lastScrolledRef.current = null;
-      return;
-    }
-    if (lastScrolledRef.current === pendingPersonId) return;
-    if (!peopleById.has(pendingPersonId)) return;
-    const handle = window.setTimeout(() => {
-      const el = document.querySelector<HTMLElement>(
-        `[data-person-id="${pendingPersonId}"]`,
-      );
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        lastScrolledRef.current = pendingPersonId;
-        onLocated?.();
-      }
-    }, 60);
-    return () => window.clearTimeout(handle);
-  }, [pendingPersonId, peopleById, onLocated]);
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +232,7 @@ function SegmentView({
   busy,
   onStatusChange,
   onOpenTask,
+  onOpenPerson,
 }: {
   segment: PersonnelMatrixSegment;
   busy: boolean;
@@ -289,6 +245,12 @@ function SegmentView({
     },
   ) => void;
   onOpenTask: (task: Task) => void;
+  /**
+   * #86 T6：把 onOpenPerson 透传给 PersonCard —— 卡片姓名 / 头像区
+   * 可点；点击 = `onOpenPerson(personId)`,与"点任务条目 = onOpenTask"
+   * 两条手势分明,不互相误触。
+   */
+  onOpenPerson: (personId: number) => void;
 }) {
   const groupOpen = segment.people.reduce(
     (n, p) => n + p.inFlightCount,
@@ -326,6 +288,7 @@ function SegmentView({
             busy={busy}
             onStatusChange={onStatusChange}
             onOpenTask={onOpenTask}
+            onOpenPerson={onOpenPerson}
           />
         ))}
       </div>
@@ -338,6 +301,7 @@ function PersonCard({
   busy,
   onStatusChange,
   onOpenTask,
+  onOpenPerson,
 }: {
   entry: PersonnelMatrixPerson;
   busy: boolean;
@@ -350,6 +314,12 @@ function PersonCard({
     },
   ) => void;
   onOpenTask: (task: Task) => void;
+  /**
+   * 卡片姓名 / 头像区的"打开详情"入口（#86 T6）。点击触发
+   * `onOpenPerson(personId)`，父层 add or focus 子 tab + 切到人员
+   * 详情 tab。
+   */
+  onOpenPerson: (personId: number) => void;
 }) {
   return (
     <article
@@ -359,7 +329,21 @@ function PersonCard({
       }`}
     >
       <header className="mb-1.5 flex items-baseline justify-between gap-2">
-        <span className="font-medium">{entry.person.name}</span>
+        {/* #86 T6：卡片姓名 = button,点击走 `onOpenPerson`。
+         * 与卡片内"点任务条目 → 详情弹窗"的两条手势刻意分开。
+         * `data-person-name-link` 标记便于测试稳定定位。
+         * (本卡片布局没有"头像区"概念——规格说的"头像区可点"在此
+         * 等价为"姓名 + 姓名所在的小区域可点"。) */}
+        <button
+          type="button"
+          onClick={() => onOpenPerson(entry.person.id)}
+          data-person-name-link={entry.person.id}
+          aria-label={`打开 ${entry.person.name} 的详情`}
+          title={`打开 ${entry.person.name} 的详情`}
+          className="hover:text-primary -ml-1 cursor-pointer rounded px-1 text-left font-medium transition-colors hover:underline"
+        >
+          {entry.person.name}
+        </button>
         <span className="text-muted-foreground flex items-baseline gap-2 tabular-nums">
           <span title="在飞任务数">{entry.inFlightCount}</span>
           {entry.blockedCount > 0 && (

@@ -37,7 +37,7 @@ export type CommandPaletteTarget =
       assignee: AssigneeCandidate | null;
       project: ProjectCandidate | null;
     }
-  | { kind: "openPerson"; personId: number; subTeamId: number }
+  | { kind: "openPerson"; personId: number }
   | { kind: "openProject"; projectId: number };
 
 /**
@@ -161,10 +161,13 @@ export function CommandPalette({
       return { kind: "openProject", projectId: entry.hit.projectId };
     }
     if (entry.kind === "person") {
+      // ticket #86 T6：选中人员不再走"切到矩阵 + 滚到卡片",升级为
+      // App 层 `openPerson(personId)` ——"add or focus 子 tab + 切到
+      // 人员详情 tab"。"subTeamId" 在新行为里不再需要,这里也不再传给
+      // 父层,与 entryToTarget 旧签名的耦合一并切断。
       return {
         kind: "openPerson",
         personId: entry.hit.personId,
-        subTeamId: entry.hit.subTeamId,
       };
     }
     // task: 需要在弹窗里塞候选人——从 catalog 算
