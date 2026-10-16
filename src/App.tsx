@@ -13,8 +13,8 @@ import { HolidayCalendarView } from "@/views/HolidayCalendarView";
 import { PersonDetailTabsView } from "@/views/PersonDetailTabsView";
 import {
   listPeople, listProjects, listSubTeams, trayStatus,
-  type AssigneeCandidate, type Person, type ProjectCandidate,
-  type Project, type SubTeam, type Task, type TrayStatusDto,
+  type Person,
+  type Project, type SubTeam, type TrayStatusDto,
 } from "@/lib/api";
 import { toAssigneeCandidate } from "@/lib/assignee";
 import {
@@ -47,14 +47,6 @@ export default function App() {
 
   const openCreateTask = useCallback(
     () => dispatch({ kind: "OpenTaskDialog", target: { mode: "create" } }),
-    [dispatch],
-  );
-  const openEditTask = useCallback(
-    (task: Task, assignee: AssigneeCandidate | null, project: ProjectCandidate | null) =>
-      dispatch({
-        kind: "OpenTaskDialog",
-        target: { mode: "edit", task, assignee, project },
-      }),
     [dispatch],
   );
 
@@ -196,10 +188,12 @@ export default function App() {
 
       {tab === "today" ? (
         <TodayWeekView refreshToken={refreshToken}
-          onOpenTask={(task, { assignee, project }) => openEditTask(task, assignee, project)} />
+          onOpenTask={(task, { assignee, project }) =>
+            dispatch({ kind: "OpenTaskDialog", target: { mode: "edit", task, assignee, project } })} />
       ) : tab === "matrix" ? (
         <PersonnelMatrixView refreshToken={refreshToken}
-          onOpenTask={(task, { assignee, project }) => openEditTask(task, assignee, project)}
+          onOpenTask={(task, { assignee, project }) =>
+            dispatch({ kind: "OpenTaskDialog", target: { mode: "edit", task, assignee, project } })}
           onOpenPerson={(personId) => dispatch({ kind: "OpenPerson", personId })} />
       ) : tab === "projects" ? (
         // pendingIntent 单 slot(#100);回调 IntentConsumed 清 slot。
@@ -212,7 +206,8 @@ export default function App() {
           openPersonTabs={subTabs} activePersonId={activeSubTabId}
           people={people} subTeams={subTeams} refreshToken={refreshToken}
           onNavigation={onPersonDetailNavigate}
-          onOpenTask={(task, { assignee }) => openEditTask(task, assignee, null)}
+          onOpenTask={(task, { assignee }) =>
+            dispatch({ kind: "OpenTaskDialog", target: { mode: "edit", task, assignee, project: null } })}
           onCreateTask={onCreateTaskWithAssignee}
         />
       ) : (
