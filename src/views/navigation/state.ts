@@ -299,13 +299,27 @@ export function navigationReducer(
     case "ReorderPersonTabs":
       return reduceReorderPersonTabs(state, event.from, event.to);
 
-    // ----- dialog / palette / intent (本期未实施,case 体在 #98-#101 接入) -----
+    // ----- dialog (issue #99 实施) -----
     //
-    // 暂时返 state 不变:消费路径(#99 #100 等)尚未接到这里,API 已就位;
-    // 一旦新增 case 体,返回类型仍兼容(都是 `NavigationState`)。
+    // dialog 唯一性:同一瞬间只能一份 dialog,已有 dialog 时 `OpenTaskDialog`
+    // 是 no-op(issue #99 §dialog 唯一性)。`CloseTaskDialog` / `TaskSaved`
+    // 在无 dialog 时也是 no-op(防御性 —— Esc / X / Save 入口触发,通常
+    // 不该在无 dialog 时收到)。
     case "OpenTaskDialog":
+      return state.dialog != null
+        ? state
+        : { ...state, dialog: event.target };
     case "CloseTaskDialog":
     case "TaskSaved":
+      // 二者同果 —— dialog 置 null。refreshToken 不沾 reducer,shell
+      // `onTaskSaved` 显式 `setRefreshToken(t=>t+1)`(issue #99 §What
+      // to build + spec #96 §决策 13)。
+      return state.dialog == null ? state : { ...state, dialog: null };
+
+    // ----- palette / intent (本期未实施,case 体在 #100 / #101 接入) -----
+    //
+    // 暂时返 state 不变:消费路径尚未接到这里,API 已就位;一旦新增 case
+    // 体,返回类型仍兼容(都是 `NavigationState`)。
     case "OpenPalette":
     case "ClosePalette":
     case "PalettePick":

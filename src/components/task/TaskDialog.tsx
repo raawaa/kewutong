@@ -63,7 +63,15 @@ export function TaskDialog({
 }: {
   target: TaskDialogTarget;
   onClose: () => void;
-  onSaved: (task: Task) => void;
+  /**
+   * 保存成功后通知父层 —— issue #99 实施后父层 reducer 接管 dialog 状态,
+   * `onSaved` 是纯事件通知,不带 task 入参:旧版 (task: Task) => void 是
+   * 父层 setDialog(null) + setRefreshToken 的回调签名（spec #96 实施前
+   * 直接在 App.tsx 维护 dialog useState）,现在 reducer 已知道 dialog 该关,
+   * `onSaved` 不再需要把 task 透传回 App（reducer 不沾 refreshToken,壳
+   * 层 onTaskSaved 显式 bump —— spec #96 §决策 13）。
+   */
+  onSaved: () => void;
   /**
    * #86 T6 入口之一（③④）：点负责人 / 等待谁字段 → 父层 `openPerson(id)`。
    * 不传时相关字段退化成纯文本——这层兜底保证 ticket #19 时代写的弹窗
@@ -214,11 +222,10 @@ export function TaskDialog({
         blockedReason: statusRequiresReason ? blockedReason.trim() : null,
         waitingOnPersonId: editing ? waitingOnPersonId : null,
       };
-      let savedTask: Task;
       if (editing) {
-        savedTask = await updateTask({ id: editing.id, ...fields });
+        await updateTask({ id: editing.id, ...fields });
       } else {
-        savedTask = await createTask(fields);
+        await createTask(fields);
       }
       // 周期性 + 新建 + 配好规则 → 顺手 upsert 模板。本票周期任务必挂
       // 项目(否则 subTeamId 必填,当前弹窗没暴露)；模板记录在 DB 走物
@@ -238,7 +245,7 @@ export function TaskDialog({
         });
       }
       setError(null);
-      onSaved(savedTask);
+      onSaved();
     } catch (thrown) {
       setError(toAppError(thrown));
     } finally {

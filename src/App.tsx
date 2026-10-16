@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useReducer, useState } from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  TaskDialog,
-  type TaskDialogTarget,
-} from "@/components/task/TaskDialog";
+import { TaskDialog } from "@/components/task/TaskDialog";
 import {
   CommandPalette,
   type CommandPaletteTarget,
@@ -22,12 +19,9 @@ import {
   listProjects,
   listSubTeams,
   trayStatus,
-  type AssigneeCandidate,
   type Person,
   type Project,
-  type ProjectCandidate,
   type SubTeam,
-  type Task,
   type TrayStatusDto,
 } from "@/lib/api";
 import { toAssigneeCandidate } from "@/lib/assignee";
@@ -71,27 +65,31 @@ const TABS: { id: MainTabId; label: string }[] = [
  * 解耦,避免命令面板打开再发一次"全员 + 全项目 + 全子组"拉取。
  *
  * 5 类导航状态（主 tab / sub-tab + active / TaskDialog / palette /
- * pendingIntent）的 sub-tab + tab 段已落入 `useReducer(navigationReducer,
- * initialState)`（issue #98 接 seam）。`activeSubTabId ∈ subTabs` 不变量
- * 由 reducer post-step `reconcileActive` 一行收敛（parent spec #96 §决
- * 策 4,取代旧 stale-closure ref + fallback `useEffect` 双反模式）。
+ * pendingIntent）已落入 `useReducer(navigationReducer, initialState)`
+ * （issues #97 sub-tab / #98 tab+keydown / #99 dialog）。`activeSubTabId
+ * ∈ subTabs` 不变量由 reducer post-step `reconcileActive` 一行收敛
+ * （parent spec #96 §决策 4,取代旧 stale-closure ref + fallback
+ * `useEffect` 双反模式）。dialog 唯一性由 reducer `OpenTaskDialog`
+ * case 守 —— 已有 dialog 时再开第二份是 no-op（issue #99 §dialog 唯
+ * 一性）。
  *
- * dialog / palette / pendingIntent 仍在本 shell useState —— 它们的 reducer
- * case 体由 #99 / #100 / #101 接力,留 shell useState 是为了让本 shell 在
- * 折叠节奏上分批验证。issue #98 AC 内的 grep 检查也只盯 sub-tab / tab
- * 段,不动 dialog / palette / intent 的 shell 用法。
+ * 仍在 shell useState 的：palette 开 / 关（#100）、pending intent
+ * （#100）、transient data（people / subTeams / projects / trayStatusDto）、
+ * invalidation counter `refreshToken` —— reducer 不沾（spec #96 §决策 1、
+ * #99 §决策 13）。
  */
 export default function App() {
-  // ----- reducer：tab + subTabs + activeSubTabId -----
+  // ----- reducer：5 类导航状态 -----
   // 单一 seam —— `navigationReducer` 是纯函数,App.tsx 私有持有
   // （parent spec #96 §决策 3）,子视图不可自己 `useReducer`,
   // 只通过 `onNavigation={dispatch}` 派发事件。
   const [navState, dispatch] = useReducer(navigationReducer, initialState);
-  const { tab, subTabs, activeSubTabId } = navState;
+  const { tab, subTabs, activeSubTabId, dialog } = navState;
 
-  // ----- shell useState：dialog / catalog / palette / pending intent -----
-  const [dialog, setDialog] = useState<TaskDialogTarget | null>(null);
-  // 弹窗保存后 +1，让当前视图重新拉一次
+  // ----- shell useState：catalog / palette / pending intent / refreshToken -----
+  // 弹窗保存后 +1，让当前视图重新拉一次。refreshToken 不沾 reducer
+  // —— reducer `TaskSaved` 只关 dialog,shell `onTaskSaved` 显式 bump
+  // （spec #96 §决策 13、#99 §决策 13）。
   const [refreshToken, setRefreshToken] = useState(0);
 
   // 全局 catalog：人员 / 子组 / 项目。一次拉，所有视图复用。命令面板
@@ -100,7 +98,8 @@ export default function App() {
   const [subTeams, setSubTeams] = useState<SubTeam[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
 
-  // ⌘K 命令面板：开 / 关 + 选中目标后的导航意图。
+  // ⌘K 命令面板：开 / 关（palette 自身开关留 shell —— #100 才把
+  // palette 移进 reducer,本期不动）。
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   // 托盘可达性（ticket #29）：启动时拉一次。banner 只渲染不轮询——后续
@@ -117,27 +116,17 @@ export default function App() {
     number | null
   >(null);
 
-  const openCreate = useCallback(() => setDialog({ mode: "create" }), []);
   /**
-   * 「人员详情」段 2（#82 T2）的 + 按钮走这条路径：把当前人员预填
-   * 为负责人，免去先 `@` 一下再录入标题的手势。`subTeamName` 从
-   * catalog 查；catalog 缺失时回退空串——详情页本来就有 fallback
-   * 路径（`useMissingSubTeams`）兜底，这里不重复做。
+   * shell 处理 TaskDialog 保存结果 —— dispatch `TaskSaved` 让 reducer 关
+   * dialog,同时显式 bump `refreshToken` 让视图重拉（spec #96 §决策 13）。
+   * `dispatch` 与 `setRefreshToken` 互不依赖 —— reducer 不沾 refreshToken,
+   * shell 显式同步 bump。
    */
-  const openCreateWithAssignee = useCallback(
-    (person: Person) => {
-      setDialog({
-        mode: "create",
-        initialAssignee: toAssigneeCandidate(person, subTeams),
-      });
-    },
-    [subTeams],
-  );
-  const closeDialog = useCallback(() => setDialog(null), []);
   const onTaskSaved = useCallback(() => {
-    setDialog(null);
+    dispatch({ kind: "TaskSaved" });
     setRefreshToken((token) => token + 1);
-  }, []);
+  }, [dispatch]);
+
   // 横幅清除示例后也得刷——views 按 refreshToken 拉数据，不清的话
   // Today/矩阵/项目/人员 视图继续展示已删的示例任务。
   const onSampleCleared = useCallback(() => {
@@ -203,32 +192,12 @@ export default function App() {
   }, []);
 
   /**
-  视图点开一条已有任务时调这里——App 负责把弹窗开起来。`assignee` /
-  `project` 候选由视图自己算（今日 / 本周视图已有花名册与项目缓存），
-  App 不重复打 IPC。
-  */
-  const openEditTask = useCallback(
-    (
-      task: Task,
-      extras: {
-        assignee: AssigneeCandidate | null;
-        project: ProjectCandidate | null;
-      },
-    ) => {
-      setDialog({
-        mode: "edit",
-        task,
-        assignee: extras.assignee,
-        project: extras.project,
-      });
-    },
-    [],
-  );
-
-  /**
   ⌘K 命令面板选中一条候选后调这里——App 决定"跳到哪个 tab + 定位谁"。
-  - 新建任务：直接开弹窗。
-  - 已有任务：开弹窗（编辑即详情，ticket #19）。
+  - 新建任务：派 `OpenTaskDialog` reducer 事件（#99 实施后 dialog 状态
+    移入 reducer,这里直接 dispatch 由 reducer 维护 dialog 字段）。
+  - 已有任务：派 `OpenTaskDialog` reducer 事件（编辑即详情，ticket #19）。
+    `assignee` / `project` 候选由命令面板自己从 catalog 算,App 不重复打
+    IPC。
   - 项目：切到项目 tab + pendingProjectId 选中。
   - 人员：派 `OpenPerson` 事件（issue #98）—— reducer `OpenPerson` case
     在 #97 已实施 add-or-focus + 切 personDetail 主 tab；原 App.tsx 的
@@ -239,14 +208,17 @@ export default function App() {
     (target: CommandPaletteTarget) => {
       switch (target.kind) {
         case "openCreateTask":
-          openCreate();
+          dispatch({ kind: "OpenTaskDialog", target: { mode: "create" } });
           return;
         case "openEditTask":
-          setDialog({
-            mode: "edit",
-            task: target.task,
-            assignee: target.assignee,
-            project: target.project,
+          dispatch({
+            kind: "OpenTaskDialog",
+            target: {
+              mode: "edit",
+              task: target.task,
+              assignee: target.assignee,
+              project: target.project,
+            },
           });
           return;
         case "openProject":
@@ -260,7 +232,7 @@ export default function App() {
           return;
       }
     },
-    [openCreate, dispatch],
+    [dispatch],
   );
 
   /**
@@ -290,6 +262,25 @@ export default function App() {
     dispatch({ kind: "SetTab", tab: "holiday" });
   }, [dispatch]);
 
+  /**
+   * 「人员详情」段 2（#82 T2）的 + 按钮:把当前人员预填为负责人,
+   * 派 `OpenTaskDialog` reducer 事件。`subTeamName` 从 catalog 查;
+   * catalog 缺失时回退空串 —— 详情页本来就有 fallback 路径
+   * (`useMissingSubTeams`)兜底,这里不重复做。
+   */
+  const openCreateTaskWithAssignee = useCallback(
+    (person: Person) => {
+      dispatch({
+        kind: "OpenTaskDialog",
+        target: {
+          mode: "create",
+          initialAssignee: toAssigneeCandidate(person, subTeams),
+        },
+      });
+    },
+    [dispatch, subTeams],
+  );
+
   // 顶栏「新建任务」按钮 + ⌘N / ⌘K 都在 window 层——保证在任意视图
   // 都能唤起。
   // T7（#87）：人员详情专属快捷键 ——
@@ -303,12 +294,21 @@ export default function App() {
   // reducer 在 `CloseActiveSubTab` 主路径里做左-右-null 精细兜底
   // （state.ts:reduceCloseActiveSubTab），与旧 App.tsx 同步收敛
   // 多 setState 的主路径同形 —— 不过此时已一行 dispatch 顶替。
+  //
+  // ⌘N 的 dialog 唯一性(issue #99 §dialog 唯一性):已有 dialog 时 ⌘N
+  // 在 effect 层 gate 掉,不再 dispatch —— reducer 自身的唯一性兜底
+  // 作为防御。`dialog` 直接从 `navState.dialog` 读。
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const mod = event.metaKey || event.ctrlKey;
       if (mod && event.key.toLowerCase() === "n") {
         event.preventDefault();
-        openCreate();
+        // dialog 唯一性 gate:已有 dialog 时 ⌘N 是 no-op(issue #99 §
+        // dialog 唯一性)。reducer 自身也兜底,但 effect 层 gate 让用户
+        // 按 ⌘N 时无声无息,不派第二条事件入 reducer 后被丢。
+        if (dialog == null) {
+          dispatch({ kind: "OpenTaskDialog", target: { mode: "create" } });
+        }
         return;
       }
       if (mod && event.key.toLowerCase() === "k") {
@@ -364,7 +364,7 @@ export default function App() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [openCreate, tab, subTabs, activeSubTabId, dispatch]);
+  }, [dialog, tab, subTabs, activeSubTabId, dispatch]);
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 p-6">
@@ -399,7 +399,15 @@ export default function App() {
           >
             ⌘K
           </Button>
-          <Button size="sm" onClick={openCreate}>
+          <Button
+            size="sm"
+            onClick={() =>
+              dispatch({
+                kind: "OpenTaskDialog",
+                target: { mode: "create" },
+              })
+            }
+          >
             <Plus />
             新建任务
             <kbd className="ml-1 text-xs opacity-70">⌘N</kbd>
@@ -416,12 +424,22 @@ export default function App() {
       {tab === "today" ? (
         <TodayWeekView
           refreshToken={refreshToken}
-          onOpenTask={openEditTask}
+          onOpenTask={(task, { assignee, project }) =>
+            dispatch({
+              kind: "OpenTaskDialog",
+              target: { mode: "edit", task, assignee, project },
+            })
+          }
         />
       ) : tab === "matrix" ? (
         <PersonnelMatrixView
           refreshToken={refreshToken}
-          onOpenTask={openEditTask}
+          onOpenTask={(task, { assignee, project }) =>
+            dispatch({
+              kind: "OpenTaskDialog",
+              target: { mode: "edit", task, assignee, project },
+            })
+          }
           onOpenPerson={(personId) =>
             dispatch({ kind: "OpenPerson", personId })
           }
@@ -449,9 +467,12 @@ export default function App() {
           refreshToken={refreshToken}
           onNavigation={dispatch}
           onOpenTask={(task, { assignee }) =>
-            openEditTask(task, { assignee, project: null })
+            dispatch({
+              kind: "OpenTaskDialog",
+              target: { mode: "edit", task, assignee, project: null },
+            })
           }
-          onCreateTask={(person) => openCreateWithAssignee(person)}
+          onCreateTask={(person) => openCreateTaskWithAssignee(person)}
           onCreateProject={(person) => openCreateProject(person)}
           onCreateTemplate={(subTeamId) => openCreateTemplate(subTeamId)}
         />
@@ -464,7 +485,7 @@ export default function App() {
           // 换任务 = 换一个弹窗实例，contenteditable 的初值才铺得干净
           key={dialog.mode === "edit" ? `edit-${dialog.task.id}` : "create"}
           target={dialog}
-          onClose={closeDialog}
+          onClose={() => dispatch({ kind: "CloseTaskDialog" })}
           onSaved={onTaskSaved}
           // #86 T6：任务详情弹窗的「负责人」「等待谁」字段可点。
           onOpenPerson={(personId) =>

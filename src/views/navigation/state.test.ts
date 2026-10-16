@@ -1,17 +1,19 @@
 /**
- * Navigation reducer — 表驱动 + scenario 双覆盖（issue #97）。
+ * Navigation reducer — 表驱动 + scenario 双覆盖（issues #97 / #99）。
  *
  * 单一 seam：`navigationReducer(state, event) → newState`。无 DOM / React /
  * IPC 依赖。父 spec 见 #96 §Testing Decisions 引用 ADR 0011 §6(table-driven
  * by `src/lib/taskStatus.test.ts`) 同型范式。
  *
- * 表驱动覆盖每条 (state, event) → nextState 一行；scenario 锁定 3 条 UX
- * 契约:duplicate `OpenPerson` add-or-focus、`CloseActiveSubTab` 左-右 fallback、
- * activeId invariant post-step。
+ * 表驱动覆盖每条 (state, event) → nextState 一行；scenario 锁定 UX
+ * 契约 ——
+ *   #97:duplicate `OpenPerson` add-or-focus、`CloseActiveSubTab` 左-右 fallback、
+ *        activeId invariant post-step;
+ *   #99:dialog 唯一性（已有 dialog 时 `OpenTaskDialog` 是 no-op）。
  *
- * 本期 (#97) 仅覆盖 sub-tab + 主 tab 路径;dialog/palette/PalettePick/
- * pendingIntent 等 case 在 #98-#101 接入,本测试文件**不**为它们加断言,
- * 但 reducer 已就位以保持 union 编译期阻挡。
+ * 本测试文件 (#97 + #99) 覆盖 sub-tab / 主 tab / dialog 路径;palette/
+ * PalettePick/pendingIntent 等 case 在 #100-#101 接入,本文件不为其断言,
+ * reducer 已就位以保持 union 编译期阻挡。
  */
 
 import { describe, expect, it } from "vitest";
@@ -19,11 +21,13 @@ import { describe, expect, it } from "vitest";
 import {
   initialState,
   navigationReducer,
+  type DialogTarget,
   type MainTabId,
   type NavigationEvent,
   type NavigationState,
   type OpenPersonTab,
 } from "./state";
+import type { AssigneeCandidate, ProjectCandidate, Task } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // 工厂 / 辅助
@@ -708,26 +712,252 @@ describe("Scenario: activeId invariant post-step", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 本期未实施 kind 的占位 — 它们的 case 体在 #98-#101 接入,仅校验
-// reducer 收到时返 state 不变(消费路径尚未接线)。
+// dialog —— OpenTaskDialog / CloseTaskDialog / TaskSaved (issue #99)
+//
+// dialog 字段在 reducer 里,case 体实施 = #99。dialog 唯一性:同一瞬间
+// 只能一份 dialog,已有 dialog 时再 `OpenTaskDialog` 是 no-op —— 同
+// 意 issue #99 §dialog 唯一性。`CloseTaskDialog` / `TaskSaved` 在无
+// dialog 时也是 no-op(防御性,通常由 Esc / X / Save 入口触发,不该在
+// 没有 dialog 时收到)。
 // ---------------------------------------------------------------------------
 
-describe("navigationReducer · 延后 kind 在本期是 no-op 兜底", () => {
-  it("OpenTaskDialog → state 不变(dialog 字段本期不进 reducer)", () => {
-    // 重申:dialog 字段存在,只是本期 reducer 不动 —— #98 接入。
-    const state = withTabs([tab(1), tab(2)], 1, "personDetail");
+/** 测试用最小 assignee / project / task 工厂 —— TaskDialog 入口参数。 */
+function assignee(personId: number, name = "张三", subTeamName = "暖通"): AssigneeCandidate {
+  return { personId, name, subTeamName };
+}
+function project(projectId: number, name = "某项目", subTeamName = "暖通"): ProjectCandidate {
+  return { projectId, name, subTeamName };
+}
+function taskFixture(id: number): Task {
+  return {
+    id,
+    title: `任务 ${id}`,
+    description: null,
+    status: "Open",
+    ownerPersonId: 1,
+    projectId: null,
+    dueDate: null,
+    recurringTemplateId: null,
+    scheduledAt: null,
+    originalScheduledAt: null,
+    rescheduledFromId: null,
+    isRecurring: false,
+    effectiveDate: null,
+    createdAt: "2026-09-01 09:00:00",
+    updatedAt: "2026-09-01 09:00:00",
+    blockedAt: null,
+    blockedReason: null,
+    waitingOnPersonId: null,
+  };
+}
+
+describe("navigationReducer · OpenTaskDialog", () => {
+  it("空 dialog 状态 OpenTaskDialog(create) → dialog = {mode:'create'}", () => {
+    const next = navigationReducer(initialState, {
+      kind: "OpenTaskDialog",
+      target: { mode: "create" },
+    });
+    expect(next.dialog).toEqual({ mode: "create" });
+  });
+
+  it("OpenTaskDialog(create, initialAssignee=X) → dialog 保留 initialAssignee 透传", () => {
+    const a = assignee(7);
+    const next = navigationReducer(initialState, {
+      kind: "OpenTaskDialog",
+      target: { mode: "create", initialAssignee: a },
+    });
+    expect(next.dialog).toEqual({ mode: "create", initialAssignee: a });
+  });
+
+  it("OpenTaskDialog(edit, task, assignee, project) → dialog 完整透传", () => {
+    const t = taskFixture(42);
+    const a = assignee(7);
+    const p = project(99);
+    const next = navigationReducer(initialState, {
+      kind: "OpenTaskDialog",
+      target: { mode: "edit", task: t, assignee: a, project: p },
+    });
+    expect(next.dialog).toEqual({ mode: "edit", task: t, assignee: a, project: p });
+  });
+
+  it("已有 dialog 时 OpenTaskDialog → 维持原 dialog(no-op,唯一性)", () => {
+    const first: DialogTarget = { mode: "create", initialAssignee: assignee(1) };
+    const state: NavigationState = { ...initialState, dialog: first };
+    const second: DialogTarget = { mode: "edit", task: taskFixture(2), assignee: assignee(3), project: null };
+    const next = navigationReducer(state, {
+      kind: "OpenTaskDialog",
+      target: second,
+    });
+    // 严格同一份(引用相等)— 不被新事件覆盖
+    expect(next).toBe(state);
+    expect(next.dialog).toBe(first);
+  });
+
+  it("OpenTaskDialog 不动主 tab / subTabs / palette / pendingIntent", () => {
+    const state: NavigationState = {
+      ...initialState,
+      tab: "matrix",
+      subTabs: [tab(1), tab(2)],
+      activeSubTabId: 1,
+      palette: { open: true },
+      pendingIntent: { kind: "locateProject", id: 5 },
+    };
     const next = navigationReducer(state, {
       kind: "OpenTaskDialog",
       target: { mode: "create" },
     });
-    expect(next).toBe(state); // 引用相等(返回 state)
+    expect(next.tab).toBe("matrix");
+    expect(next.subTabs).toEqual([tab(1), tab(2)]);
+    expect(next.activeSubTabId).toBe(1);
+    expect(next.palette).toEqual({ open: true });
+    expect(next.pendingIntent).toEqual({ kind: "locateProject", id: 5 });
+  });
+});
+
+describe("navigationReducer · CloseTaskDialog", () => {
+  it("有 dialog → dialog 置 null", () => {
+    const state: NavigationState = {
+      ...initialState,
+      dialog: { mode: "create", initialAssignee: assignee(1) },
+    };
+    const next = navigationReducer(state, { kind: "CloseTaskDialog" });
+    expect(next.dialog).toBeNull();
   });
 
-  it("CloseTaskDialog / TaskSaved / OpenPalette / ClosePalette / PalettePick / IntentConsumed → state 不变", () => {
-    const state = withTabs([tab(1), tab(2)], 1, "personDetail");
+  it("无 dialog → no-op(state 不变,防御性)", () => {
+    const next = navigationReducer(initialState, { kind: "CloseTaskDialog" });
+    expect(next).toBe(initialState);
+  });
+
+  it("CloseTaskDialog 不动其它字段(palette / pendingIntent / subTabs 等)", () => {
+    const state: NavigationState = {
+      ...initialState,
+      tab: "projects",
+      subTabs: [tab(1)],
+      activeSubTabId: 1,
+      dialog: { mode: "edit", task: taskFixture(1), assignee: assignee(1), project: null },
+      palette: { open: true },
+      pendingIntent: { kind: "locateProject", id: 5 },
+    };
+    const next = navigationReducer(state, { kind: "CloseTaskDialog" });
+    expect(next.dialog).toBeNull();
+    expect(next.tab).toBe("projects");
+    expect(next.subTabs).toEqual([tab(1)]);
+    expect(next.activeSubTabId).toBe(1);
+    expect(next.palette).toEqual({ open: true });
+    expect(next.pendingIntent).toEqual({ kind: "locateProject", id: 5 });
+  });
+});
+
+describe("navigationReducer · TaskSaved", () => {
+  it("有 dialog → dialog 置 null(reducer 不沾 refreshToken —— shell 显式 +1)", () => {
+    const state: NavigationState = {
+      ...initialState,
+      dialog: { mode: "edit", task: taskFixture(5), assignee: assignee(7), project: project(9) },
+    };
+    const next = navigationReducer(state, { kind: "TaskSaved" });
+    expect(next.dialog).toBeNull();
+    // 不动其它字段
+    expect(next.tab).toBe(initialState.tab);
+    expect(next.subTabs).toEqual(initialState.subTabs);
+    expect(next.palette).toBe(initialState.palette);
+    expect(next.pendingIntent).toBe(initialState.pendingIntent);
+  });
+
+  it("无 dialog → no-op(state 不变,防御性)", () => {
+    const next = navigationReducer(initialState, { kind: "TaskSaved" });
+    expect(next).toBe(initialState);
+  });
+
+  it("TaskSaved 路径跟 CloseTaskDialog 同结果 —— 都是 dialog → null", () => {
+    const target: DialogTarget = { mode: "create", initialAssignee: assignee(1) };
+    const opened: NavigationState = { ...initialState, dialog: target };
+    const afterSave = navigationReducer(opened, { kind: "TaskSaved" });
+    const afterClose = navigationReducer(opened, { kind: "CloseTaskDialog" });
+    expect(afterSave.dialog).toBeNull();
+    expect(afterClose.dialog).toBeNull();
+    // 两者结果除了 dialog null 之外其它字段一致
+    expect(afterSave).toEqual(afterClose);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dialog —— Scenario: dialog 唯一性(#99 §dialog 唯一性 + AC #1)
+//
+// "同一瞬间只能一份 dialog" —— 已有 dialog 时再发起 OpenTaskDialog 是
+// no-op。新事件发起前 reducer 显式 noop;gate 形式在 effect 层(window
+// keydown ⌘N 在 App.tsx useEffect 内检查 state.dialog == null 才 dispatch)。
+// ---------------------------------------------------------------------------
+
+describe("Scenario: dialog 唯一性 (#99)", () => {
+  it("空 dialog → Open(create) → Open(edit) 第二次被忽略,仍是 create", () => {
+    const s0 = initialState;
+    const s1 = navigationReducer(s0, {
+      kind: "OpenTaskDialog",
+      target: { mode: "create", initialAssignee: assignee(1) },
+    });
+    const s2 = navigationReducer(s1, {
+      kind: "OpenTaskDialog",
+      target: { mode: "edit", task: taskFixture(2), assignee: assignee(3), project: null },
+    });
+    expect(s1.dialog).toEqual({ mode: "create", initialAssignee: assignee(1) });
+    // 第二次被唯一性规则 noop,s2 == s1(引用相等)
+    expect(s2).toBe(s1);
+    expect(s2.dialog).toEqual({ mode: "create", initialAssignee: assignee(1) });
+  });
+
+  it("dialog 唯一性 + 关闭序列:Open → Close → Open 第二次生效(close 后再开)", () => {
+    let s = initialState;
+    s = navigationReducer(s, {
+      kind: "OpenTaskDialog",
+      target: { mode: "create" },
+    });
+    expect(s.dialog).toEqual({ mode: "create" });
+    s = navigationReducer(s, { kind: "CloseTaskDialog" });
+    expect(s.dialog).toBeNull();
+    // close 后第二次 open 应生效
+    s = navigationReducer(s, {
+      kind: "OpenTaskDialog",
+      target: { mode: "edit", task: taskFixture(5), assignee: assignee(7), project: null },
+    });
+    expect(s.dialog).toEqual({
+      mode: "edit",
+      task: taskFixture(5),
+      assignee: assignee(7),
+      project: null,
+    });
+  });
+
+  it("dialog 唯一性 + save 序列:Open → TaskSaved → Open 第二次生效(save 后再开)", () => {
+    let s = initialState;
+    s = navigationReducer(s, {
+      kind: "OpenTaskDialog",
+      target: { mode: "create" },
+    });
+    s = navigationReducer(s, { kind: "TaskSaved" });
+    expect(s.dialog).toBeNull();
+    // save 后第二次 open 应生效(用户保存一条后立刻新建另一条)
+    s = navigationReducer(s, {
+      kind: "OpenTaskDialog",
+      target: { mode: "create", initialAssignee: assignee(9) },
+    });
+    expect(s.dialog).toEqual({ mode: "create", initialAssignee: assignee(9) });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// palette / PalettePick / IntentConsumed —— 延后到 #100 / #101,本期
+// reducer 收到它们返 state 不变(消费路径尚未接线)。
+// ---------------------------------------------------------------------------
+
+describe("navigationReducer · 延后 kind 在本期是 no-op 兜底", () => {
+  it("OpenPalette / ClosePalette / PalettePick / IntentConsumed → state 不变", () => {
+    const state: NavigationState = {
+      ...initialState,
+      subTabs: [tab(1), tab(2)],
+      activeSubTabId: 1,
+    };
     for (const ev of [
-      { kind: "CloseTaskDialog" as const },
-      { kind: "TaskSaved" as const },
       { kind: "OpenPalette" as const },
       { kind: "ClosePalette" as const },
       {
