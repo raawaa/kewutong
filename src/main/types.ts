@@ -148,6 +148,15 @@ export interface CreateTaskArgs {
   ownerPersonId: number;
   projectId?: number | null;
   dueDate?: string | null;
+  /**
+   * #91：新建时可指定初始状态，缺省 = `Open`。白名单外抛
+   * `AppError.invalid`——命令层自己兜底，不靠 DB CHECK 翻译。
+   * 进入 Blocked / Waiting-on 时 `blockedReason` 必填；Waiting-on 还允
+   * 许带 `waitingOnPersonId`（Blocked 下强制 null）。
+   */
+  status?: TaskStatus;
+  blockedReason?: string | null;
+  waitingOnPersonId?: number | null;
 }
 
 export type UpdateTaskArgs = CreateTaskArgs & { id: number };

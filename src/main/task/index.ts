@@ -261,9 +261,10 @@ export function inFlightTaskOrderBy(columnPrefix: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * 新建一次性任务。状态默认 `Open`；`blocked_at` / `blocked_reason` /
- * `waiting_on_person_id` 不在新建入口设置——任何进入阻塞态都得走
- * [`setTaskStatus`]。
+ * 新建一次性任务。状态默认 `Open`（#91：调用方可显式指定，但白名单外抛
+ * `AppError.invalid`）。进入 Blocked / Waiting-on 时 `blockedReason`
+ * 必填，与 [`setTaskStatus`] 共用 [`deriveBlockColumns`]——保证阻塞三列
+ * 的派生语义在新建 / 状态切换两条路径上只有一份权威。
  */
 export function createTask(state: AppState, args: CreateTaskArgs): Task {
   const title = requireNonBlank(args.title, "任务标题不能为空。");
@@ -275,17 +276,45 @@ export function createTask(state: AppState, args: CreateTaskArgs): Task {
     ensureProjectExists(state.db, args.projectId);
   }
 
+  // #91：status 白名单 + 默认值。`undefined` = 沿用旧默认 Open；非枚举值
+  // 直接拒绝，比 DB CHECK 抛 SQLITE_CONSTRAINT 给前端翻译友好。
+  const requestedStatus: TaskStatus = args.status ?? "Open";
+  if (!TASK_STATUSES.includes(requestedStatus)) {
+    throw AppError.invalid("任务状态不在 6 状态枚举内。");
+  }
+
   const now = state.clock.nowSql();
+  // 阻塞三列与 status 同时落地：Blocked / Waiting-on 走 deriveBlockColumns
+  // 算，其它 4 态一律 null。Waiting-on 下允许带 waiting_on_person_id。
+  const { blockedAt, blockedReason, waitingOnPersonId } = deriveBlockColumns(
+    requestedStatus,
+    args.blockedReason ?? null,
+    args.waitingOnPersonId ?? null,
+    now,
+  );
+
   let id: number | undefined;
   withTx(state.db, () => {
     const info = state.db
       .prepare(
         `INSERT INTO task
            (title, description, status, owner_person_id, project_id, due_date,
-            created_at, updated_at)
-         VALUES (?, ?, 'Open', ?, ?, ?, ?, ?)`,
+            created_at, updated_at, blocked_at, blocked_reason, waiting_on_person_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(title, description, args.ownerPersonId, args.projectId ?? null, dueDate, now, now);
+      .run(
+        title,
+        description,
+        requestedStatus,
+        args.ownerPersonId,
+        args.projectId ?? null,
+        dueDate,
+        now,
+        now,
+        blockedAt,
+        blockedReason,
+        waitingOnPersonId,
+      );
     id = Number(info.lastInsertRowid);
   });
 
@@ -300,11 +329,16 @@ export function createTask(state: AppState, args: CreateTaskArgs): Task {
 }
 
 /**
- * 编辑态保存（ticket #19「编辑即详情」）。
+ * 编辑态保存（ticket #19「编辑即详情」+ #91 状态可改）。
  *
- * 改写标题 / 描述 / 负责人 / 所属项目 / 截止日五个字段 + `updated_at`。
- * **刻意不碰** `status` 与阻塞三列——那是 [`setTaskStatus`] 的专属职责，
- * 两个入口都能写状态就等于没有唯一入口。
+ * 改写标题 / 描述 / 负责人 / 所属项目 / 截止日五个字段 + `updated_at`；
+ * 当调用方传入 `status` 时同步刷新 status 与阻塞三列（与
+ * [`setTaskStatus`] 走同一份 [`deriveBlockColumns`] 派生）——
+ * 阻塞三列不能由两个入口各写一份，否则会出现「status 切走但 blocked_*
+ * 残留」的不一致。
+ *
+ * **不传 `status` 时仍保留 ticket #19 的默认行为**：status / 阻塞三列
+ * 一律不动——给 ticket #19 时代的调用方零回归风险。
  */
 export function updateTask(state: AppState, args: UpdateTaskArgs): Task {
   const title = requireNonBlank(args.title, "任务标题不能为空。");
@@ -317,18 +351,47 @@ export function updateTask(state: AppState, args: UpdateTaskArgs): Task {
   }
 
   const now = state.clock.nowSql();
+
+  // #91：status 入参 → 与 setTaskStatus 共用同一份 derive 派生,保证阻塞
+  // 三列只在一处定义。不传 status → 维持 ticket #19 的「不碰 status」
+  // 默认行为,用 sentinel `undefined` 显式区分「不写」与「写 null」——
+  // 因为 SQL UPDATE 写 null 会把已有 status 覆盖成 null,只能动态拼 SET。
+  if (args.status !== undefined && !TASK_STATUSES.includes(args.status)) {
+    throw AppError.invalid("任务状态不在 6 状态枚举内。");
+  }
+
+  const sets: string[] = [
+    "title = ?",
+    "description = ?",
+    "owner_person_id = ?",
+    "project_id = ?",
+    "due_date = ?",
+    "updated_at = ?",
+  ];
+  const params: Array<string | number | null> = [
+    title,
+    description,
+    args.ownerPersonId,
+    args.projectId ?? null,
+    dueDate,
+    now,
+  ];
+
+  if (args.status !== undefined) {
+    const derived = deriveBlockColumns(
+      args.status,
+      args.blockedReason ?? null,
+      args.waitingOnPersonId ?? null,
+      now,
+    );
+    sets.push("status = ?", "blocked_at = ?", "blocked_reason = ?", "waiting_on_person_id = ?");
+    params.push(args.status, derived.blockedAt, derived.blockedReason, derived.waitingOnPersonId);
+  }
+  params.push(args.id);
+
   const result = state.db
-    .prepare(
-      `UPDATE task
-          SET title           = ?,
-              description     = ?,
-              owner_person_id = ?,
-              project_id      = ?,
-              due_date        = ?,
-              updated_at      = ?
-        WHERE id = ?`,
-    )
-    .run(title, description, args.ownerPersonId, args.projectId ?? null, dueDate, now, args.id);
+    .prepare(`UPDATE task SET ${sets.join(", ")} WHERE id = ?`)
+    .run(...params);
 
   if (result.changes === 0) {
     throw AppError.invalid("任务不存在或已被删除。");

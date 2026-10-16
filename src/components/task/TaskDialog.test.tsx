@@ -151,6 +151,9 @@ describe("TaskDialog · 新建", () => {
         ownerPersonId: 张三.personId,
         projectId: null,
         dueDate: "2026-09-10",
+        status: "Open",
+        blockedReason: null,
+        waitingOnPersonId: null,
       }),
     );
     expect(onSaved).toHaveBeenCalled();
@@ -557,5 +560,188 @@ describe("TaskDialog · 入口③④ #86 T6 负责人 / 等待谁 可点", () =>
     // 与新字段都会命中)。
     expect(screen.getByText(/暖通/)).toBeInTheDocument();
     expect(onSaved).not.toHaveBeenCalled(); // 没保存
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ticket #91：状态选择控件（6 状态枚举，默认 Open）。
+// ---------------------------------------------------------------------------
+
+describe("TaskDialog · 状态选择控件 #91", () => {
+  it("新建模式：状态控件可见，默认 Open 选中", async () => {
+    renderDialog({ mode: "create" });
+    await screen.findByRole("button", { name: "今天" });
+
+    // 6 个 chip 都在；Open 默认选中。
+    expect(screen.getByRole("button", { name: "待开始" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "进行中" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "已阻塞" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "等待中" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "已完成" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "已取消" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("新建模式：选 '进行中' → IPC 入参 status = 'In-progress'", async () => {
+    const { user } = renderDialog({ mode: "create" });
+    await screen.findByRole("button", { name: "今天" });
+
+    const box = screen.getByRole("textbox", { name: "任务标题" });
+    await user.click(box);
+    await user.type(box, "跑外委 @张");
+    await user.click(await screen.findByRole("option", { name: /张三/ }));
+    await user.click(screen.getByRole("button", { name: "进行中" }));
+    await user.click(screen.getByRole("button", { name: "创建" }));
+
+    await waitFor(() =>
+      expect(createTask).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "In-progress" }),
+      ),
+    );
+  });
+
+  it("新建模式：选 '已阻塞' + 填阻塞原因 → IPC 入参带 status + blockedReason", async () => {
+    const { user } = renderDialog({ mode: "create" });
+    await screen.findByRole("button", { name: "今天" });
+
+    const box = screen.getByRole("textbox", { name: "任务标题" });
+    await user.click(box);
+    await user.type(box, "等外委 @张");
+    await user.click(await screen.findByRole("option", { name: /张三/ }));
+
+    // 切到 Blocked → 出现原因输入框
+    await user.click(screen.getByRole("button", { name: "已阻塞" }));
+    const reasonBox = await screen.findByLabelText(/阻塞原因/);
+    await user.type(reasonBox, "对方未回函");
+    await user.click(screen.getByRole("button", { name: "创建" }));
+
+    await waitFor(() =>
+      expect(createTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "Blocked",
+          blockedReason: "对方未回函",
+        }),
+      ),
+    );
+  });
+
+  it("编辑模式：状态控件显示当前值（In-progress），可改", async () => {
+    const { user } = renderDialog({
+      mode: "edit",
+      task: 已有任务, // status: "In-progress"
+      assignee: 张三,
+      project: null,
+    });
+    await screen.findByRole("textbox", { name: "任务标题" });
+
+    expect(screen.getByRole("button", { name: "进行中" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    await user.click(screen.getByRole("button", { name: "已完成" }));
+    await user.click(screen.getByRole("button", { name: "保存修改" }));
+
+    await waitFor(() =>
+      expect(updateTask).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 42, status: "Done" }),
+      ),
+    );
+  });
+
+  it("编辑模式：打开 Blocked 任务时 reason 预填,不点状态也能保存", async () => {
+    // 模拟「编辑即详情」:用户进弹窗看一下,不动 picker,直接保存 ——
+    // pre-fill 必须把现有 reason 灌进 state,避免 UI 误报「reason 为空」
+    // 而锁住保存按钮。
+    const blockedTask: Task = {
+      ...已有任务,
+      status: "Blocked",
+      blockedReason: "等外委回函",
+      blockedAt: "2026-09-09 10:00:00",
+    };
+    const { user } = renderDialog({
+      mode: "edit",
+      task: blockedTask,
+      assignee: 张三,
+      project: null,
+    });
+    await screen.findByRole("textbox", { name: "任务标题" });
+
+    // picker 已阻塞选中,reason 也已预填
+    expect(screen.getByRole("button", { name: "已阻塞" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByLabelText("阻塞原因")).toHaveValue("等外委回函");
+
+    // 用户不动 picker,直接保存
+    expect(screen.getByRole("button", { name: "保存修改" })).not.toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "保存修改" }));
+
+    await waitFor(() =>
+      expect(updateTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 42,
+          status: "Blocked",
+          blockedReason: "等外委回函",
+        }),
+      ),
+    );
+  });
+
+  it("编辑 Waiting-on 任务：保存时透传 waitingOnPersonId,不静默清空", async () => {
+    // #91 review 反馈:tautological `null : null` 让编辑 Waiting-on 任
+    // 务时保存会把 waitingOnPersonId 抹掉。这条回归:打开已有 waitingOn
+    // PersonId,不改任何字段直接保存,IPC 入参必须保留原值。
+    const waitingOnTask: Task = {
+      ...已有任务,
+      status: "Waiting-on",
+      waitingOnPersonId: 999,
+      blockedAt: "2026-09-09 10:00:00",
+      blockedReason: "等对方回函",
+    };
+    const { user } = renderDialog({
+      mode: "edit",
+      task: waitingOnTask,
+      assignee: 张三,
+      project: null,
+    });
+    await screen.findByRole("textbox", { name: "任务标题" });
+
+    expect(screen.getByRole("button", { name: "等待中" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByLabelText("等待原因")).toHaveValue("等对方回函");
+
+    await user.click(screen.getByRole("button", { name: "保存修改" }));
+
+    await waitFor(() =>
+      expect(updateTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 42,
+          status: "Waiting-on",
+          blockedReason: "等对方回函",
+          waitingOnPersonId: 999,
+        }),
+      ),
+    );
   });
 });

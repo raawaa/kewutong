@@ -163,6 +163,98 @@ describe("task / createTask（#18）", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// status 入参（#91）
+// ---------------------------------------------------------------------------
+
+describe("task / createTask · status 入参（#91）", () => {
+  it("不传 status → 默认 Open，blocked_* 全空", () => {
+    const ctx = setupWorld();
+    try {
+      const t = Task.createTask(ctx.state, {
+        title: "审合同",
+        ownerPersonId: ctx.personId,
+      });
+      expect(t.status).toBe("Open");
+      expect(t.blockedAt).toBeNull();
+      expect(t.blockedReason).toBeNull();
+      expect(t.waitingOnPersonId).toBeNull();
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("传 status = 'In-progress' → 落 'In-progress'，blocked_* 全空", () => {
+    const ctx = setupWorld();
+    try {
+      const t = Task.createTask(ctx.state, {
+        title: "跑外委",
+        ownerPersonId: ctx.personId,
+        status: "In-progress",
+      });
+      expect(t.status).toBe("In-progress");
+      expect(t.blockedAt).toBeNull();
+      expect(t.blockedReason).toBeNull();
+      expect(t.waitingOnPersonId).toBeNull();
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("传 status = 'Blocked' + blockedReason → 落 'Blocked' + blocked_at/reason 填好", () => {
+    const ctx = setupWorld();
+    try {
+      const t = Task.createTask(ctx.state, {
+        title: "等外委回函",
+        ownerPersonId: ctx.personId,
+        status: "Blocked",
+        blockedReason: "对方未回",
+      });
+      expect(t.status).toBe("Blocked");
+      expect(t.blockedReason).toBe("对方未回");
+      expect(t.blockedAt).not.toBeNull();
+      expect(t.waitingOnPersonId).toBeNull();
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("传 status = 'Waiting-on' + blockedReason + waitingOnPersonId → 落对应值", () => {
+    const ctx = setupWorld();
+    try {
+      const t = Task.createTask(ctx.state, {
+        title: "等批示",
+        ownerPersonId: ctx.personId,
+        status: "Waiting-on",
+        blockedReason: "等分管领导",
+        waitingOnPersonId: ctx.personId,
+      });
+      expect(t.status).toBe("Waiting-on");
+      expect(t.blockedReason).toBe("等分管领导");
+      expect(t.blockedAt).not.toBeNull();
+      expect(t.waitingOnPersonId).toBe(ctx.personId);
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("传 status = 'NotAStatus' → 抛 AppError.invalid", () => {
+    const ctx = setupWorld();
+    try {
+      expect(() =>
+        // 故意绕过类型守卫——命令层必须自己兜底拒绝。
+        Task.createTask(ctx.state, {
+          title: "x",
+          ownerPersonId: ctx.personId,
+          status: "NotAStatus" as unknown as TaskStatus,
+        }),
+      ).toThrow(/任务状态不在 6 状态枚举内/);
+    } finally {
+      ctx.close();
+    }
+  });
+});
+
 describe("task / updateTask（#19）", () => {
   it("改 5 字段 + updated_at；不碰 status / blocked_*", () => {
     const ctx = setupWorld();
@@ -207,6 +299,205 @@ describe("task / updateTask（#19）", () => {
           ownerPersonId: ctx.personId,
         }),
       ).toThrow(/任务不存在或已被删除/);
+    } finally {
+      ctx.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// updateTask · status 入参（#91）
+// ---------------------------------------------------------------------------
+
+describe("task / updateTask · status 入参（#91）", () => {
+  it("不传 status → status / blocked_* 不变（继承既有默认行为）", () => {
+    const ctx = setupWorld();
+    try {
+      // 建一条 Open 任务；不传 status 调 updateTask。
+      const created = Task.createTask(ctx.state, {
+        title: "原标题",
+        ownerPersonId: ctx.personId,
+      });
+      const updated = Task.updateTask(ctx.state, {
+        id: created.id,
+        title: "新标题",
+        ownerPersonId: ctx.personId,
+      });
+      expect(updated.status).toBe("Open");
+      expect(updated.blockedAt).toBeNull();
+      expect(updated.blockedReason).toBeNull();
+      expect(updated.waitingOnPersonId).toBeNull();
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("传 status = 'In-progress' → status 变更，blocked_* 全清", () => {
+    const ctx = setupWorld();
+    try {
+      // 起手一条 Blocked（有 blocked_*）→ updateTask 切到 In-progress，
+      // 验证阻塞三列被清。
+      const created = Task.createTask(ctx.state, {
+        title: "x",
+        ownerPersonId: ctx.personId,
+        status: "Blocked",
+        blockedReason: "对方未回",
+      });
+      expect(created.status).toBe("Blocked");
+      expect(created.blockedReason).not.toBeNull();
+
+      ctx.clock.setAt("2026-09-11 09:00:00");
+      const updated = Task.updateTask(ctx.state, {
+        id: created.id,
+        title: created.title,
+        ownerPersonId: ctx.personId,
+        status: "In-progress",
+      });
+      expect(updated.status).toBe("In-progress");
+      expect(updated.blockedAt).toBeNull();
+      expect(updated.blockedReason).toBeNull();
+      expect(updated.waitingOnPersonId).toBeNull();
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("传 status = 'Blocked' + blockedReason → status 变更 + blocked_* 派生", () => {
+    const ctx = setupWorld();
+    try {
+      const created = Task.createTask(ctx.state, {
+        title: "x",
+        ownerPersonId: ctx.personId,
+      });
+      expect(created.status).toBe("Open");
+
+      ctx.clock.setAt("2026-09-12 10:00:00");
+      const updated = Task.updateTask(ctx.state, {
+        id: created.id,
+        title: created.title,
+        ownerPersonId: ctx.personId,
+        status: "Blocked",
+        blockedReason: "等外委回函",
+      });
+      expect(updated.status).toBe("Blocked");
+      expect(updated.blockedReason).toBe("等外委回函");
+      expect(updated.blockedAt).toBe("2026-09-12 10:00:00");
+    } finally {
+      ctx.close();
+    }
+  });
+
+  it("传 status = 'NotAStatus' → 抛 AppError.invalid", () => {
+    const ctx = setupWorld();
+    try {
+      const created = Task.createTask(ctx.state, {
+        title: "x",
+        ownerPersonId: ctx.personId,
+      });
+      expect(() =>
+        Task.updateTask(ctx.state, {
+          id: created.id,
+          title: created.title,
+          ownerPersonId: ctx.personId,
+          status: "NotAStatus" as unknown as TaskStatus,
+        }),
+      ).toThrow(/任务状态不在 6 状态枚举内/);
+    } finally {
+      ctx.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #82 Longest-Stuck 排序在 #91 updateTask status 路径下不回归
+// ---------------------------------------------------------------------------
+
+describe("task / updateTask · #82 Longest-Stuck 不回归（#91 回归 AC）", () => {
+  // 直接灌两条不同 blocked_at 的 Blocked 任务；经 updateTask 改其中一条
+  // 状态 → 验证 personnel.getPersonDetail 的 Blocked / Waiting-on 段排
+  // 序仍按 blocked_at ASC 走,「最久没解」优先。#82 的实现是 command 层
+  // 给齐,前端不重排；本回归盯的是 #91 给 updateTask 开了 status 入口
+  // 之后,这部分排法不被搅乱。
+  function rawInsertTask(
+    state: ReturnType<typeof freshDb>["state"],
+    fields: {
+      title: string;
+      status: TaskStatus;
+      ownerPersonId: number;
+      blockedAt?: string | null;
+      blockedReason?: string | null;
+      waitingOnPersonId?: number | null;
+      updatedAt?: string;
+    },
+  ): number {
+    const now = fields.updatedAt ?? "2026-09-10 08:00:00";
+    const info = state.db
+      .prepare(
+        `INSERT INTO task
+           (title, description, status, owner_person_id, project_id, due_date,
+            created_at, updated_at, blocked_at, blocked_reason, waiting_on_person_id,
+            recurring_template_id, scheduled_at, original_scheduled_at, rescheduled_from_id)
+         VALUES (?, NULL, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)`,
+      )
+      .run(
+        fields.title,
+        fields.status,
+        fields.ownerPersonId,
+        now,
+        fields.updatedAt ?? now,
+        fields.blockedAt ?? null,
+        fields.blockedReason ?? null,
+        fields.waitingOnPersonId ?? null,
+      );
+    return Number(info.lastInsertRowid);
+  }
+
+  it("Blocked 任务经 updateTask 改 status 后:其它任务 Longest-Stuck 排序不变", () => {
+    const ctx = setupWorld();
+    try {
+      // A 阻塞 5 天前,B 阻塞 1 天前。预期 longest-stuck 排序: A 在前。
+      const aId = rawInsertTask(ctx.state, {
+        title: "A",
+        status: "Blocked",
+        ownerPersonId: ctx.personId,
+        blockedAt: "2026-09-05 08:00:00",
+        blockedReason: "卡审批",
+      });
+      const bId = rawInsertTask(ctx.state, {
+        title: "B",
+        status: "Blocked",
+        ownerPersonId: ctx.personId,
+        blockedAt: "2026-09-09 08:00:00",
+        blockedReason: "卡审批",
+      });
+
+      // 先断言基准排序。
+      let detail = Personnel.getPersonDetail(ctx.state, { id: ctx.personId });
+      expect(detail.inFlight.blocked.map((t) => t.id)).toEqual([aId, bId]);
+
+      // 把 B 切到 In-progress（用 updateTask 走 #91 入口）。A 的
+      // blocked_at 不应被触碰,排序依然 longest-stuck first。
+      ctx.clock.setAt("2026-09-10 10:00:00");
+      const updatedB = Task.updateTask(ctx.state, {
+        id: bId,
+        title: "B",
+        ownerPersonId: ctx.personId,
+        status: "In-progress",
+      });
+      expect(updatedB.status).toBe("In-progress");
+      expect(updatedB.blockedAt).toBeNull();
+
+      detail = Personnel.getPersonDetail(ctx.state, { id: ctx.personId });
+      // B 已不再 Blocked 段,只剩 A。A 仍在原位。
+      expect(detail.inFlight.blocked.map((t) => t.id)).toEqual([aId]);
+      // blocked_at 没被 updateTask 刷新到 now（这条由 #91 derive 控
+      // 制:切出 Blocked 时三列清空,A 仍是 Blocked,理应保持原值）。
+      const aRow = ctx.state.db
+        .prepare<[number], { blocked_at: string }>(
+          "SELECT blocked_at FROM task WHERE id = ?",
+        )
+        .get(aId);
+      expect(aRow?.blocked_at).toBe("2026-09-05 08:00:00");
     } finally {
       ctx.close();
     }

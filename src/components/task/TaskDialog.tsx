@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { STATUS_STYLE } from "@/lib/taskStatusStyle";
 import { DueDateChipRow } from "./DueDateChipRow";
 import { RecurringSheet, defaultEndsDate } from "./RecurringSheet";
 import { TitleEditor } from "./TitleEditor";
@@ -17,6 +18,7 @@ import {
   type ProjectCandidate,
   type StructuredRule,
   type Task,
+  type TaskStatus,
   type UpsertRecurringTemplateArgs,
 } from "@/lib/api";
 
@@ -33,6 +35,20 @@ import {
 export type TaskDialogTarget =
   | { mode: "create"; initialAssignee?: AssigneeCandidate | null }
   | { mode: "edit"; task: Task; assignee: AssigneeCandidate | null; project: ProjectCandidate | null };
+
+/**
+ * 状态 chip 行的渲染顺序。沿用后端命令层 `TASK_STATUSES` 的字面量顺
+ * 序——在飞 4 态排前,收尾 2 态置后,与 `TaskStatusMenu` 的菜单顺序一
+ * 致,改状态时心智模型不变。
+ */
+const TASK_STATUS_ORDER: readonly TaskStatus[] = [
+  "Open",
+  "In-progress",
+  "Blocked",
+  "Waiting-on",
+  "Done",
+  "Cancelled",
+];
 
 /**
  * 全局新建 / 编辑任务弹窗（tickets #19 + #20 + #86 T6）。
@@ -86,6 +102,32 @@ export function TaskDialog({
   const [description, setDescription] = useState(editing?.description ?? "");
   const [error, setError] = useState<AppError | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // #91：状态选择控件。新建时默认 Open；编辑时跟着任务的当前值走。
+  // 进入 Blocked / Waiting-on 时命令层要求带 blockedReason（DB CHECK
+  // `length(trim(blocked_reason)) >= 1`），所以 picker 切到这两个态后
+  // 立刻展开一行原因输入——理由空着不能保存,与 `TaskStatusMenu` 行为一致。
+  // 编辑模式下预填当前任务的 reason:用户在 picker 里不点 status,保存时
+  // reason 与原值一致,DB 维持原状,符合「编辑即详情」的零回归要求。
+  const initialStatus: TaskStatus = editing?.status ?? "Open";
+  const [status, setStatus] = useState<TaskStatus>(initialStatus);
+  const [blockedReason, setBlockedReason] = useState(
+    editing?.blockedReason ?? "",
+  );
+  // #91 + ADR 0003 §D4：Waiting-on 可带 waiting_on_person_id。新建时默认
+  // null（弹窗不暴露「在等谁」选择,沿用既有 badge 菜单 `TaskStatusMenu`
+  // 的「等系统」语义,避免 picker 复杂度膨胀）；编辑时必须从任务当前值
+  // 预填,否则保存会把已有的 waitingOnPersonId 静默抹掉——这是 #91
+  // review 反馈里点名的 regression。读-only：弹窗不允许写新值,但必须
+  // 把已有值透传给 updateTask。
+  const waitingOnPersonId: number | null = editing?.waitingOnPersonId ?? null;
+  // 切过状态后,旧 reason 不一定适用于新状态,清空让用户重填。
+  function pickStatus(next: TaskStatus) {
+    if (next === status) return;
+    setStatus(next);
+    setBlockedReason("");
+  }
+  const statusRequiresReason = status === "Blocked" || status === "Waiting-on";
 
   // 周期性:tick toggle → 立即打开侧抽屉（票面 AC：「周期」toggle 直接跳
   // 侧抽屉,无内联摘要）。recurringRule 仅在「打开过抽屉并确认」后才有
@@ -147,7 +189,8 @@ export function TaskDialog({
     title.trim().length > 0 &&
     assignee != null &&
     !saving &&
-    !(recurringOn && (project == null)); // 周期任务必挂项目——子组级 + 项目级二选一(本弹窗只有项目)
+    !(recurringOn && (project == null)) && // 周期任务必挂项目——子组级 + 项目级二选一(本弹窗只有项目)
+    !(statusRequiresReason && blockedReason.trim().length === 0); // #91：Blocked / Waiting-on 必填原因
 
   /**
    * #86 T6：等 TA 字段——只在编辑模式 + `task.waitingOnPersonId != null`
@@ -162,12 +205,23 @@ export function TaskDialog({
     if (!canSave || assignee == null) return;
     setSaving(true);
     try {
+      // #91：status 始终带——pick 默认 Open 与「不动」语义由命令层兜底
+      // （createTask 不传则默认 Open；updateTask 不传则维持 #19 默认行
+      // 为）。Blocked / Waiting-on 时 reasons 必填,空着会被 createTask
+      // / updateTask 的 deriveBlockColumns 拦掉,这里不再二次校验。
+      // waitingOnPersonId：新建走 null（弹窗不暴露 picker）;编辑模式
+      // 必须把任务当前值透传给 updateTask,否则 #91 review 反馈里点名
+      // 的「保存 Waiting-on 任务静默抹掉 waiting_on_person_id」regression
+      // 会发生——dialog 不允许写新值,但绝不允许把已有的清掉。
       const fields = {
         title,
         description: description.trim() ? description.trim() : null,
         ownerPersonId: assignee.personId,
         projectId: project?.projectId ?? null,
         dueDate,
+        status,
+        blockedReason: statusRequiresReason ? blockedReason.trim() : null,
+        waitingOnPersonId: editing ? waitingOnPersonId : null,
       };
       let savedTask: Task;
       if (editing) {
@@ -311,6 +365,66 @@ export function TaskDialog({
               />
             )}
           </div>
+
+          {/*
+            #91：状态选择控件——6 状态枚举,新建默认 Open,编辑时跟着任务
+            当前值走。chip 样式与 DueDateChipRow 同形;选中态用当前状态的
+            锁色板 className(STATUS_STYLE),不靠单一 primary 色,让"进行
+            中 vs 已阻塞"在视觉上立即可分。
+          */}
+          <div className="grid grid-cols-[3.5rem_1fr] items-center gap-3">
+            <span className="text-muted-foreground text-xs">状态</span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {TASK_STATUS_ORDER.map((s) => {
+                const selected = s === status;
+                const style = STATUS_STYLE[s];
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    data-task-field="status"
+                    data-status={s}
+                    aria-pressed={selected}
+                    aria-label={style.label}
+                    disabled={saving}
+                    onClick={() => pickStatus(s)}
+                    className={`cursor-pointer rounded-full px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                      selected
+                        ? style.className
+                        : "border-border bg-background hover:bg-muted"
+                    }`}
+                  >
+                    {style.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/*
+            Blocked / Waiting-on 下要求 reason（DB CHECK）。与
+            TaskStatusMenu 同语义:原因 trim 后必填,空着不能提交。
+          */}
+          {statusRequiresReason && (
+            <div className="grid grid-cols-[3.5rem_1fr] items-start gap-3">
+              <span className="text-muted-foreground text-xs">
+                {status === "Blocked" ? "卡在何处" : "在等什么"}
+              </span>
+              <textarea
+                aria-label={status === "Blocked" ? "阻塞原因" : "等待原因"}
+                rows={2}
+                value={blockedReason}
+                disabled={saving}
+                onChange={(event) => setBlockedReason(event.target.value)}
+                placeholder={
+                  status === "Blocked"
+                    ? "写一句卡在哪一步…"
+                    : "写一句在等什么…"
+                }
+                className="border-input bg-background w-full rounded-md border px-2.5 py-1.5 text-sm"
+              />
+            </div>
+          )}
 
           <details open={Boolean(editing?.description)}>
             <summary className="text-muted-foreground cursor-pointer text-xs">
