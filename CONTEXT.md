@@ -39,3 +39,23 @@ _Avoid_: 移动
 **Instance Status（实例状态）**:
 实例在工作流中所处的位置；固定 6 个取值之一：`Open / In-progress / Blocked / Waiting-on / Done / Cancelled`。`Skipped` / `Shifted` 是触发状态变更的动作，不是状态本身。
 _Avoid_: 状态机
+
+**人员详情 Tab**:
+全局主导航 tab 之一，承载每位人员的子 tab 列表与（子 tab 全空时的）全员浏览网格。
+_Avoid_: 人员档案 tab、人员子页
+
+**人员子 Tab**:
+「人员详情」tab 内的子级 tab 条目；每条对应一位已打开的人员档案。
+_Avoid_: 详情 tab
+
+**人员详情 DTO**:
+`get_person_detail(id)` 命令返回的聚合 DTO，由主进程从现有查询组合而成（人员档案 + 6 段在飞任务 + 负责项目 + 等 TA 推动任务 + 所在子组周期模板）。
+_Avoid_: 详情接口返回
+
+**Longest-Stuck 排序**:
+Blocked / Waiting-on 状态的展示顺序按 `blocked_at` 升序，卡得最久的排最前，体现 chief 的关注优先级。`NULL` 列排到末尾。
+_Avoid_: 阻塞优先
+
+**人员浏览网格**:
+「人员详情」tab 内子 tab 全空时显示的全员卡片网格；每张卡片 = 姓名 + 子组名 + 在岗/离岗徽章 + 联系方式前 8 字，可按姓名/子组名子串即时过滤；**不**显示在飞任务数（与人员矩阵「任务负载」维度区分）。
+_Avoid_: 全员视图
