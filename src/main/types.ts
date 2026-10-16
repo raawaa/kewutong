@@ -261,14 +261,19 @@ export interface PersonnelMatrix {
  * - `PersonDetail.waitingOnTasks`：owner 是别人且 `waiting_on_person_id`
  *   指向**本人** ——「别人等的任务由本人推动」。
  */
-export interface PersonDetailInFlight {
-  open: Task[];
-  inProgress: Task[];
-  blocked: Task[];
-  waitingOn: Task[];
-  done: Task[];
-  cancelled: Task[];
-}
+/**
+ * 人员详情第 2 段「在飞任务」——按 `TaskStatus` 6 桶平铺（ticket #92 C1 P2）。
+ *
+ * **`Record<TaskStatus, Task[]>`** 让桶 key 与 `TaskStatus` 字面量同形，视图
+ * 侧不再需要 `BUCKET_KEY: Record<TaskStatus, keyof PersonDetailInFlight>`
+ * 翻译表；任何新增 status 由 `TaskStatus` 联合 + `Record` 缺键在编译期
+ * 拦下。
+ *
+ * 排序唯一权威在 [`task/inflight_sort.ts`] 的 `comparatorFor(status)`；
+ * 空桶的语义是「这个 status 下没有任务」，不是「缺字段」，所以每个
+ * status 都必有 `Task[]` 字段（即便为 `[]`）。
+ */
+export type PersonDetailInFlight = Record<TaskStatus, Task[]>;
 
 /**
  * 人员详情聚合 DTO——`get_person_detail` 命令一次返回。

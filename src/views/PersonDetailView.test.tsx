@@ -55,12 +55,12 @@ function makeDetail(overrides: Partial<PersonDetail> = {}): PersonDetail {
       createdAt: "2026-09-01 09:00:00",
     },
     inFlight: {
-      open: [],
-      inProgress: [],
-      blocked: [],
-      waitingOn: [],
-      done: [],
-      cancelled: [],
+      Open: [],
+      "In-progress": [],
+      Blocked: [],
+      "Waiting-on": [],
+      Done: [],
+      Cancelled: [],
     },
     ownedProjects: [],
     waitingOnTasks: [],
@@ -83,12 +83,12 @@ describe("PersonDetailView · header（T1）", () => {
       makeDetail({
         // 2 Open + 1 In-progress + 1 Blocked + 1 Waiting-on = 在飞 5,阻塞 2
         inFlight: {
-          open: [taskStub({ id: 1 }), taskStub({ id: 2 })],
-          inProgress: [taskStub({ id: 3 })],
-          blocked: [taskStub({ id: 4 })],
-          waitingOn: [taskStub({ id: 5 })],
-          done: [],
-          cancelled: [],
+          Open: [taskStub({ id: 1 }), taskStub({ id: 2 })],
+          "In-progress": [taskStub({ id: 3 })],
+          Blocked: [taskStub({ id: 4 })],
+          "Waiting-on": [taskStub({ id: 5 })],
+          Done: [],
+          Cancelled: [],
         },
       }),
     );
@@ -189,12 +189,12 @@ describe("PersonDetailView · header（T1）", () => {
     vi.mocked(getPersonDetail).mockResolvedValue(
       makeDetail({
         inFlight: {
-          open: [taskStub({ id: 1 })],
-          inProgress: [],
-          blocked: [],
-          waitingOn: [],
-          done: [],
-          cancelled: [],
+          Open: [taskStub({ id: 1 })],
+          "In-progress": [],
+          Blocked: [],
+          "Waiting-on": [],
+          Done: [],
+          Cancelled: [],
         },
       }),
     );
@@ -251,12 +251,12 @@ describe("PersonDetailView · 在飞任务段（T2）", () => {
     vi.mocked(getPersonDetail).mockResolvedValue(
       makeDetail({
         inFlight: {
-          open: [taskStub({ id: 1 }), taskStub({ id: 2 })],
-          inProgress: [taskStub({ id: 3, status: "In-progress" })],
-          blocked: [taskStub({ id: 4, status: "Blocked" })],
-          waitingOn: [taskStub({ id: 5, status: "Waiting-on" })],
-          done: [taskStub({ id: 6, status: "Done" })],
-          cancelled: [taskStub({ id: 7, status: "Cancelled" })],
+          Open: [taskStub({ id: 1 }), taskStub({ id: 2 })],
+          "In-progress": [taskStub({ id: 3, status: "In-progress" })],
+          Blocked: [taskStub({ id: 4, status: "Blocked" })],
+          "Waiting-on": [taskStub({ id: 5, status: "Waiting-on" })],
+          Done: [taskStub({ id: 6, status: "Done" })],
+          Cancelled: [taskStub({ id: 7, status: "Cancelled" })],
         },
       }),
     );
@@ -280,12 +280,12 @@ describe("PersonDetailView · 在飞任务段（T2）", () => {
     vi.mocked(getPersonDetail).mockResolvedValue(
       makeDetail({
         inFlight: {
-          open: sevenOpen,
-          inProgress: [],
-          blocked: [],
-          waitingOn: [],
-          done: [],
-          cancelled: [],
+        Open: sevenOpen,
+          "In-progress": [],
+          Blocked: [],
+          "Waiting-on": [],
+          Done: [],
+          Cancelled: [],
         },
       }),
     );
@@ -309,12 +309,12 @@ describe("PersonDetailView · 在飞任务段（T2）", () => {
     vi.mocked(getPersonDetail).mockResolvedValue(
       makeDetail({
         inFlight: {
-          open: sevenOpen,
-          inProgress: [],
-          blocked: [],
-          waitingOn: [],
-          done: [],
-          cancelled: [],
+        Open: sevenOpen,
+          "In-progress": [],
+          Blocked: [],
+          "Waiting-on": [],
+          Done: [],
+          Cancelled: [],
         },
       }),
     );
@@ -333,12 +333,12 @@ describe("PersonDetailView · 在飞任务段（T2）", () => {
     vi.mocked(getPersonDetail).mockResolvedValue(
       makeDetail({
         inFlight: {
-          open: [taskStub({ id: 1, title: "整理报表" })],
-          inProgress: [],
-          blocked: [],
-          waitingOn: [],
-          done: [],
-          cancelled: [],
+          Open: [taskStub({ id: 1, title: "整理报表" })],
+          "In-progress": [],
+          Blocked: [],
+          "Waiting-on": [],
+          Done: [],
+          Cancelled: [],
         },
       }),
     );
@@ -361,12 +361,12 @@ describe("PersonDetailView · 在飞任务段（T2）", () => {
     vi.mocked(getPersonDetail).mockResolvedValue(
       makeDetail({
         inFlight: {
-          open: [],
-          inProgress: [],
-          blocked: [],
-          waitingOn: [],
-          done: [],
-          cancelled: [],
+          Open: [],
+          "In-progress": [],
+          Blocked: [],
+          "Waiting-on": [],
+          Done: [],
+          Cancelled: [],
         },
       }),
     );
@@ -382,12 +382,12 @@ describe("PersonDetailView · 在飞任务段（T2）", () => {
     vi.mocked(getPersonDetail).mockResolvedValue(
       makeDetail({
         inFlight: {
-          open: [],
-          inProgress: [],
-          blocked: [],
-          waitingOn: [],
-          done: [],
-          cancelled: [],
+          Open: [],
+          "In-progress": [],
+          Blocked: [],
+          "Waiting-on": [],
+          Done: [],
+          Cancelled: [],
         },
       }),
     );
@@ -855,12 +855,12 @@ describe("PersonDetailView · 4 段空态降级文案与跳转按钮（T7 / #87�
     vi.mocked(getPersonDetail).mockResolvedValue(
       makeDetail({
         inFlight: {
-          open: [],
-          inProgress: [],
-          blocked: [],
-          waitingOn: [],
-          done: [],
-          cancelled: [],
+          Open: [],
+          "In-progress": [],
+          Blocked: [],
+          "Waiting-on": [],
+          Done: [],
+          Cancelled: [],
         },
         ownedProjects: [],
         waitingOnTasks: [],
