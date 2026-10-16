@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import { Plus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Loader2, Plus } from "lucide-react";
 import {
   getPersonDetail,
   listSubTeams,
   toAppError,
+  updatePerson,
   type AppError,
   type AssigneeCandidate,
   type Person,
@@ -37,6 +38,7 @@ export function PersonDetailView({
   onCreateTask,
   onCreateProject,
   onCreateTemplate,
+  onPersonSaved,
 }: {
   personId: number;
   /** 父层 catalog 里的子组缓存——详情视图借此展示子组徽章,不发 IPC。 */
@@ -68,6 +70,13 @@ export function PersonDetailView({
    * 调先实现「切到 tab」的最小动作——模板创建 UI 是后续 ticket。
    */
   onCreateTemplate: (subTeamId: number) => void;
+  /**
+   * T7（#87）：档案字段就地保存（姓名 / 联系方式 / 子组）成功后调用
+   * —— 父层 bump refreshToken 让本详情页 / 矩阵 / 人员 / 项目 tab
+   * 都看到最新一份数据,具体而言会让 detail 重拉 + 子组 / 人员 /
+   * 项目 catalog 一并刷。
+   */
+  onPersonSaved: () => void;
 }) {
   const [detail, setDetail] = useState<PersonDetail | null>(null);
   const [error, setError] = useState<AppError | null>(null);
@@ -142,6 +151,42 @@ export function PersonDetailView({
     detail.inFlight.blocked.length + detail.inFlight.waitingOn.length;
   const off = detail.person.deactivatedAt != null;
 
+  /**
+   * T7（#87）：档案字段就地保存（Q25 决议）。一次 updatePerson 命令要求
+   * 4 个字段齐（id / name / contact / subTeamId），所以一个字段改了也
+   * 拿到当前 person 全量 + 这一字段的新值再发。失败抛 AppError，让
+   * `InlineEditableText` / `InlineEditableSubTeam` 在行内红字 + 撤
+   * 销按钮兜住。
+   */
+  async function persistPerson(
+    updates: Partial<Pick<Person, "name" | "contact" | "subTeamId">>,
+  ): Promise<void> {
+    if (detail == null) return;
+    const current = detail.person;
+    const next = {
+      id: current.id,
+      name: updates.name ?? current.name,
+      contact: updates.contact ?? current.contact,
+      subTeamId: updates.subTeamId ?? current.subTeamId,
+    };
+    // 没真改直接返回——避免无关 updatePerson 把后端时间戳刷一遍。
+    if (
+      next.name === current.name &&
+      next.contact === current.contact &&
+      next.subTeamId === current.subTeamId
+    ) {
+      return;
+    }
+    const updated = await updatePerson(next);
+    // 本地详情也跟上,避免下一次 render 仍展示旧值——父层的 refreshToken
+    // 拉到的新 detail 也会覆盖此值,这里只是乐观更新到下一帧。
+    setDetail((prev) =>
+      prev ? { ...prev, person: updated } : prev,
+    );
+    // 通知父层 bump refreshToken,把矩阵 / 人员 / 项目视图一并刷上。
+    onPersonSaved();
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <header
@@ -151,14 +196,21 @@ export function PersonDetailView({
         }`}
       >
         <div className="flex flex-wrap items-baseline gap-2">
-          <h2 className="text-lg font-semibold">{detail.person.name}</h2>
+          <InlineEditableText
+            value={detail.person.name}
+            // 姓名走 <h2> 大字 —— 另给一组 className 维持版式。
+            displayClassName="text-lg font-semibold"
+            inputClassName="text-lg font-semibold"
+            ariaLabel="档案 · 姓名"
+            onSave={(next) => persistPerson({ name: next })}
+          />
           {subTeamName != null && (
-            <span
-              className="rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700"
-              title="所属子组"
-            >
-              {subTeamName}
-            </span>
+            <InlineEditableSubTeam
+              subTeamId={detail.person.subTeamId}
+              subTeams={allSubTeams}
+              ariaLabel="档案 · 子组"
+              onSave={(nextId) => persistPerson({ subTeamId: nextId })}
+            />
           )}
           {off && (
             <span
@@ -173,7 +225,13 @@ export function PersonDetailView({
         <dl className="text-muted-foreground grid grid-cols-1 gap-x-6 gap-y-1 text-xs sm:grid-cols-2">
           <div className="flex gap-1.5">
             <dt className="shrink-0">联系方式</dt>
-            <dd className="text-foreground truncate font-mono">{detail.person.contact}</dd>
+            <dd className="text-foreground truncate font-mono">
+              <InlineEditableText
+                value={detail.person.contact}
+                ariaLabel="档案 · 联系方式"
+                onSave={(next) => persistPerson({ contact: next })}
+              />
+            </dd>
           </div>
           <div className="flex gap-1.5">
             <dt className="shrink-0">录入时间</dt>
@@ -621,7 +679,15 @@ function WaitingOnTasksSection({
       </header>
 
       {tasks.length === 0 ? (
-        <p className="text-muted-foreground text-xs">暂时没有任务等 TA 推动</p>
+        // T7（#87）：与其它 3 段空态同型——可点按钮 → 调 onCreateTask
+        // 把当前人员预填为新任务的负责人（Q18 决议 4 条一致）。
+        <button
+          type="button"
+          onClick={onCreateTask}
+          className="text-muted-foreground hover:text-foreground block cursor-pointer text-left text-xs"
+        >
+          暂时没有任务等 TA 推动。→ 新建任务给 TA
+        </button>
       ) : (
         <ul className="flex flex-col gap-1">
           {tasks.map((task) => (
@@ -771,4 +837,317 @@ function describeBydayMask(mask: number): string {
   const names = ["一", "二", "三", "四", "五", "六", "日"] as const;
   const on = names.filter((_, i) => (mask & (1 << i)) !== 0);
   return on.length === 0 ? "—" : on.join("/");
+}
+
+// ---------------------------------------------------------------------------
+// 档案字段就地编辑（ticket #87 T7）
+//
+// 设计要点（Q25 决议）：
+// - 单击进入编辑态；onBlur 触发 save。
+// - Enter = 提交；Escape = 取消并关闭。
+// - 保存中：行内 spinner（旧值保留可见），不让输入框在保存中还能再改。
+// - 失败：行内红字 + 「撤销」按钮 —— 撤销 = 清掉错误、丢弃当前输入、
+//   把字段还原回编辑前那个值。
+// - 与段内的 `<button>` "+" 等按钮共享 cursor / focus 风格,不引入
+//   额外的视觉模态（spec #87 强调"就地"）。
+// - 父层 `value` 变化时（refreshToken 触发重拉 → detail 更新 →
+//   字段值变化），若当前不在编辑态，把 draft 同步到新值。这一层收敛
+//   了"父层同步 vs 本地输入"两条 seam。
+// ---------------------------------------------------------------------------
+
+/**
+ * 行内可编辑文本字段 —— 适用 `name` / `contact`。
+ *
+ * - 展示态：`<button>` 包值，hover 出 `bg-muted/60` 暗示可点。
+ * - 编辑态：`<input>`，autoFocus，整段同一行 + 行内错误 / 撤销。
+ *
+ * `onSave` 抛错走 `AppError` 形态 —— 失败时输入保留，`error` 区显示
+ * `toAppError(thrown).message`，撤销按钮把字段恢复到 `value`。
+ */
+function InlineEditableText({
+  value,
+  onSave,
+  ariaLabel,
+  displayClassName,
+  inputClassName,
+}: {
+  value: string;
+  /**
+   * 保存回调抛错即视为失败，**字段不会**被父层更新，留在编辑态显示错
+   * 误。本组件不主动判空 —— 命令层 `updatePerson` 已抛 AppError.
+   * invalid("姓名不能为空。") / "联系方式不能为空。" 等。
+   */
+  onSave: (next: string) => Promise<void> | void;
+  ariaLabel: string;
+  /** 展示态按钮的额外 className（用于套字号 / 字重的版式）。 */
+  displayClassName?: string;
+  /** 编辑态 input 的额外 className（用于套字号 / 字重的版式）。 */
+  inputClassName?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // 父层 value 变化时（非编辑 / 非保存中）同步 draft —— 单纯展示态
+  // 跟住最新一份数据。保存成功走 onSave → 父层 → 新 value → 这里
+  // 已不在 editing，所以再 sync 一次让 draft 与最新保持一致。
+  useEffect(() => {
+    if (!editing && !saving) setDraft(value);
+  }, [value, editing, saving]);
+
+  useEffect(() => {
+    if (editing) {
+      // 推到下一帧，等 input 挂载完再 focus —— React 18 同步 ref 即可，
+      // 但 esbuild 评测里 ref 已稳定，更直接。
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [editing]);
+
+  function startEdit() {
+    if (saving) return;
+    setDraft(value);
+    setError(null);
+    setEditing(true);
+  }
+
+  function undo() {
+    // 撤销 = 丢弃本地输入，回退到打开编辑前的值，关闭编辑态。
+    setDraft(value);
+    setError(null);
+    setEditing(false);
+  }
+
+  async function commit() {
+    if (saving) return;
+    setError(null);
+    if (draft === value) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(draft);
+      setEditing(false);
+    } catch (thrown) {
+      setError(toAppError(thrown).message);
+      // 保留 draft + editing —— 用户可以再改一次或点撤销。
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void commit();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      undo();
+    }
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        title="点击编辑"
+        onClick={startEdit}
+        className={`hover:bg-muted/60 cursor-pointer rounded px-1 text-left ${
+          displayClassName ?? "text-foreground"
+        }`}
+      >
+        {value}
+      </button>
+    );
+  }
+
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => void commit()}
+        onKeyDown={handleKeyDown}
+        disabled={saving}
+        aria-label={ariaLabel}
+        aria-invalid={error != null}
+        className={`min-w-32 rounded border bg-background px-1 outline-none ${
+          error != null
+            ? "border-destructive ring-2 ring-destructive/20"
+            : "border-input focus-visible:border-ring"
+        } ${inputClassName ?? "text-foreground"}`}
+      />
+      {saving && (
+        <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+          <Loader2 className="size-3 animate-spin" />
+          <span>保存中…</span>
+        </span>
+      )}
+      {error != null && (
+        <>
+          <span
+            className="text-destructive text-xs"
+            role="alert"
+            aria-label="保存失败原因"
+          >
+            {error}
+          </span>
+          <button
+            type="button"
+            onClick={undo}
+            className="text-foreground hover:underline text-xs"
+            aria-label="撤销编辑"
+          >
+            撤销
+          </button>
+        </>
+      )}
+    </span>
+  );
+}
+
+/**
+ * 行内可编辑子组字段 —— 适用 `subTeamId`。
+ *
+ * 展示态是一个蓝底徽章（保留原有视觉），点击 → 切到 `<select>`。
+ * onBlur 与 InlineEditableText 同语义；保存成功 → refreshToken+1
+ * → 子组 catalog 重拉 → 当前人员徽章立即刷新。
+ */
+function InlineEditableSubTeam({
+  subTeamId,
+  subTeams,
+  onSave,
+  ariaLabel,
+}: {
+  subTeamId: number;
+  /** 父层 catalog + 兜底后的子组全量；空 = 没东西可选 → 进编辑态也展示空 select。 */
+  subTeams: SubTeam[];
+  onSave: (nextId: number) => Promise<void> | void;
+  ariaLabel: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(subTeamId);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const selectRef = useRef<HTMLSelectElement | null>(null);
+  const currentName =
+    subTeams.find((t) => t.id === subTeamId)?.name ??
+    `未知子组 (id=${subTeamId})`;
+
+  useEffect(() => {
+    if (!editing && !saving) setDraft(subTeamId);
+  }, [subTeamId, editing, saving]);
+
+  useEffect(() => {
+    if (editing) selectRef.current?.focus();
+  }, [editing]);
+
+  function startEdit() {
+    if (saving) return;
+    setDraft(subTeamId);
+    setError(null);
+    setEditing(true);
+  }
+
+  function undo() {
+    setDraft(subTeamId);
+    setError(null);
+    setEditing(false);
+  }
+
+  async function commit() {
+    if (saving) return;
+    setError(null);
+    if (draft === subTeamId) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(draft);
+      setEditing(false);
+    } catch (thrown) {
+      setError(toAppError(thrown).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLSelectElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      undo();
+    }
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        title="点击编辑子组"
+        onClick={startEdit}
+        className="cursor-pointer rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+      >
+        {currentName}
+      </button>
+    );
+  }
+
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <select
+        ref={selectRef}
+        value={draft}
+        onChange={(event) => setDraft(Number(event.target.value))}
+        onBlur={() => void commit()}
+        onKeyDown={handleKeyDown}
+        disabled={saving}
+        aria-label={ariaLabel}
+        aria-invalid={error != null}
+        className={`rounded border bg-background px-1 text-xs font-medium text-blue-700 outline-none ${
+          error != null
+            ? "border-destructive ring-2 ring-destructive/20"
+            : "border-input focus-visible:border-ring"
+        }`}
+      >
+        {subTeams.map((team) => (
+          <option key={team.id} value={team.id}>
+            {team.name}
+          </option>
+        ))}
+      </select>
+      {saving && (
+        <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+          <Loader2 className="size-3 animate-spin" />
+          <span>保存中…</span>
+        </span>
+      )}
+      {error != null && (
+        <>
+          <span
+            className="text-destructive text-xs"
+            role="alert"
+            aria-label="保存失败原因"
+          >
+            {error}
+          </span>
+          <button
+            type="button"
+            onClick={undo}
+            className="text-foreground hover:underline text-xs"
+            aria-label="撤销编辑"
+          >
+            撤销
+          </button>
+        </>
+      )}
+    </span>
+  );
 }

@@ -457,3 +457,206 @@ describe("App · 托盘不可用 banner（ticket #29）", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// T7（#87）验收点 6 + 7: 键盘快捷键 ——
+//
+// - ⌘W 关当前激活子 tab,仅「人员详情」tab 焦点时生效（Q27 决议）。
+// - ⌘⇧← / ⌘⇧→ 切到上一 / 下一子 tab,同样仅「人员详情」tab 焦点时
+//   生效（Q27）。
+//
+// 这些快捷键绑定 window 的 keydown,所以需要先把对应子 tab 开起来再
+// 验。本块用 `setupCatalog` 的最小人员 catalog + 走 `打开 人名 详情`
+// 路径把两个不同 person 的子 tab 开起来,然后逐条验键盘语义。
+// ---------------------------------------------------------------------------
+
+describe("App · 人员详情子 tab 快捷键（T7 / #87）", () => {
+  /**
+   * 与 `App · openPerson + 子 tab 关闭` 块共用同一份 catalog 装配——
+   * 矩阵点开两位人员的子 tab,让「人员详情」tab 上有两条激活子 tab
+   * 供 ⌘⇧←/⌘⇧→ 测试切换使用。
+   */
+  async function openTwoPersonTabs(
+    user: ReturnType<typeof userEvent.setup>,
+  ): Promise<void> {
+    vi.mocked(listPeople).mockResolvedValue([
+      {
+        id: 1,
+        name: "张三",
+        subTeamId: 1,
+        contact: "13800000001",
+        deactivatedAt: null,
+        createdAt: "2026-09-01 09:00:00",
+      },
+      {
+        id: 2,
+        name: "李四",
+        subTeamId: 1,
+        contact: "13800000002",
+        deactivatedAt: null,
+        createdAt: "2026-09-01 09:00:00",
+      },
+    ]);
+    vi.mocked(listSubTeams).mockResolvedValue([
+      {
+        id: 1,
+        name: "暖通",
+        description: null,
+        sortOrder: 0,
+        createdAt: "2026-09-01 09:00:00",
+      },
+    ]);
+    vi.mocked(personnelMatrix).mockResolvedValue({
+      segments: [
+        {
+          subTeam: {
+            id: 1,
+            name: "暖通",
+            description: null,
+            sortOrder: 0,
+            createdAt: "2026-09-01 09:00:00",
+          },
+          people: [
+            {
+              person: {
+                id: 1,
+                name: "张三",
+                subTeamId: 1,
+                contact: "13800000001",
+                deactivatedAt: null,
+                createdAt: "2026-09-01 09:00:00",
+              },
+              inFlightCount: 0,
+              blockedCount: 0,
+              tasks: [],
+            },
+            {
+              person: {
+                id: 2,
+                name: "李四",
+                subTeamId: 1,
+                contact: "13800000002",
+                deactivatedAt: null,
+                createdAt: "2026-09-01 09:00:00",
+              },
+              inFlightCount: 0,
+              blockedCount: 0,
+              tasks: [],
+            },
+          ],
+        },
+      ],
+    });
+    vi.mocked(getPersonDetail).mockImplementation(async ({ id }) => ({
+      person: {
+        id,
+        name: id === 1 ? "张三" : "李四",
+        subTeamId: 1,
+        contact: id === 1 ? "13800000001" : "13800000002",
+        deactivatedAt: null,
+        createdAt: "2026-09-01 09:00:00",
+      },
+      inFlight: {
+        open: [],
+        inProgress: [],
+        blocked: [],
+        waitingOn: [],
+        done: [],
+        cancelled: [],
+      },
+      ownedProjects: [],
+      waitingOnTasks: [],
+      subTeamTemplates: [],
+    }));
+
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "人员矩阵" }));
+    await user.click(
+      await screen.findByRole("button", { name: /打开 张三 的详情/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "人员矩阵" }));
+    await user.click(
+      await screen.findByRole("button", { name: /打开 李四 的详情/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "人员详情" }));
+    await screen.findByRole("tab", { name: /张三/ });
+    await screen.findByRole("tab", { name: /李四/ });
+  }
+
+  it("⌘W 在「人员详情」tab 焦点时关当前激活子 tab", async () => {
+    const user = userEvent.setup();
+    await openTwoPersonTabs(user);
+
+    // 默认激活是后开的 李四 —— 关李四
+    expect(screen.getByRole("tab", { name: /李四/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    await user.keyboard("{Meta>}w{/Meta}");
+
+    // 李四子 tab 没了,张三自动激活（左邻居收敛）
+    expect(screen.getAllByRole("tab")).toHaveLength(1);
+    expect(screen.getByRole("tab", { name: /张三/ })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: /李四/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("⌘W 在非「人员详情」tab 上不拦截（让 Electron 默认关窗口走默认路径）", async () => {
+    const user = userEvent.setup();
+    await openTwoPersonTabs(user);
+
+    // 切到「今日 / 本周」tab —— 此时 ⌘W 不该影响子 tab
+    await user.click(screen.getByRole("button", { name: "今日 / 本周" }));
+
+    // 切回「人员详情」tab 看子 tab 数量（应该还是 2,⌘W 没有关）
+    // —— 实际快捷键按下时已生效,这里依赖"快捷键被忽略"+ 然后
+    // 切回 tab 还能看到两条子 tab 的事实。
+    await user.keyboard("{Meta>}w{/Meta}");
+    await user.click(screen.getByRole("button", { name: "人员详情" }));
+
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+  });
+
+  it("⌘⇧→ 切到下一子 tab;⌘⇧← 切到上一子 tab", async () => {
+    const user = userEvent.setup();
+    await openTwoPersonTabs(user);
+
+    // 开 tab 后默认激活是 李四(后开),张三 + 李四 → 切 ⌘⇧← 应到张三
+    expect(screen.getByRole("tab", { name: /李四/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    await user.keyboard("{Meta>}{Shift>}{ArrowLeft}{/Shift}{/Meta}");
+    expect(screen.getByRole("tab", { name: /张三/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    // ⌘⇧→ 回到李四
+    await user.keyboard("{Meta>}{Shift>}{ArrowRight}{/Shift}{/Meta}");
+    expect(screen.getByRole("tab", { name: /李四/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("⌘⇧← 在非「人员详情」tab 上不拦截", async () => {
+    const user = userEvent.setup();
+    await openTwoPersonTabs(user);
+
+    // 默认激活李四 → 先记下激活态。切到「今日 / 本周」 → 按 ⌘⇧← →
+    // 切回「人员详情」,激活态仍应是李四(快捷键未生效)。
+    await user.click(screen.getByRole("button", { name: "今日 / 本周" }));
+    await user.keyboard("{Meta>}{Shift>}{ArrowLeft}{/Shift}{/Meta}");
+    await user.click(screen.getByRole("button", { name: "人员详情" }));
+
+    expect(screen.getByRole("tab", { name: /李四/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+});

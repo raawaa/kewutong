@@ -128,26 +128,13 @@ export default function App() {
   const onSampleCleared = useCallback(() => {
     setRefreshToken((token) => token + 1);
   }, []);
-
-  // 顶栏「新建任务」按钮 + ⌘N / ⌘K 都在 window 层——保证在任意视图
-  // 都能唤起。
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      const mod = event.metaKey || event.ctrlKey;
-      if (mod && event.key.toLowerCase() === "n") {
-        event.preventDefault();
-        openCreate();
-        return;
-      }
-      if (mod && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setPaletteOpen(true);
-        return;
-      }
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [openCreate]);
+  // T7（#87）：人员详情里档案字段就地保存后，刷新全 app 缓存（人员
+  // / 子组 / 项目 catalog 都要看到最新一份），由父层 `refreshToken` 节
+  // 拍统一驱动——给 PersonDetailTabsView 透给 PersonDetailView 在
+  // updatePerson 成功后调。
+  const onPersonSaved = useCallback(() => {
+    setRefreshToken((token) => token + 1);
+  }, []);
 
   // 启动 + 任一 tab 切换 + 任务保存后,都刷一次 catalog——各视图自身
   // 也用 refreshToken 触发,这里走同一份节奏避免漂移。
@@ -345,6 +332,70 @@ export default function App() {
     });
   }, []);
 
+  // 顶栏「新建任务」按钮 + ⌘N / ⌘K 都在 window 层——保证在任意视图
+  // 都能唤起。
+  // T7（#87）：人员详情专属快捷键 ——
+  // - ⌘W 关当前激活子 tab
+  // - ⌘⇧← / ⌘⇧→ 切到上一 / 下一子 tab
+  // 按 Q27 决议只对「人员详情」tab 生效；其他 tab 不拦截 ⌘W,留给
+  // Electron 默认关窗口的手势。
+  // 本 effect 放在 closePersonTab 之后定义——deps 里要拿到它。
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const mod = event.metaKey || event.ctrlKey;
+      if (mod && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        openCreate();
+        return;
+      }
+      if (mod && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen(true);
+        return;
+      }
+      // 后续 4 条仅「人员详情」tab 生效 —— tabs 不命中时直接 return,
+      // 不 preventDefault,让 Electron / 浏览器默认手势（关窗口、向
+      // 后翻页等）继续走。
+      if (tab !== "personDetail") return;
+
+      // ⌘W：关闭当前激活子 tab。无激活子 tab 时也 preventDefault —— 用
+      // 户在「人员详情」tab 按 ⌘W 的意图就是"关这条",不该被透成关窗。
+      if (mod && !event.shiftKey && event.key.toLowerCase() === "w") {
+        event.preventDefault();
+        if (activePersonId != null) {
+          closePersonTab(activePersonId);
+        }
+        return;
+      }
+
+      // ⌘⇧← / ⌘⇧→：上一/下一子 tab（Q27）。1 条子 tab 时无意义,但仍
+      // 消费事件避免被浏览器读作"光标到输入框头部"。
+      if (
+        mod && event.shiftKey &&
+        (event.key === "ArrowLeft" || event.key === "ArrowRight")
+      ) {
+        if (openPersonTabs.length > 1 && activePersonId != null) {
+          event.preventDefault();
+          const idx = openPersonTabs.findIndex((t) => t.personId === activePersonId);
+          if (idx >= 0) {
+            const isLeft = event.key === "ArrowLeft";
+            const len = openPersonTabs.length;
+            const nextIdx = isLeft
+              ? idx === 0 ? len - 1 : idx - 1
+              : idx === len - 1 ? 0 : idx + 1;
+            const next = openPersonTabs[nextIdx];
+            if (next) setActivePersonId(next.personId);
+          }
+        } else {
+          event.preventDefault();
+        }
+        return;
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [openCreate, tab, openPersonTabs, activePersonId, closePersonTab]);
+
   // 兜底：openPersonTabs / activePersonId 任意一方变化后,若
   // activePersonId 仍不在 openPersonTabs 中（外部路径触发,例如
   // 切到其他主 tab 后又回来时状态错位）——回退到左邻居 / 右邻居 /
@@ -500,6 +551,9 @@ export default function App() {
           onCreateProject={(person) => openCreateProject(person)}
           onCreateTemplate={(subTeamId) => openCreateTemplate(subTeamId)}
           onOpenPerson={openPerson}
+          // T7（#87）：档案字段就地保存成功后调 —— 父层 bump refreshToken
+          // 让本详情页 / 矩阵 / 人员 / 项目 tab 都看到最新一份数据。
+          onPersonSaved={onPersonSaved}
         />
       ) : (
         <HolidayCalendarView refreshToken={refreshToken} />

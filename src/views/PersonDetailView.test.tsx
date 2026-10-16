@@ -12,12 +12,13 @@
  * @vitest-environment jsdom
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PersonDetailView } from "./PersonDetailView";
 import {
   getPersonDetail,
   listSubTeams,
+  updatePerson,
   type Person,
   type PersonDetail,
   type Project,
@@ -30,6 +31,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   getPersonDetail: vi.fn(),
   listSubTeams: vi.fn(),
+  updatePerson: vi.fn(),
 }));
 
 function makeSubTeam(id: number, name: string): SubTeam {
@@ -70,6 +72,7 @@ function makeDetail(overrides: Partial<PersonDetail> = {}): PersonDetail {
 beforeEach(() => {
   vi.mocked(getPersonDetail).mockReset();
   vi.mocked(listSubTeams).mockReset();
+  vi.mocked(updatePerson).mockReset();
   // 默认 catalog 里已有张三所在的子组,不走 fallback IPC。
   vi.mocked(listSubTeams).mockResolvedValue([makeSubTeam(1, "一组")]);
 });
@@ -576,6 +579,320 @@ describe("PersonDetailView · 段 3 / 段 4 / 段 5（T3）", () => {
 });
 
 // ---------------------------------------------------------------------------
+// T7（ticket #87）：交互打磨 ——
+//
+// 1. 档案字段姓名 / 联系方式 / 子组 就地编辑：
+//    - 单击进入编辑态；onBlur 触发保存。
+//    - 保存中行内 spinner；成功→ 显示新值 + exit 编辑态。
+//    - 失败→ 行内红字 + 撤销 按钮；点 撤销 还原到编辑前的值。
+// 2. 详情页**不**暴露离岗 / 复岗 / 删除按钮 —— 那些手势只在「人员」
+//    tab（管理视角）暴露（#87 验收点 2）。
+// 3. 「等待 TA 推动」段空态是按钮（Q18 决议 4 条一致）—— 与其它
+//    3 段空态同型（点击 → 调 onCreateTask）。
+// ---------------------------------------------------------------------------
+
+describe("PersonDetailView · 档案字段就地编辑（T7 / #87）", () => {
+  it("姓名/联系方式/子组 三字段在 header 渲染为可点击按钮", async () => {
+    vi.mocked(getPersonDetail).mockResolvedValue(makeDetail());
+    render(<DetailHarness />);
+
+    // 3 个 InlineEditable 渲染态 = button
+    const nameBtn = await screen.findByRole("button", { name: "档案 · 姓名" });
+    const contactBtn = await screen.findByRole("button", { name: "档案 · 联系方式" });
+    const subTeamBtn = await screen.findByRole("button", { name: "档案 · 子组" });
+    expect(nameBtn).toHaveTextContent("张三");
+    expect(contactBtn).toHaveTextContent("13800000000");
+    expect(subTeamBtn).toHaveTextContent("一组");
+  });
+
+  it("姓名单击进入编辑态，blur 后自动保存并显示新值", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getPersonDetail).mockResolvedValue(makeDetail());
+    vi.mocked(updatePerson).mockResolvedValue({
+      ...makeDetail().person,
+      id: 1,
+      name: "张三改",
+      subTeamId: 1,
+      contact: "13800000000",
+      deactivatedAt: null,
+      createdAt: "2026-09-01 09:00:00",
+    });
+
+    render(<DetailHarness />);
+
+    // 单击切到编辑态
+    await user.click(await screen.findByRole("button", { name: "档案 · 姓名" }));
+    const input = await screen.findByRole("textbox", { name: "档案 · 姓名" });
+    expect(input).toHaveFocus();
+
+    // 清空 + 输入新值 + 失焦触发保存
+    await user.clear(input);
+    await user.type(input, "张三改");
+    await user.tab();
+
+    // updatePerson 被调，参数含新的 name
+    await waitFor(() => expect(updatePerson).toHaveBeenCalledTimes(1));
+    const arg = vi.mocked(updatePerson).mock.calls[0]?.[0];
+    expect(arg?.name).toBe("张三改");
+    expect(arg?.contact).toBe("13800000000"); // 未改字段保留
+    expect(arg?.subTeamId).toBe(1);
+
+    // 保存成功后,字段切回展示态 + 展示新值
+    expect(
+      await screen.findByRole("button", { name: "档案 · 姓名" }),
+    ).toHaveTextContent("张三改");
+  });
+
+  it("姓名 Enter 提交，Escape 取消", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getPersonDetail).mockResolvedValue(makeDetail());
+    vi.mocked(updatePerson).mockResolvedValue(makeDetail().person);
+
+    render(<DetailHarness />);
+
+    await user.click(await screen.findByRole("button", { name: "档案 · 姓名" }));
+    const input = await screen.findByRole("textbox", { name: "档案 · 姓名" });
+    await user.clear(input);
+    await user.type(input, "李四改");
+    await user.keyboard("{Escape}");
+
+    // Escape = 取消 → 不应该调 updatePerson
+    expect(updatePerson).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "档案 · 姓名" }),
+    ).toHaveTextContent("张三");
+  });
+
+  it("联系方式保存成功走 updatePerson + onPersonSaved", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getPersonDetail).mockResolvedValue(makeDetail());
+    vi.mocked(updatePerson).mockResolvedValue({
+      ...makeDetail().person,
+      id: 1,
+      name: "张三",
+      subTeamId: 1,
+      contact: "13900000000",
+      deactivatedAt: null,
+      createdAt: "2026-09-01 09:00:00",
+    });
+    const onPersonSaved = vi.fn();
+
+    render(<DetailHarness onPersonSaved={onPersonSaved} />);
+
+    await user.click(await screen.findByRole("button", { name: "档案 · 联系方式" }));
+    const input = await screen.findByRole("textbox", { name: "档案 · 联系方式" });
+    await user.clear(input);
+    await user.type(input, "13900000000");
+    await user.tab();
+
+    await waitFor(() => expect(updatePerson).toHaveBeenCalledTimes(1));
+    const arg = vi.mocked(updatePerson).mock.calls[0]?.[0];
+    expect(arg?.contact).toBe("13900000000");
+
+    // T7: 父层 onPersonSaved 在 updatePerson 成功后被调
+    await waitFor(() => expect(onPersonSaved).toHaveBeenCalledTimes(1));
+  });
+
+  it("子组切换 → 保存 subTeamId", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getPersonDetail).mockResolvedValue(
+      makeDetail({ person: { ...makeDetail().person, subTeamId: 1 } }),
+    );
+    vi.mocked(updatePerson).mockResolvedValue({
+      ...makeDetail().person,
+      id: 1,
+      name: "张三",
+      subTeamId: 2,
+      contact: "13800000000",
+      deactivatedAt: null,
+      createdAt: "2026-09-01 09:00:00",
+    });
+
+    render(
+      <DetailHarness
+        // 两份子组让 <select> 同时提供当前组与目标组。
+        subTeams={[makeSubTeam(1, "一组"), makeSubTeam(2, "二组")]}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "档案 · 子组" }));
+    const select = (await screen.findByRole("combobox", {
+      name: "档案 · 子组",
+    })) as HTMLSelectElement;
+    await user.selectOptions(select, "2");
+    fireEvent.blur(select);
+
+    await waitFor(() => expect(updatePerson).toHaveBeenCalledTimes(1));
+    const arg = vi.mocked(updatePerson).mock.calls[0]?.[0];
+    expect(arg?.subTeamId).toBe(2);
+    // name / contact 未改保留
+    expect(arg?.name).toBe("张三");
+    expect(arg?.contact).toBe("13800000000");
+
+    // 保存成功后展示新子组名
+    expect(
+      await screen.findByRole("button", { name: "档案 · 子组" }),
+    ).toHaveTextContent("二组");
+  });
+
+  it("保存失败：行内红字 + 撤销按钮（撤销还原并退出编辑）", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getPersonDetail).mockResolvedValue(makeDetail());
+    vi.mocked(updatePerson).mockRejectedValue({
+      code: "INVALID_ARGUMENT",
+      message: "同子组内已存在同名人员。",
+      detail: null,
+    });
+
+    render(<DetailHarness />);
+
+    await user.click(await screen.findByRole("button", { name: "档案 · 姓名" }));
+    const input = await screen.findByRole("textbox", { name: "档案 · 姓名" });
+    await user.clear(input);
+    await user.type(input, "张三已存在");
+    await user.tab();
+
+    // 错误消息 + 撤销按钮 出现
+    expect(
+      await screen.findByRole("alert"),
+    ).toHaveTextContent("同子组内已存在同名人员。");
+    const undoBtn = screen.getByRole("button", { name: "撤销编辑" });
+    expect(undoBtn).toBeInTheDocument();
+
+    // 点撤销 → 还原原值 + 退出编辑态
+    await user.click(undoBtn);
+
+    expect(
+      screen.getByRole("button", { name: "档案 · 姓名" }),
+    ).toHaveTextContent("张三");
+    // 编辑态退场，input 没了
+    expect(
+      screen.queryByRole("textbox", { name: "档案 · 姓名" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("save 失败时本地 detail 不被更新", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getPersonDetail).mockResolvedValue(makeDetail());
+    vi.mocked(updatePerson).mockRejectedValue({
+      code: "INVALID_ARGUMENT",
+      message: "联系方式不能为空。",
+      detail: null,
+    });
+
+    render(<DetailHarness />);
+
+    await user.click(await screen.findByRole("button", { name: "档案 · 联系方式" }));
+    const input = await screen.findByRole("textbox", { name: "档案 · 联系方式" });
+    await user.clear(input);
+    await user.tab();
+
+    // 错误显示
+    expect(
+      await screen.findByRole("alert"),
+    ).toHaveTextContent("联系方式不能为空。");
+
+    // updatePerson 被调用（命令层校验后抛错）
+    expect(updatePerson).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T7（#87）验收点 2: 详情页**不**暴露离岗 / 复岗 / 删除按钮 ——
+//
+// 那些"破坏性 + 状态变更"手势只去「人员」管理 tab（tickets #17 /
+// #19 / #22）操作。详情页是只读 + 字段级编辑视角。这条回归锁定语义。
+// ---------------------------------------------------------------------------
+
+describe("PersonDetailView · 不暴露离岗/复岗/删除（T7 / #87）", () => {
+  it("header 不渲染『离岗』『复岗』『删除』按钮", async () => {
+    vi.mocked(getPersonDetail).mockResolvedValue(
+      makeDetail({
+        person: {
+          id: 2,
+          name: "李四",
+          subTeamId: 1,
+          contact: "111",
+          deactivatedAt: "2026-08-01 09:00:00",
+          createdAt: "2026-07-01 09:00:00",
+        },
+      }),
+    );
+
+    render(<DetailHarness />);
+
+    await screen.findByText("李四");
+
+    // 即便人员已离岗,详情页也不暴露"复岗 / 离岗 / 删除" —— 那些
+    // 手势都在「人员」tab。
+    expect(
+      screen.queryByRole("button", { name: /离岗/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /复岗/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /删除/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /编辑/ }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T7（#87）验收点 5: 4 段空数据降级文案与跳转按钮（Q18 决议 4 条）——
+//
+// 「等待 TA 推动」原本只渲染 <p> 静态文案,T7 改造成可点按钮（与
+// 其余 3 段空态同型）。点按钮 → 调 onCreateTask 走"新建任务给
+// TA"链路。
+// ---------------------------------------------------------------------------
+
+describe("PersonDetailView · 4 段空态降级文案与跳转按钮（T7 / #87）", () => {
+  it("「等待 TA 推动」空态是按钮（不是静态文本）,点击调 onCreateTask", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getPersonDetail).mockResolvedValue(
+      makeDetail({
+        inFlight: {
+          open: [],
+          inProgress: [],
+          blocked: [],
+          waitingOn: [],
+          done: [],
+          cancelled: [],
+        },
+        ownedProjects: [],
+        waitingOnTasks: [],
+        subTeamTemplates: [],
+      }),
+    );
+    const onCreateTask = vi.fn();
+
+    render(<DetailHarness onCreateTask={onCreateTask} />);
+
+    // 4 段空态各有一条可点按钮 + 文案
+    const waitingBtn = await screen.findByRole("button", {
+      name: /暂时没有任务等 TA 推动/,
+    });
+    const projectsBtn = await screen.findByRole("button", {
+      name: /暂无负责项目/,
+    });
+    const templatesBtn = await screen.findByRole("button", {
+      name: /所在子组暂无周期模板/,
+    });
+    // 在飞 6 段也走同一种 "→ 新建任务给 TA" 链路（已有 T2 测试
+    // 覆盖),这里只断言 等待 TA + 项目 + 周期模板 三段。
+    expect(waitingBtn).toBeInTheDocument();
+    expect(projectsBtn).toBeInTheDocument();
+    expect(templatesBtn).toBeInTheDocument();
+
+    await user.click(waitingBtn);
+    expect(onCreateTask).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(onCreateTask).mock.calls[0]?.[0]?.id).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 助手
 // ---------------------------------------------------------------------------
 
@@ -685,6 +1002,8 @@ function DetailHarness({
   onCreateProject,
   onCreateTemplate,
   refreshToken = 0,
+  onPersonSaved,
+  subTeams,
 }: {
   onOpenTask?: (
     task: Task,
@@ -694,16 +1013,27 @@ function DetailHarness({
   onCreateProject?: (person: Person) => void;
   onCreateTemplate?: (subTeamId: number) => void;
   refreshToken?: number;
+  /**
+   * T7（#87）：档案字段就地保存成功后父层 bump refreshToken 的回调。
+   * 默认空函数，避免每个用例各自挂一份 vi.fn()。
+   */
+  onPersonSaved?: () => void;
+  /**
+   * T7（#87）：子组切换测试用的子组 catalog（默认一组）。子组切换测
+   * 试用例需要塞两份子组让 <select> 同时有当前组与目标组。
+   */
+  subTeams?: SubTeam[];
 }) {
   return (
     <PersonDetailView
       personId={1}
-      subTeams={[makeSubTeam(1, "一组")]}
+      subTeams={subTeams ?? [makeSubTeam(1, "一组")]}
       refreshToken={refreshToken}
       onOpenTask={onOpenTask ?? vi.fn()}
       onCreateTask={onCreateTask ?? vi.fn()}
       onCreateProject={onCreateProject ?? vi.fn()}
       onCreateTemplate={onCreateTemplate ?? vi.fn()}
+      onPersonSaved={onPersonSaved ?? vi.fn()}
     />
   );
 }

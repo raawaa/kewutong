@@ -139,13 +139,16 @@ describe("PersonDetailTabsView · 渲染", () => {
       />,
     );
 
-    // 等详情加载完(挂载后异步 IPC)。active=id=1 → 详情页标题显示"人员 1"
-    // (PersonDetailView 内部从 getPersonDetail 取 name,与子 tab 标题的
-    // catalog 名"张三1"不同——生产里两者一致,测试里 mock 拆分演示这个差异)
+    // 等详情加载完(挂载后异步 IPC)。active=id=1 → 详情页档案字段按
+    // 钮显示"人员 1"(PersonDetailView 内部从 getPersonDetail 取
+    // name,与子 tab 标题的 catalog 名"张三1"不同——生产里两者一致,
+    // 测试里 mock 拆分演示这个差异)
+    // T7（#87）：姓名变成行内可编辑 `<button aria-label="档案 · 姓名">`,
+    // 不再是 `<h2>` heading。
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: "人员 1" }),
-      ).toBeInTheDocument(),
+        screen.getByRole("button", { name: "档案 · 姓名" }),
+      ).toHaveTextContent("人员 1"),
     );
 
     // 两个子 tab 都渲染 —— 子 tab 标题来自父层 catalog,默认 "张三N"
@@ -192,7 +195,9 @@ describe("PersonDetailTabsView · 渲染", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "李四" })).toBeInTheDocument(),
+      expect(
+        screen.getByRole("button", { name: "档案 · 姓名" }),
+      ).toHaveTextContent("李四"),
     );
 
     expect(screen.getByText("（离岗）")).toBeInTheDocument();
@@ -393,9 +398,11 @@ describe("PersonDetailTabsView · 浏览网格（#85）", () => {
       />,
     );
 
-    // 激活的子 tab 渲染了 PersonDetailView —— 等头部 "张三" h2 出来
+    // 激活的子 tab 渲染了 PersonDetailView —— 等头部 "人员 1" 档案字段按钮出来
     await waitFor(() =>
-      expect(screen.getByRole("heading", { level: 2, name: "人员 1" })).toBeInTheDocument(),
+      expect(
+        screen.getByRole("button", { name: "档案 · 姓名" }),
+      ).toHaveTextContent("人员 1"),
     );
     // 此刻不应有搜索框（列表非空 → 子 tab 内容区在,网格不显示）
     expect(
@@ -816,9 +823,12 @@ describe("PersonDetailTabsView · 内容区 DOM 保留（Q23）", () => {
     // 乙详情此时也加载了(挂载在非激活 panel,只 hidden)。
     // 用 `hidden: true` 才能查到非激活 panel 内的角色 —— testing-library
     // 默认隐藏元素不计入 a11y tree,与浏览器行为一致。
+    // T7（#87）：档案姓名是 `<button aria-label="档案 · 姓名">`，不
+    // 再是 `<h2>`，用该 aria-label 锁定两个 panel 内各自的姓名按钮。
     expect(
-      screen.getByRole("heading", { level: 2, name: "乙", hidden: true }),
-    ).toBeInTheDocument();
+      screen.getAllByRole("button", { name: "档案 · 姓名", hidden: true })
+        .find((b) => b.textContent === "乙"),
+    ).toBeDefined();
 
     // 切换激活到 id=2
     rerender(
@@ -830,8 +840,11 @@ describe("PersonDetailTabsView · 内容区 DOM 保留（Q23）", () => {
 
     // 甲-Open-1 任务条目仍在 DOM 里(只是 hidden)
     expect(screen.getByText("甲-Open-1")).toBeInTheDocument();
-    // 乙详情可见
-    expect(screen.getByRole("heading", { level: 2, name: "乙" })).toBeVisible();
+    // 乙详情可见 —— 切换激活后,乙的姓名档案按钮 (T7 InlineEditableText)
+    // 落到可见列表里。
+    expect(
+      screen.getByRole("button", { name: "档案 · 姓名" }),
+    ).toHaveTextContent("乙");
     // 甲详情 panel 仍在 DOM,只是 hidden
     const panel1 = document.getElementById("person-tab-panel-1");
     const panel2 = document.getElementById("person-tab-panel-2");
@@ -903,6 +916,11 @@ interface HarnessProps {
   onCreateProject?: (person: Person) => void;
   onCreateTemplate?: (subTeamId: number) => void;
   onOpenPerson?: (personId: number) => void;
+  /**
+   * T7（#87）：档案字段就地保存后父层 bump refreshToken 的回调，默认
+   * 空函数，避免每个用例各挂一份。
+   */
+  onPersonSaved?: () => void;
 }
 
 function Harness(props: HarnessProps) {
@@ -931,6 +949,7 @@ function Harness(props: HarnessProps) {
       onCreateProject={props.onCreateProject ?? vi.fn()}
       onCreateTemplate={props.onCreateTemplate ?? vi.fn()}
       onOpenPerson={props.onOpenPerson ?? vi.fn()}
+      onPersonSaved={props.onPersonSaved ?? vi.fn()}
     />
   );
 }

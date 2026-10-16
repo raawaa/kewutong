@@ -53,6 +53,7 @@ export function PersonDetailTabsView({
   onCreateProject,
   onCreateTemplate,
   onOpenPerson,
+  onPersonSaved,
 }: {
   /** 已开子 tab 列表 —— 物理顺序即子 tab 显示顺序（spec #80 §Impl #11）。 */
   openPersonTabs: ReadonlyArray<OpenPersonTab>;
@@ -89,6 +90,11 @@ export function PersonDetailTabsView({
    * 同一 personId 重复 add → 聚焦已开，本回调仍正常调用，App 层负责去重。
    */
   onOpenPerson: (personId: number) => void;
+  /**
+   * T7（#87）：档案字段就地保存成功后调 —— 父层 bump refreshToken 让本
+   * 详情页 / 矩阵 / 人员 / 项目 tab 都看到最新一份数据。
+   */
+  onPersonSaved: () => void;
 }) {
   const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
 
@@ -132,6 +138,7 @@ export function PersonDetailTabsView({
             onCreateTask={onCreateTask}
             onCreateProject={onCreateProject}
             onCreateTemplate={onCreateTemplate}
+            onPersonSaved={onPersonSaved}
           />
         </>
       )}
@@ -531,6 +538,7 @@ function PersonDetailContentArea({
   onCreateTask,
   onCreateProject,
   onCreateTemplate,
+  onPersonSaved,
 }: {
   openPersonTabs: ReadonlyArray<OpenPersonTab>;
   activePersonId: number | null;
@@ -540,6 +548,7 @@ function PersonDetailContentArea({
   onCreateTask: (person: Person) => void;
   onCreateProject: (person: Person) => void;
   onCreateTemplate: (subTeamId: number) => void;
+  onPersonSaved: () => void;
 }) {
   return (
     <div className="flex flex-col">
@@ -566,6 +575,7 @@ function PersonDetailContentArea({
               onCreateTask={onCreateTask}
               onCreateProject={onCreateProject}
               onCreateTemplate={onCreateTemplate}
+              onPersonSaved={onPersonSaved}
             />
           </div>
         );
