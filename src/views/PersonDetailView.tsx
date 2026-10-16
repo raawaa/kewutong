@@ -135,12 +135,12 @@ export function PersonDetailView({
   );
 
   const inFlightCount =
-    detail.inFlight.open.length +
-    detail.inFlight.inProgress.length +
-    detail.inFlight.blocked.length +
-    detail.inFlight.waitingOn.length;
+    detail.inFlight.Open.length +
+    detail.inFlight["In-progress"].length +
+    detail.inFlight.Blocked.length +
+    detail.inFlight["Waiting-on"].length;
   const blockedCount =
-    detail.inFlight.blocked.length + detail.inFlight.waitingOn.length;
+    detail.inFlight.Blocked.length + detail.inFlight["Waiting-on"].length;
   const off = detail.person.deactivatedAt != null;
 
   /**
@@ -301,22 +301,6 @@ const SEGMENT_ORDER: TaskStatus[] = [
 ];
 
 /**
- * 各状态桶在本视图内的快捷访问名——与 [`STATUS_STYLE`] 的键同形。
- *
- * `PersonDetailInFlight` 的字段是 6 个具名数组（`open` / `inProgress`
- * / ...）,而 [`STATUS_STYLE`] 用 `TaskStatus` 字面量做键。这里建一张
- * 「状态 → 桶名」表,避免 `inFlight["In-progress"]` 这种 magic string。
- */
-const BUCKET_KEY: Record<TaskStatus, keyof PersonDetailInFlight> = {
-  Open: "open",
-  "In-progress": "inProgress",
-  Blocked: "blocked",
-  "Waiting-on": "waitingOn",
-  Done: "done",
-  Cancelled: "cancelled",
-};
-
-/**
  * 在飞任务 6 状态分段（ticket #82 T2）。
  *
  * 设计要点：
@@ -351,7 +335,7 @@ function InFlightSection({
       <h3 className="text-sm font-semibold">在飞任务 · 按状态</h3>
       <div className="flex flex-col gap-3">
         {SEGMENT_ORDER.map((status) => {
-          const bucket = inFlight[BUCKET_KEY[status]];
+          const bucket = inFlight[status];
           return (
             <SegmentBlock
               key={status}

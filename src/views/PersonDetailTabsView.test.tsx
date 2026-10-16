@@ -59,12 +59,12 @@ function makeDetail(overrides: Partial<PersonDetail> = {}): PersonDetail {
       createdAt: "2026-09-01 09:00:00",
     },
     inFlight: {
-      open: [],
-      inProgress: [],
-      blocked: [],
-      waitingOn: [],
-      done: [],
-      cancelled: [],
+      Open: [],
+      "In-progress": [],
+      Blocked: [],
+      "Waiting-on": [],
+      Done: [],
+      Cancelled: [],
     },
     ownedProjects: [],
     waitingOnTasks: [],
@@ -767,7 +767,7 @@ describe("PersonDetailTabsView · 内容区 DOM 保留（Q23）", () => {
             createdAt: "2026-09-01 09:00:00",
           },
           inFlight: {
-            open: [
+            Open: [
               {
                 id: 100,
                 title: "甲-Open-1",
@@ -789,11 +789,11 @@ describe("PersonDetailTabsView · 内容区 DOM 保留（Q23）", () => {
                 waitingOnPersonId: null,
               },
             ],
-            inProgress: [],
-            blocked: [],
-            waitingOn: [],
-            done: [],
-            cancelled: [],
+            "In-progress": [],
+            Blocked: [],
+            "Waiting-on": [],
+            Done: [],
+            Cancelled: [],
           },
         });
       }

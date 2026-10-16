@@ -35,6 +35,7 @@ import type {
   ReorderSubTeamsArgs,
   SubTeam,
   Task,
+  TaskStatus,
   UpdatePersonArgs,
   UpdateSubTeamArgs,
 } from "../types.js";
@@ -516,52 +517,58 @@ function isWaitingOnOther(task: Task): boolean {
  * 有任务拉回来，数据量是单人员全状态，6 个桶都极小，内存排一遍比
  * 再发 6 条 SQL 便宜，也避免 SQL 拼得四处散落。
  */
+/**
+ * 任务按 6 状态分桶 + 自反等待排除 + 各桶语义排序（ticket #92 C1 P2）。
+ *
+ * **Record<TaskStatus, Task[]>** —— 桶 key 与 `TaskStatus` 字面量同
+ * 形（"Open" / "In-progress" / ...），视图侧不再需要 BUCKET_KEY 翻译
+ * 表。循环收敛：partition 与 sort 都走 status 字面。
+ *
+ * **自反等待排除** —— `Waiting-on` 桶额外过滤 `isWaitingOnOther(task)`。
+ *
+ * **段内排序** —— `comparatorFor(status)` 走 task/inflight_sort 模块。
+ */
 function bucketByStatus(tasks: Task[]): PersonDetailInFlight {
   const buckets: PersonDetailInFlight = {
-    open: [],
-    inProgress: [],
-    blocked: [],
-    waitingOn: [],
-    done: [],
-    cancelled: [],
+    Open: [],
+    "In-progress": [],
+    Blocked: [],
+    "Waiting-on": [],
+    Done: [],
+    Cancelled: [],
   };
   for (const task of tasks) {
-    switch (task.status) {
-      case "Open":
-        buckets.open.push(task);
-        break;
-      case "In-progress":
-        buckets.inProgress.push(task);
-        break;
-      case "Blocked":
-        buckets.blocked.push(task);
-        break;
-      case "Waiting-on":
-        if (isWaitingOnOther(task)) {
-          buckets.waitingOn.push(task);
-        }
-        break;
-      case "Done":
-        buckets.done.push(task);
-        break;
-      case "Cancelled":
-        buckets.cancelled.push(task);
-        break;
+    if (task.status === "Waiting-on" && !isWaitingOnOther(task)) {
+      // 自反等待（owner=waitingOnPersonId）不进 waitingOn 桶。
+      continue;
     }
+    buckets[task.status].push(task);
   }
 
-  // 各桶按段语义排——comparatorFor 走 task/inflight_sort 模块的唯一
-  // 入口（Q3 / Q6 决策）；P2 切 Record<TaskStatus, Task[]> 后这 6 行
-  // 可收敛成单循环。
-  buckets.open.sort(comparatorFor("Open"));
-  buckets.inProgress.sort(comparatorFor("In-progress"));
-  buckets.blocked.sort(comparatorFor("Blocked"));
-  buckets.waitingOn.sort(comparatorFor("Waiting-on"));
-  buckets.done.sort(comparatorFor("Done"));
-  buckets.cancelled.sort(comparatorFor("Cancelled"));
+  // 各桶按段语义排——comparatorFor 走 task/inflight_sort 模块唯一入口。
+  for (const status of TASK_STATUSES_FOR_BUCKET) {
+    buckets[status].sort(comparatorFor(status));
+  }
 
   return buckets;
 }
+
+/**
+ * bucketByStatus 内部用的 status 遍历序列——与 [`TASK_STATUSES`] 等长，
+ * 但用 readonly 元组形式，TS 在迭代时保留字面类型以便索引 `buckets[status]`。
+ *
+ * 单点声明避免循环内 inline 字面量。`buckets[task.status]` 与 `for (const
+ * status of TASK_STATUSES_FOR_BUCKET)` 都依赖 `TaskStatus` 的字面联合，
+ * `Record<TaskStatus, Task[]>` 在编译期保证 key 完整。
+ */
+const TASK_STATUSES_FOR_BUCKET = [
+  "Open",
+  "In-progress",
+  "Blocked",
+  "Waiting-on",
+  "Done",
+  "Cancelled",
+] as const satisfies readonly TaskStatus[];
 
 /**
  * 人员详情聚合（ticket #80 / #81 T1）。

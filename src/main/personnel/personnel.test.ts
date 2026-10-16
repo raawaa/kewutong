@@ -365,12 +365,12 @@ describe("personnel / getPersonDetail（#81）", () => {
       expect(detail.person.deactivatedAt).toBeNull();
 
       // 段 2：6 状态分组（每条 inFlight bucket 各含 1 条）
-      expect(detail.inFlight.open.length).toBe(1);
-      expect(detail.inFlight.inProgress.length).toBe(1);
-      expect(detail.inFlight.blocked.length).toBe(1);
-      expect(detail.inFlight.waitingOn.length).toBe(1);
-      expect(detail.inFlight.done.length).toBe(1);
-      expect(detail.inFlight.cancelled.length).toBe(1);
+      expect(detail.inFlight.Open.length).toBe(1);
+      expect(detail.inFlight["In-progress"].length).toBe(1);
+      expect(detail.inFlight.Blocked.length).toBe(1);
+      expect(detail.inFlight["Waiting-on"].length).toBe(1);
+      expect(detail.inFlight.Done.length).toBe(1);
+      expect(detail.inFlight.Cancelled.length).toBe(1);
 
       // 段 3：owned projects（2 个,跨组也算）
       expect(detail.ownedProjects.length).toBe(2);
@@ -409,12 +409,12 @@ describe("personnel / getPersonDetail（#81）", () => {
       expect(detail.person.id).toBe(person.id);
       expect(detail.person.deactivatedAt).toBe("2026-09-10 08:00:00");
       // 离岗人员的 5 段都应是空数组（库内无其它数据）
-      expect(detail.inFlight.open).toEqual([]);
-      expect(detail.inFlight.inProgress).toEqual([]);
-      expect(detail.inFlight.blocked).toEqual([]);
-      expect(detail.inFlight.waitingOn).toEqual([]);
-      expect(detail.inFlight.done).toEqual([]);
-      expect(detail.inFlight.cancelled).toEqual([]);
+      expect(detail.inFlight.Open).toEqual([]);
+      expect(detail.inFlight["In-progress"]).toEqual([]);
+      expect(detail.inFlight.Blocked).toEqual([]);
+      expect(detail.inFlight["Waiting-on"]).toEqual([]);
+      expect(detail.inFlight.Done).toEqual([]);
+      expect(detail.inFlight.Cancelled).toEqual([]);
       expect(detail.ownedProjects).toEqual([]);
       expect(detail.waitingOnTasks).toEqual([]);
       expect(detail.subTeamTemplates).toEqual([]);
@@ -538,7 +538,7 @@ describe("personnel / getPersonDetail（#81）", () => {
       });
 
       const detail = Personnel.getPersonDetail(state, { id: personId });
-      expect(detail.inFlight.open.map((t) => t.id)).toEqual([
+      expect(detail.inFlight.Open.map((t) => t.id)).toEqual([
         nearId,
         farId,
         noDueId,
@@ -583,7 +583,7 @@ describe("personnel / getPersonDetail（#81）", () => {
       });
 
       const detail = Personnel.getPersonDetail(state, { id: personId });
-      expect(detail.inFlight.inProgress.map((t) => t.id)).toEqual([
+      expect(detail.inFlight["In-progress"].map((t) => t.id)).toEqual([
         nearId,
         farId,
         noDueId,
@@ -630,7 +630,7 @@ describe("personnel / getPersonDetail（#81）", () => {
       });
 
       const detail = Personnel.getPersonDetail(state, { id: personId });
-      expect(detail.inFlight.blocked.map((t) => t.id)).toEqual([
+      expect(detail.inFlight.Blocked.map((t) => t.id)).toEqual([
         tenDayId,
         fiveDayId,
         oneDayId,
@@ -681,7 +681,7 @@ describe("personnel / getPersonDetail（#81）", () => {
       });
 
       const detail = Personnel.getPersonDetail(state, { id: personId });
-      expect(detail.inFlight.waitingOn.map((t) => t.id)).toEqual([
+      expect(detail.inFlight["Waiting-on"].map((t) => t.id)).toEqual([
         tenDayId,
         fiveDayId,
         oneDayId,
@@ -728,7 +728,7 @@ describe("personnel / getPersonDetail（#81）", () => {
       });
 
       const detail = Personnel.getPersonDetail(state, { id: personId });
-      expect(detail.inFlight.done.map((t) => t.id)).toEqual([
+      expect(detail.inFlight.Done.map((t) => t.id)).toEqual([
         oneDayId,
         fiveDayId,
         tenDayId,
@@ -773,7 +773,7 @@ describe("personnel / getPersonDetail（#81）", () => {
       });
 
       const detail = Personnel.getPersonDetail(state, { id: personId });
-      expect(detail.inFlight.cancelled.map((t) => t.id)).toEqual([
+      expect(detail.inFlight.Cancelled.map((t) => t.id)).toEqual([
         oneDayId,
         fiveDayId,
         tenDayId,
@@ -787,12 +787,12 @@ describe("personnel / getPersonDetail（#81）", () => {
     const { state, personId, close } = seedPersonWithSixSegments();
     try {
       const detail = Personnel.getPersonDetail(state, { id: personId });
-      expect(detail.inFlight.open).toEqual([]);
-      expect(detail.inFlight.inProgress).toEqual([]);
-      expect(detail.inFlight.blocked).toEqual([]);
-      expect(detail.inFlight.waitingOn).toEqual([]);
-      expect(detail.inFlight.done).toEqual([]);
-      expect(detail.inFlight.cancelled).toEqual([]);
+      expect(detail.inFlight.Open).toEqual([]);
+      expect(detail.inFlight["In-progress"]).toEqual([]);
+      expect(detail.inFlight.Blocked).toEqual([]);
+      expect(detail.inFlight["Waiting-on"]).toEqual([]);
+      expect(detail.inFlight.Done).toEqual([]);
+      expect(detail.inFlight.Cancelled).toEqual([]);
     } finally {
       close();
     }

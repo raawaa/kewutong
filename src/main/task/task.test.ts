@@ -473,7 +473,7 @@ describe("task / updateTask · #82 Longest-Stuck 不回归（#91 回归 AC）", 
 
       // 先断言基准排序。
       let detail = Personnel.getPersonDetail(ctx.state, { id: ctx.personId });
-      expect(detail.inFlight.blocked.map((t) => t.id)).toEqual([aId, bId]);
+      expect(detail.inFlight.Blocked.map((t) => t.id)).toEqual([aId, bId]);
 
       // 把 B 切到 In-progress（用 updateTask 走 #91 入口）。A 的
       // blocked_at 不应被触碰,排序依然 longest-stuck first。
@@ -489,7 +489,7 @@ describe("task / updateTask · #82 Longest-Stuck 不回归（#91 回归 AC）", 
 
       detail = Personnel.getPersonDetail(ctx.state, { id: ctx.personId });
       // B 已不再 Blocked 段,只剩 A。A 仍在原位。
-      expect(detail.inFlight.blocked.map((t) => t.id)).toEqual([aId]);
+      expect(detail.inFlight.Blocked.map((t) => t.id)).toEqual([aId]);
       // blocked_at 没被 updateTask 刷新到 now（这条由 #91 derive 控
       // 制:切出 Blocked 时三列清空,A 仍是 Blocked,理应保持原值）。
       const aRow = ctx.state.db
