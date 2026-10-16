@@ -128,13 +128,6 @@ export default function App() {
   const onSampleCleared = useCallback(() => {
     setRefreshToken((token) => token + 1);
   }, []);
-  // T7（#87）：人员详情里档案字段就地保存后，刷新全 app 缓存（人员
-  // / 子组 / 项目 catalog 都要看到最新一份），由父层 `refreshToken` 节
-  // 拍统一驱动——给 PersonDetailTabsView 透给 PersonDetailView 在
-  // updatePerson 成功后调。
-  const onPersonSaved = useCallback(() => {
-    setRefreshToken((token) => token + 1);
-  }, []);
 
   // 启动 + 任一 tab 切换 + 任务保存后,都刷一次 catalog——各视图自身
   // 也用 refreshToken 触发,这里走同一份节奏避免漂移。
@@ -368,8 +361,9 @@ export default function App() {
         return;
       }
 
-      // ⌘⇧← / ⌘⇧→：上一/下一子 tab（Q27）。1 条子 tab 时无意义,但仍
-      // 消费事件避免被浏览器读作"光标到输入框头部"。
+      // ⌘⇧← / ⌘⇧→：上一/下一子 tab（Q27）。clamp 在两端 —— 与浏览器 /
+      // VSCode 的 tab bar 语义一致,不环绕。1 条子 tab 时同样消费事件
+      // 避免被浏览器读作"光标到输入框头部"。
       if (
         mod && event.shiftKey &&
         (event.key === "ArrowLeft" || event.key === "ArrowRight")
@@ -379,12 +373,13 @@ export default function App() {
           const idx = openPersonTabs.findIndex((t) => t.personId === activePersonId);
           if (idx >= 0) {
             const isLeft = event.key === "ArrowLeft";
-            const len = openPersonTabs.length;
-            const nextIdx = isLeft
-              ? idx === 0 ? len - 1 : idx - 1
-              : idx === len - 1 ? 0 : idx + 1;
-            const next = openPersonTabs[nextIdx];
-            if (next) setActivePersonId(next.personId);
+            const clamped = isLeft
+              ? Math.max(0, idx - 1)
+              : Math.min(openPersonTabs.length - 1, idx + 1);
+            if (clamped !== idx) {
+              const next = openPersonTabs[clamped];
+              if (next) setActivePersonId(next.personId);
+            }
           }
         } else {
           event.preventDefault();
@@ -551,9 +546,6 @@ export default function App() {
           onCreateProject={(person) => openCreateProject(person)}
           onCreateTemplate={(subTeamId) => openCreateTemplate(subTeamId)}
           onOpenPerson={openPerson}
-          // T7（#87）：档案字段就地保存成功后调 —— 父层 bump refreshToken
-          // 让本详情页 / 矩阵 / 人员 / 项目 tab 都看到最新一份数据。
-          onPersonSaved={onPersonSaved}
         />
       ) : (
         <HolidayCalendarView refreshToken={refreshToken} />

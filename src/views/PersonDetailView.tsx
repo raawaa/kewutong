@@ -38,7 +38,6 @@ export function PersonDetailView({
   onCreateTask,
   onCreateProject,
   onCreateTemplate,
-  onPersonSaved,
 }: {
   personId: number;
   /** 父层 catalog 里的子组缓存——详情视图借此展示子组徽章,不发 IPC。 */
@@ -70,13 +69,6 @@ export function PersonDetailView({
    * 调先实现「切到 tab」的最小动作——模板创建 UI 是后续 ticket。
    */
   onCreateTemplate: (subTeamId: number) => void;
-  /**
-   * T7（#87）：档案字段就地保存（姓名 / 联系方式 / 子组）成功后调用
-   * —— 父层 bump refreshToken 让本详情页 / 矩阵 / 人员 / 项目 tab
-   * 都看到最新一份数据,具体而言会让 detail 重拉 + 子组 / 人员 /
-   * 项目 catalog 一并刷。
-   */
-  onPersonSaved: () => void;
 }) {
   const [detail, setDetail] = useState<PersonDetail | null>(null);
   const [error, setError] = useState<AppError | null>(null);
@@ -157,6 +149,12 @@ export function PersonDetailView({
    * 拿到当前 person 全量 + 这一字段的新值再发。失败抛 AppError，让
    * `InlineEditableText` / `InlineEditableSubTeam` 在行内红字 + 撤
    * 销按钮兜住。
+   *
+   * 本期仅乐观更新本 panel 的 `detail`（用户当下看到的详情视图立即
+   * 显示新值）。其他 tab（matrix / personnel / projects）的 catalog
+   * 不主动刷新——issue #87 第⑦项列举的 refreshToken+1 触发器是
+   * "任务状态 / 任务保存 / 人员删除 / 子组重排",刻意没有"档案就地
+   * 编辑"。用户重切 tab 或下次自然刷新时,新值会落齐。
    */
   async function persistPerson(
     updates: Partial<Pick<Person, "name" | "contact" | "subTeamId">>,
@@ -178,13 +176,9 @@ export function PersonDetailView({
       return;
     }
     const updated = await updatePerson(next);
-    // 本地详情也跟上,避免下一次 render 仍展示旧值——父层的 refreshToken
-    // 拉到的新 detail 也会覆盖此值,这里只是乐观更新到下一帧。
     setDetail((prev) =>
       prev ? { ...prev, person: updated } : prev,
     );
-    // 通知父层 bump refreshToken,把矩阵 / 人员 / 项目视图一并刷上。
-    onPersonSaved();
   }
 
   return (

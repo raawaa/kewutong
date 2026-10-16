@@ -663,7 +663,7 @@ describe("PersonDetailView · 档案字段就地编辑（T7 / #87）", () => {
     ).toHaveTextContent("张三");
   });
 
-  it("联系方式保存成功走 updatePerson + onPersonSaved", async () => {
+  it("联系方式保存成功 → updatePerson 被调 + 字段切回展示新值", async () => {
     const user = userEvent.setup();
     vi.mocked(getPersonDetail).mockResolvedValue(makeDetail());
     vi.mocked(updatePerson).mockResolvedValue({
@@ -675,9 +675,8 @@ describe("PersonDetailView · 档案字段就地编辑（T7 / #87）", () => {
       deactivatedAt: null,
       createdAt: "2026-09-01 09:00:00",
     });
-    const onPersonSaved = vi.fn();
 
-    render(<DetailHarness onPersonSaved={onPersonSaved} />);
+    render(<DetailHarness />);
 
     await user.click(await screen.findByRole("button", { name: "档案 · 联系方式" }));
     const input = await screen.findByRole("textbox", { name: "档案 · 联系方式" });
@@ -689,8 +688,10 @@ describe("PersonDetailView · 档案字段就地编辑（T7 / #87）", () => {
     const arg = vi.mocked(updatePerson).mock.calls[0]?.[0];
     expect(arg?.contact).toBe("13900000000");
 
-    // T7: 父层 onPersonSaved 在 updatePerson 成功后被调
-    await waitFor(() => expect(onPersonSaved).toHaveBeenCalledTimes(1));
+    // 本 panel 乐观显示新联系方式
+    expect(
+      await screen.findByRole("button", { name: "档案 · 联系方式" }),
+    ).toHaveTextContent("13900000000");
   });
 
   it("子组切换 → 保存 subTeamId", async () => {
@@ -1002,7 +1003,6 @@ function DetailHarness({
   onCreateProject,
   onCreateTemplate,
   refreshToken = 0,
-  onPersonSaved,
   subTeams,
 }: {
   onOpenTask?: (
@@ -1013,11 +1013,6 @@ function DetailHarness({
   onCreateProject?: (person: Person) => void;
   onCreateTemplate?: (subTeamId: number) => void;
   refreshToken?: number;
-  /**
-   * T7（#87）：档案字段就地保存成功后父层 bump refreshToken 的回调。
-   * 默认空函数，避免每个用例各自挂一份 vi.fn()。
-   */
-  onPersonSaved?: () => void;
   /**
    * T7（#87）：子组切换测试用的子组 catalog（默认一组）。子组切换测
    * 试用例需要塞两份子组让 <select> 同时有当前组与目标组。
@@ -1033,7 +1028,6 @@ function DetailHarness({
       onCreateTask={onCreateTask ?? vi.fn()}
       onCreateProject={onCreateProject ?? vi.fn()}
       onCreateTemplate={onCreateTemplate ?? vi.fn()}
-      onPersonSaved={onPersonSaved ?? vi.fn()}
     />
   );
 }

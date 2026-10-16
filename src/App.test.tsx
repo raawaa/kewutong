@@ -644,6 +644,46 @@ describe("App · 人员详情子 tab 快捷键（T7 / #87）", () => {
     );
   });
 
+  it("⌘⇧← 在「人员详情」最左端的子 tab 不环绕(clamp 而不是 wrap)", async () => {
+    const user = userEvent.setup();
+    await openTwoPersonTabs(user);
+
+    // 默认激活 李四 (idx=1)。⌘⇧← 一刀到 张三 (idx=0)。
+    await user.keyboard("{Meta>}{Shift>}{ArrowLeft}{/Shift}{/Meta}");
+    expect(screen.getByRole("tab", { name: /张三/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    // 再按 ⌘⇧← 应**保持** 张三 —— clamp 而不是 wrap 到 李四。
+    await user.keyboard("{Meta>}{Shift>}{ArrowLeft}{/Shift}{/Meta}");
+    expect(screen.getByRole("tab", { name: /张三/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    // 李四 没被激活成 selected
+    expect(screen.getByRole("tab", { name: /李四/ })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+  });
+
+  it("⌘⇧→ 在「人员详情」最右端的子 tab 不环绕(clamp 而不是 wrap)", async () => {
+    const user = userEvent.setup();
+    await openTwoPersonTabs(user);
+
+    // 默认激活 李四 (idx=1, 已经是末位) → ⌘⇧→ 应**保持**李四。
+    expect(screen.getByRole("tab", { name: /李四/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await user.keyboard("{Meta>}{Shift>}{ArrowRight}{/Shift}{/Meta}");
+    expect(screen.getByRole("tab", { name: /李四/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
   it("⌘⇧← 在非「人员详情」tab 上不拦截", async () => {
     const user = userEvent.setup();
     await openTwoPersonTabs(user);

@@ -916,11 +916,6 @@ interface HarnessProps {
   onCreateProject?: (person: Person) => void;
   onCreateTemplate?: (subTeamId: number) => void;
   onOpenPerson?: (personId: number) => void;
-  /**
-   * T7（#87）：档案字段就地保存后父层 bump refreshToken 的回调，默认
-   * 空函数，避免每个用例各挂一份。
-   */
-  onPersonSaved?: () => void;
 }
 
 function Harness(props: HarnessProps) {
@@ -949,7 +944,6 @@ function Harness(props: HarnessProps) {
       onCreateProject={props.onCreateProject ?? vi.fn()}
       onCreateTemplate={props.onCreateTemplate ?? vi.fn()}
       onOpenPerson={props.onOpenPerson ?? vi.fn()}
-      onPersonSaved={props.onPersonSaved ?? vi.fn()}
     />
   );
 }
